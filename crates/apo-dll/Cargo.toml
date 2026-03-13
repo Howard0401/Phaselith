@@ -1,0 +1,23 @@
+[package]
+name = "asce-apo"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+asce-dsp-core = { path = "../dsp-core" }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_Media_Audio",
+    "Win32_System_Registry",
+    "Win32_System_Memory",
+    "Win32_Security",
+    "Win32_System_LibraryLoader",
+    "implement",
+] }
+windows-core = "0.58"

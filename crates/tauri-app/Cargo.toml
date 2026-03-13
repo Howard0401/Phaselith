@@ -1,0 +1,26 @@
+[package]
+name = "asce-tauri"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+asce-dsp-core = { path = "../dsp-core" }
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_System_Memory",
+    "Win32_System_Registry",
+    "Win32_System_Services",
+] }
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[[bin]]
+name = "asce-tauri"
+path = "src/main.rs"

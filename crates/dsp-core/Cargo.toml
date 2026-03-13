@@ -1,0 +1,17 @@
+[package]
+name = "asce-dsp-core"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = ["std"]
+std = []
+test-helpers = []
+
+[dependencies]
+num-complex = { version = "0.4", default-features = false }
+rustfft = "6"
+
+[dev-dependencies]
+approx = "0.5"
+asce-dsp-core = { path = ".", features = ["test-helpers"] }

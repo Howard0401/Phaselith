@@ -1,0 +1,10 @@
+[package]
+name = "asce-wasm-bridge"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+asce-dsp-core = { path = "../dsp-core", default-features = false }

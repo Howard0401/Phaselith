@@ -1,0 +1,35 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicegui-org/nicegui/main/tauri/schema.json",
+  "productName": "ASCE Control Panel",
+  "version": "0.1.0",
+  "identifier": "com.asce.controlpanel",
+  "build": {
+    "frontendDist": "frontend/dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "cd frontend && npm run dev",
+    "beforeBuildCommand": "cd frontend && npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "ASCE Audio Enhancement",
+        "width": 420,
+        "height": 600,
+        "resizable": true,
+        "decorations": true,
+        "transparent": false
+      }
+    ],
+    "trayIcon": {
+      "iconPath": "icons/icon.png",
+      "iconAsTemplate": false
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/icon.png"
+    ]
+  }
+}

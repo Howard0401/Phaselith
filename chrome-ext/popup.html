@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      width: 320px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      padding: 16px;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .header h1 {
+      font-size: 16px;
+      font-weight: 600;
+      color: #00d4ff;
+    }
+    .status {
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 10px;
+      background: #2a2a4a;
+    }
+    .status.active { background: #0a4a2a; color: #4ade80; }
+    .status.inactive { background: #4a2a2a; color: #f87171; }
+
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px;
+      background: #16213e;
+      border-radius: 8px;
+      margin-bottom: 12px;
+    }
+    .toggle-label { font-size: 13px; }
+
+    .switch {
+      position: relative;
+      width: 44px;
+      height: 24px;
+    }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      inset: 0;
+      background: #444;
+      border-radius: 12px;
+      transition: 0.3s;
+    }
+    .slider::before {
+      content: "";
+      position: absolute;
+      height: 18px;
+      width: 18px;
+      left: 3px;
+      bottom: 3px;
+      background: white;
+      border-radius: 50%;
+      transition: 0.3s;
+    }
+    input:checked + .slider { background: #00d4ff; }
+    input:checked + .slider::before { transform: translateX(20px); }
+
+    .slider-row {
+      padding: 10px 12px;
+      background: #16213e;
+      border-radius: 8px;
+      margin-bottom: 8px;
+    }
+    .slider-row label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      margin-bottom: 6px;
+      color: #aaa;
+    }
+    .slider-row input[type="range"] {
+      width: 100%;
+      accent-color: #00d4ff;
+    }
+
+    .info {
+      font-size: 11px;
+      color: #666;
+      text-align: center;
+      margin-top: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>ASCE</h1>
+    <span class="status inactive" id="status">Inactive</span>
+  </div>
+
+  <div class="toggle-row">
+    <span class="toggle-label">Enable Enhancement</span>
+    <label class="switch">
+      <input type="checkbox" id="enableToggle">
+      <span class="slider"></span>
+    </label>
+  </div>
+
+  <div class="slider-row">
+    <label>
+      <span>Strength</span>
+      <span id="strengthValue">70%</span>
+    </label>
+    <input type="range" id="strength" min="0" max="100" value="70">
+  </div>
+
+  <div class="slider-row">
+    <label>
+      <span>HF Reconstruction</span>
+      <span id="hfValue">80%</span>
+    </label>
+    <input type="range" id="hfReconstruction" min="0" max="100" value="80">
+  </div>
+
+  <div class="slider-row">
+    <label>
+      <span>Dynamics</span>
+      <span id="dynValue">60%</span>
+    </label>
+    <input type="range" id="dynamics" min="0" max="100" value="60">
+  </div>
+
+  <div class="info">ASCE v0.1.0 - Adaptive Spectral Compensation</div>
+
+  <script src="src/popup.js"></script>
+</body>
+</html>

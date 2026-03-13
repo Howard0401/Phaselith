@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/dsp-core",
+    "crates/apo-dll",
+    "crates/wasm-bridge",
+    # "crates/tauri-app",  # Uncomment after tauri init
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"

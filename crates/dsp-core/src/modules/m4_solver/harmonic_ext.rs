@@ -1,0 +1,139 @@
+/// Compute harmonic continuation residual above cutoff.
+///
+/// Extends harmonic series found below the cutoff into the region above it,
+/// using the detected ridge structure and decay rate.
+pub fn compute_harmonic_extension(
+    magnitude: &[f32],
+    _phase: &[f32],
+    harmonic_field: &[f32],
+    cutoff_bin: usize,
+    bin_to_freq: f32,
+    strength: f32,
+    residual: &mut [f32],
+) {
+    let num_bins = residual.len().min(magnitude.len());
+    if cutoff_bin >= num_bins || cutoff_bin < 5 {
+        return;
+    }
+
+    // Estimate average harmonic decay rate below cutoff
+    let decay_rate = estimate_decay_rate(magnitude, harmonic_field, cutoff_bin);
+
+    // Reference level at cutoff
+    let ref_level = average_magnitude_near(magnitude, cutoff_bin, 5);
+    if ref_level < 1e-10 {
+        return;
+    }
+
+    // Extend harmonics above cutoff
+    let cutoff_freq = cutoff_bin as f32 * bin_to_freq;
+
+    for k in cutoff_bin..num_bins {
+        let freq = k as f32 * bin_to_freq;
+        if freq > 22000.0 {
+            break;
+        }
+
+        // Decay based on distance from cutoff
+        let octaves_above = (freq / cutoff_freq.max(1.0)).log2();
+        let decayed = ref_level * (10.0f32).powf(decay_rate * octaves_above / 20.0);
+
+        // Weight by harmonic field (if harmonic content exists nearby)
+        let harmonic_weight = if k < harmonic_field.len() && harmonic_field[k] > 1e-10 {
+            1.0
+        } else {
+            0.3 // small contribution even without harmonics
+        };
+
+        residual[k] = decayed * harmonic_weight * strength;
+    }
+}
+
+/// Estimate decay rate (dB/octave) from harmonic peaks below cutoff.
+fn estimate_decay_rate(
+    magnitude: &[f32],
+    harmonic_field: &[f32],
+    cutoff_bin: usize,
+) -> f32 {
+    let mut high_energy = 0.0f32;
+    let mut low_energy = 0.0f32;
+    let quarter = cutoff_bin / 4;
+
+    // Compare energy in lower vs upper quarter of below-cutoff region
+    let h_len = harmonic_field.len().min(cutoff_bin);
+
+    for k in quarter..cutoff_bin / 2 {
+        if k < h_len {
+            low_energy += magnitude[k] * magnitude[k];
+        }
+    }
+    for k in cutoff_bin / 2..cutoff_bin.min(magnitude.len()) {
+        if k < h_len {
+            high_energy += magnitude[k] * magnitude[k];
+        }
+    }
+
+    if low_energy < 1e-10 || high_energy < 1e-10 {
+        return -6.0; // default
+    }
+
+    let ratio_db = 10.0 * (high_energy / low_energy).log10();
+    ratio_db.clamp(-18.0, 0.0) // reasonable range
+}
+
+fn average_magnitude_near(magnitude: &[f32], center: usize, radius: usize) -> f32 {
+    let start = center.saturating_sub(radius);
+    let end = (center + radius).min(magnitude.len());
+    if start >= end {
+        return 0.0;
+    }
+    magnitude[start..end].iter().sum::<f32>() / (end - start) as f32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn harmonic_extension_adds_above_cutoff() {
+        let num_bins = 513;
+        let bin_to_freq = 48000.0 / 1024.0;
+        let cutoff_bin = 340; // ~16 kHz
+
+        let mut magnitude = vec![0.0; num_bins];
+        let mut harmonic_field = vec![0.0; num_bins];
+        let phase = vec![0.0; num_bins];
+
+        // Put energy below cutoff
+        for k in 10..cutoff_bin {
+            magnitude[k] = 1.0 / (1.0 + k as f32 / 100.0);
+            harmonic_field[k] = magnitude[k];
+        }
+
+        let mut residual = vec![0.0; num_bins];
+        compute_harmonic_extension(
+            &magnitude, &phase, &harmonic_field,
+            cutoff_bin, bin_to_freq, 1.0, &mut residual,
+        );
+
+        let above_energy: f32 = residual[cutoff_bin..].iter().sum();
+        assert!(above_energy > 0.0, "Should have extension above cutoff");
+    }
+
+    #[test]
+    fn harmonic_extension_zero_for_lossless() {
+        let num_bins = 513;
+        let cutoff_bin = num_bins; // no cutoff
+        let mut residual = vec![0.0; num_bins];
+
+        compute_harmonic_extension(
+            &vec![1.0; num_bins],
+            &vec![0.0; num_bins],
+            &vec![0.0; num_bins],
+            cutoff_bin, 46.875, 1.0, &mut residual,
+        );
+
+        let total: f32 = residual.iter().sum();
+        assert_eq!(total, 0.0, "No extension needed for lossless");
+    }
+}

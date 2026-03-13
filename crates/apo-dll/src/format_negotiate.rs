@@ -1,0 +1,52 @@
+// Format negotiation for APO.
+// Validates that the audio format is one we can process.
+// APO supports: 32-bit float PCM, 1-8 channels, 44.1/48/96/192 kHz.
+
+/// Check if we support the given audio format parameters
+pub fn is_format_supported(
+    sample_rate: u32,
+    bits_per_sample: u16,
+    channels: u16,
+    is_float: bool,
+) -> bool {
+    // We require 32-bit float
+    if !is_float || bits_per_sample != 32 {
+        return false;
+    }
+
+    // Supported sample rates
+    let supported_rates = [44100, 48000, 96000, 192000];
+    if !supported_rates.contains(&sample_rate) {
+        return false;
+    }
+
+    // 1-8 channels
+    if channels < 1 || channels > 8 {
+        return false;
+    }
+
+    true
+}
+
+/// Suggest closest supported format if the requested one isn't supported
+pub fn suggest_format(
+    sample_rate: u32,
+    _bits_per_sample: u16,
+    channels: u16,
+) -> (u32, u16, u16) {
+    // Always suggest 32-bit float
+    let bits = 32u16;
+
+    // Snap to nearest supported sample rate
+    let rate = match sample_rate {
+        0..=45000 => 44100,
+        45001..=72000 => 48000,
+        72001..=144000 => 96000,
+        _ => 192000,
+    };
+
+    // Clamp channels
+    let ch = channels.clamp(1, 8);
+
+    (rate, bits, ch)
+}
