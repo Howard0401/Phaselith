@@ -419,7 +419,18 @@ impl CrossChannelContext {
         let var_r = (sum_rr / n - mean_r * mean_r).max(0.0);
         let cov_lr = sum_lr / n - mean_l * mean_r;
         let denom = (var_l * var_r).sqrt();
-        let correlation = if denom > 1e-12 { (cov_lr / denom).clamp(-1.0, 1.0) } else { 0.0 };
+        let correlation = if denom > 1e-12 {
+            (cov_lr / denom).clamp(-1.0, 1.0)
+        } else {
+            // Degenerate case: near-zero variance in one or both channels.
+            // Check if L ≈ R (both near-constant and equal) → mono-like → correlation = 1.0
+            // Otherwise (e.g., one channel is silence, other has signal) → 0.0
+            let diff_energy: f32 = left.iter().zip(right.iter())
+                .take(len)
+                .map(|(l, r)| { let d = l - r; d * d })
+                .sum::<f32>() / n;
+            if diff_energy <= 1e-10 { 1.0 } else { 0.0 }
+        };
 
         let epsilon = 1e-10;
         let stereo_width = side_e / (mid_e + epsilon);

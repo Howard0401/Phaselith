@@ -156,6 +156,27 @@ mod tests {
     }
 
     #[test]
+    fn cross_channel_degenerate_mono_constant() {
+        use crate::types::CrossChannelContext;
+
+        // Near-constant identical signals: both channels are DC offset
+        // variance ≈ 0, denom ≈ 0, but L ≈ R → should be correlation = 1.0
+        let signal = vec![0.5; 128];
+        let ctx = CrossChannelContext::from_lr(&signal, &signal);
+        assert_eq!(ctx.correlation, 1.0, "Degenerate mono (constant L=R) should have correlation 1.0, got {}", ctx.correlation);
+    }
+
+    #[test]
+    fn cross_channel_degenerate_silence() {
+        use crate::types::CrossChannelContext;
+
+        // Both channels silent → L=R=0 → should be correlation 1.0
+        let signal = vec![0.0; 128];
+        let ctx = CrossChannelContext::from_lr(&signal, &signal);
+        assert_eq!(ctx.correlation, 1.0, "Degenerate silence (L=R=0) should have correlation 1.0, got {}", ctx.correlation);
+    }
+
+    #[test]
     fn cross_channel_from_stereo_signal() {
         use crate::types::CrossChannelContext;
 

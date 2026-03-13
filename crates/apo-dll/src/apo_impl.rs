@@ -144,13 +144,14 @@ impl AsceApo {
                         output[f * ch + c] = self.channel_buf[f];
                     }
 
-                    // Reset between channels to prevent L→R state contamination.
+                    // Reset between channels to prevent state contamination.
                     // CirrusEngine is stateful (frame_index, damage, lattice, fields,
-                    // validated all accumulate). Without reset, R channel would inherit
-                    // L channel's processing history.
+                    // validated all accumulate). Without reset, the next channel would
+                    // inherit this channel's processing history.
+                    // Reset after every channel except the last one.
                     // TODO: Replace with proper stereo-native architecture
                     // (dual-engine + shared cross-channel, or interleaved processing).
-                    if c == 0 {
+                    if c < ch - 1 {
                         engine.reset();
                     }
                 }

@@ -1,6 +1,12 @@
 // Format negotiation for APO.
 // Validates that the audio format is one we can process.
-// APO supports: 32-bit float PCM, 1-8 channels, 44.1/48/96/192 kHz.
+// APO supports: 32-bit float PCM, mono/stereo only, 44.1/48/96/192 kHz.
+//
+// Channel support is deliberately limited to 1-2 channels.
+// CirrusEngine is stateful (frame_index, damage, lattice, fields, validated
+// all accumulate). The current sequential-mono architecture resets between
+// channels, which prevents state contamination but means >2 channels would
+// get incorrect processing. Future: stereo-native architecture.
 
 /// Check if we support the given audio format parameters
 pub fn is_format_supported(
@@ -20,8 +26,9 @@ pub fn is_format_supported(
         return false;
     }
 
-    // 1-8 channels
-    if channels < 1 || channels > 8 {
+    // Mono or stereo only — engine is stateful, sequential-mono with reset
+    // between channels. >2 channels would get incorrect processing.
+    if channels < 1 || channels > 2 {
         return false;
     }
 
@@ -45,8 +52,8 @@ pub fn suggest_format(
         _ => 192000,
     };
 
-    // Clamp channels
-    let ch = channels.clamp(1, 8);
+    // Clamp channels to mono/stereo
+    let ch = channels.clamp(1, 2);
 
     (rate, bits, ch)
 }
