@@ -57,26 +57,53 @@ impl CirrusModule for InverseResidualSolver {
         }
         ctx.residual.clear();
 
+        // Ensure time_candidate is sized to sample count (not bin count)
+        let sample_len = samples.len();
+        if ctx.time_candidate.len() != sample_len {
+            ctx.time_candidate.resize(sample_len, 0.0);
+        }
+        ctx.time_candidate.fill(0.0);
+
         let strength = ctx.config.strength;
 
-        // 1. Declip
+        // 1. Declip (scaled by dynamics and transient params)
+        // Writes time-domain per-sample corrections into time_candidate,
+        // NOT into freq-domain residual — domain separation.
         if ctx.damage.clipping.mean > 0.05 {
-            declip::compute_declip_residual(
+            declip::compute_declip_residual_scaled(
                 samples,
                 ctx.damage.clipping.mean,
-                &mut ctx.residual.transient,
+                ctx.config.dynamics,
+                ctx.config.transient,
+                &mut ctx.time_candidate,
             );
         }
 
-        // 2. Harmonic continuation above cutoff
+        // 2. Harmonic continuation above cutoff + body reinforcement
+        let style = &ctx.config.style;
         if cutoff_bin < core_bins && ctx.damage.cutoff.mean < 19500.0 {
-            harmonic_ext::compute_harmonic_extension(
+            harmonic_ext::compute_harmonic_extension_styled(
                 &ctx.lattice.core.magnitude,
                 &ctx.lattice.core.phase,
                 &ctx.fields.harmonic,
                 cutoff_bin,
                 bin_to_freq,
                 strength * ctx.config.hf_reconstruction,
+                style.air_brightness,
+                style.body,
+                &mut ctx.residual.harmonic,
+            );
+        } else {
+            // Even without cutoff, apply body reinforcement for high-quality sources
+            harmonic_ext::compute_harmonic_extension_styled(
+                &ctx.lattice.core.magnitude,
+                &ctx.lattice.core.phase,
+                &ctx.fields.harmonic,
+                core_bins, // no cutoff
+                bin_to_freq,
+                strength,
+                style.air_brightness,
+                style.body,
                 &mut ctx.residual.harmonic,
             );
         }
@@ -98,14 +125,28 @@ impl CirrusModule for InverseResidualSolver {
             &mut ctx.residual.phase,
         );
 
-        // 5. Side recovery
+        // 5. Side recovery (with spatial_spread from style)
+        // Use stereo-biased variant when cross-channel context is available
         if ctx.channels >= 2 && ctx.damage.stereo_collapse.mean > 0.1 {
-            side_recovery::compute_side_residual(
-                &ctx.fields.spatial,
-                ctx.damage.stereo_collapse.mean,
-                strength,
-                &mut ctx.residual.side,
-            );
+            if let Some(ref cc) = ctx.cross_channel {
+                side_recovery::compute_side_residual_stereo_biased(
+                    &ctx.fields.spatial,
+                    cc,
+                    ctx.damage.stereo_collapse.mean,
+                    strength,
+                    style.spatial_spread,
+                    &mut ctx.residual.side,
+                );
+            } else {
+                // Fallback: no cross-channel info (mono mode or first frame)
+                side_recovery::compute_side_residual_styled(
+                    &ctx.fields.spatial,
+                    ctx.damage.stereo_collapse.mean,
+                    strength,
+                    style.spatial_spread,
+                    &mut ctx.residual.side,
+                );
+            }
         }
     }
 

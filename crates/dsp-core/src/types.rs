@@ -247,17 +247,19 @@ impl StructuredFields {
 
 /// The "missing residual" computed by M4 Inverse Residual Solver.
 /// Only contains what needs to be *added* to restore the signal.
+///
+/// All fields are **freq-domain** (per-bin). Time-domain residuals
+/// (e.g. declip corrections) live in `ProcessContext::time_candidate`.
 #[derive(Debug, Clone)]
 pub struct ResidualCandidate {
-    /// Harmonic continuation residual (above cutoff).
+    /// Freq-domain: harmonic continuation residual (magnitude per-bin, above cutoff).
     pub harmonic: Vec<f32>,
-    /// Transient repair residual.
-    pub transient: Vec<f32>,
-    /// Air-field continuation residual.
+    /// Freq-domain: air-field continuation residual (magnitude per-bin).
     pub air: Vec<f32>,
-    /// Phase correction residual.
+    /// Freq-domain: phase correction residual (per-bin).
     pub phase: Vec<f32>,
-    /// Stereo side recovery residual.
+    /// Spatial control: side/mid recovery coefficients (ratio per-bin, 0-ρ_max).
+    /// Not freq-domain magnitude — needs cross-channel context to apply.
     pub side: Vec<f32>,
 }
 
@@ -265,7 +267,6 @@ impl Default for ResidualCandidate {
     fn default() -> Self {
         Self {
             harmonic: Vec::new(),
-            transient: Vec::new(),
             air: Vec::new(),
             phase: Vec::new(),
             side: Vec::new(),
@@ -277,7 +278,6 @@ impl ResidualCandidate {
     pub fn new(num_bins: usize) -> Self {
         Self {
             harmonic: vec![0.0; num_bins],
-            transient: vec![0.0; num_bins],
             air: vec![0.0; num_bins],
             phase: vec![0.0; num_bins],
             side: vec![0.0; num_bins],
@@ -286,7 +286,6 @@ impl ResidualCandidate {
 
     pub fn clear(&mut self) {
         self.harmonic.fill(0.0);
-        self.transient.fill(0.0);
         self.air.fill(0.0);
         self.phase.fill(0.0);
         self.side.fill(0.0);
@@ -299,8 +298,11 @@ impl ResidualCandidate {
 /// Contains only the residual that passed consistency checks.
 #[derive(Debug, Clone)]
 pub struct ValidatedResidual {
-    /// Time-domain validated residual to be added to dry signal.
+    /// Time-domain validated residual to be added to dry signal (from freq-domain path).
     pub data: Vec<f32>,
+    /// Time-domain residual from declip/transient repair (bypasses freq-domain validation).
+    /// Uses independent gain path in M6 — not scaled by freq-domain consistency.
+    pub time_residual: Vec<f32>,
     /// Per-sample acceptance mask (0.0 = rejected, 1.0 = fully accepted).
     pub acceptance_mask: Vec<f32>,
     /// Overall consistency score C_cons (0-1). Higher = more consistent.
@@ -313,6 +315,7 @@ impl Default for ValidatedResidual {
     fn default() -> Self {
         Self {
             data: Vec::new(),
+            time_residual: Vec::new(),
             acceptance_mask: Vec::new(),
             consistency_score: 0.0,
             reprojection_error: f32::MAX,
@@ -324,6 +327,7 @@ impl ValidatedResidual {
     pub fn new(num_samples: usize) -> Self {
         Self {
             data: vec![0.0; num_samples],
+            time_residual: vec![0.0; num_samples],
             acceptance_mask: vec![0.0; num_samples],
             consistency_score: 0.0,
             reprojection_error: f32::MAX,
@@ -332,9 +336,100 @@ impl ValidatedResidual {
 
     pub fn clear(&mut self) {
         self.data.fill(0.0);
+        self.time_residual.fill(0.0);
         self.acceptance_mask.fill(0.0);
         self.consistency_score = 0.0;
         self.reprojection_error = f32::MAX;
+    }
+}
+
+// ─── Cross-Channel Analysis Context ───
+
+/// Stereo analysis context computed from dry L/R input.
+/// Used as gate/bias for side recovery — adjusts aggressiveness
+/// without replacing per-bin spatial_field analysis.
+///
+/// Computed once per frame from dry (pre-processing) L and R input.
+/// Both channels receive the same context (from previous frame)
+/// to ensure symmetric processing.
+#[derive(Debug, Clone, Copy)]
+pub struct CrossChannelContext {
+    /// Pearson correlation between L and R (-1 to 1).
+    /// High (near 1) = mono-like → more aggressive side recovery.
+    /// Low = true stereo content → conservative recovery.
+    pub correlation: f32,
+    /// Energy of mid signal: (L+R)/2
+    pub mid_energy: f32,
+    /// Energy of side signal: (L-R)/2
+    pub side_energy: f32,
+    /// Stereo width: side_energy / (mid_energy + ε)
+    pub stereo_width: f32,
+}
+
+impl Default for CrossChannelContext {
+    fn default() -> Self {
+        Self {
+            correlation: 0.0,
+            mid_energy: 0.0,
+            side_energy: 0.0,
+            stereo_width: 0.0,
+        }
+    }
+}
+
+impl CrossChannelContext {
+    /// Compute cross-channel context from L and R dry input buffers.
+    pub fn from_lr(left: &[f32], right: &[f32]) -> Self {
+        let len = left.len().min(right.len());
+        if len == 0 {
+            return Self::default();
+        }
+
+        let mut sum_l = 0.0f32;
+        let mut sum_r = 0.0f32;
+        let mut sum_ll = 0.0f32;
+        let mut sum_rr = 0.0f32;
+        let mut sum_lr = 0.0f32;
+        let mut mid_e = 0.0f32;
+        let mut side_e = 0.0f32;
+
+        for i in 0..len {
+            let l = left[i];
+            let r = right[i];
+            sum_l += l;
+            sum_r += r;
+            sum_ll += l * l;
+            sum_rr += r * r;
+            sum_lr += l * r;
+
+            let mid = (l + r) * 0.5;
+            let side = (l - r) * 0.5;
+            mid_e += mid * mid;
+            side_e += side * side;
+        }
+
+        let n = len as f32;
+        mid_e /= n;
+        side_e /= n;
+
+        // Pearson correlation
+        let mean_l = sum_l / n;
+        let mean_r = sum_r / n;
+        let var_l = (sum_ll / n - mean_l * mean_l).max(0.0);
+        let var_r = (sum_rr / n - mean_r * mean_r).max(0.0);
+        let cov_lr = sum_lr / n - mean_l * mean_r;
+        let denom = (var_l * var_r).sqrt();
+        let correlation = if denom > 1e-12 { (cov_lr / denom).clamp(-1.0, 1.0) } else { 0.0 };
+
+        let epsilon = 1e-10;
+        let stereo_width = side_e / (mid_e + epsilon);
+
+        Self {
+            correlation,
+            mid_energy: mid_e,
+            side_energy: side_e,
+            stereo_width,
+        }
     }
 }
 

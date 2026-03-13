@@ -5,13 +5,19 @@ const strengthSlider = document.getElementById('strength');
 const hfSlider = document.getElementById('hfReconstruction');
 const dynSlider = document.getElementById('dynamics');
 const statusEl = document.getElementById('status');
+const styleGrid = document.getElementById('styleGrid');
+const styleBtns = styleGrid.querySelectorAll('.style-btn');
+
+let currentStylePreset = 0;
 
 // Load saved state
-chrome.storage.local.get(['enabled', 'strength', 'hfReconstruction', 'dynamics'], (data) => {
+chrome.storage.local.get(['enabled', 'strength', 'hfReconstruction', 'dynamics', 'stylePreset'], (data) => {
   enableToggle.checked = data.enabled ?? false;
   strengthSlider.value = data.strength ?? 70;
   hfSlider.value = data.hfReconstruction ?? 80;
   dynSlider.value = data.dynamics ?? 60;
+  currentStylePreset = data.stylePreset ?? 0;
+  updateStyleUI();
   updateUI();
 });
 
@@ -29,12 +35,20 @@ function updateUI() {
   }
 }
 
+function updateStyleUI() {
+  styleBtns.forEach(btn => {
+    const preset = parseInt(btn.dataset.preset);
+    btn.classList.toggle('selected', preset === currentStylePreset);
+  });
+}
+
 function saveAndNotify() {
   const state = {
     enabled: enableToggle.checked,
     strength: parseInt(strengthSlider.value),
     hfReconstruction: parseInt(hfSlider.value),
     dynamics: parseInt(dynSlider.value),
+    stylePreset: currentStylePreset,
   };
   chrome.storage.local.set(state);
   chrome.runtime.sendMessage({ type: 'CONFIG_UPDATE', ...state });
@@ -48,6 +62,7 @@ enableToggle.addEventListener('change', async () => {
     strength: parseInt(strengthSlider.value),
     hfReconstruction: parseInt(hfSlider.value),
     dynamics: parseInt(dynSlider.value),
+    stylePreset: currentStylePreset,
   };
   await chrome.storage.local.set(state);
   updateUI();
@@ -64,3 +79,12 @@ enableToggle.addEventListener('change', async () => {
 strengthSlider.addEventListener('input', saveAndNotify);
 hfSlider.addEventListener('input', saveAndNotify);
 dynSlider.addEventListener('input', saveAndNotify);
+
+// Style preset buttons
+styleBtns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    currentStylePreset = parseInt(btn.dataset.preset);
+    updateStyleUI();
+    saveAndNotify();
+  });
+});

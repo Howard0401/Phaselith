@@ -64,6 +64,11 @@ impl CirrusModule for StructuredFactorizer {
             &mut ctx.fields.transient,
         );
 
+        // Pre-echo suppression scaled by config.transient
+        if ctx.config.transient > 0.01 {
+            transient::suppress_pre_echo(samples, ctx.config.transient);
+        }
+
         // Air field: high-frequency envelope from air lattice
         let air_bin_to_freq = ctx.sample_rate as f32 / ctx.lattice.air.fft_size as f32;
         let cutoff_bin = (ctx.damage.cutoff.mean / bin_to_freq) as usize;

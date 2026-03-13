@@ -11,8 +11,9 @@
 
 use core::cell::UnsafeCell;
 
-use asce_dsp_core::config::{EngineConfig, PhaseMode, QualityMode};
+use asce_dsp_core::config::{EngineConfig, PhaseMode, QualityMode, StyleConfig, StylePreset};
 use asce_dsp_core::engine::CirrusEngineBuilder;
+use asce_dsp_core::types::CrossChannelContext;
 use asce_dsp_core::CirrusEngine;
 
 // ─── Global state container ───
@@ -23,6 +24,17 @@ struct WasmState {
     engine_r: UnsafeCell<Option<CirrusEngine>>,
     input_buf: UnsafeCell<[f32; 128]>,
     output_buf: UnsafeCell<[f32; 128]>,
+
+    // ─── Cross-channel symmetric one-frame delay ───
+    // L dry input is saved when ch==0 is processed, because the shared input_buf
+    // will be overwritten when ch==1 arrives.
+    input_l_saved: UnsafeCell<[f32; 128]>,
+    // Cross-channel context computed at end of current frame (after R processing).
+    // Only used as prev for next frame — never read during current frame.
+    cross_channel_current: UnsafeCell<Option<CrossChannelContext>>,
+    // Cross-channel context from previous frame. Both L and R read this same value
+    // within a frame, ensuring symmetric processing.
+    cross_channel_prev: UnsafeCell<Option<CrossChannelContext>>,
 }
 
 // Safety: WASM target is single-threaded. No concurrent access is possible.
@@ -33,6 +45,9 @@ static STATE: WasmState = WasmState {
     engine_r: UnsafeCell::new(None),
     input_buf: UnsafeCell::new([0.0; 128]),
     output_buf: UnsafeCell::new([0.0; 128]),
+    input_l_saved: UnsafeCell::new([0.0; 128]),
+    cross_channel_current: UnsafeCell::new(None),
+    cross_channel_prev: UnsafeCell::new(None),
 };
 
 fn make_config() -> EngineConfig {
@@ -72,21 +87,56 @@ pub extern "C" fn get_output_ptr() -> *const f32 {
 
 /// Process a block for the given channel (0=left, 1=right).
 /// Worklet must call this once per channel per render quantum.
+///
+/// Symmetric one-frame delay for cross-channel analysis:
+///   ch==0 (L): save dry input → inject cross_channel_prev → process L
+///   ch==1 (R): inject cross_channel_prev → process R → compute new cross_channel → rotate
+///
+/// Both L and R read the SAME cross_channel_prev within a frame.
+/// cross_channel_prev only updates AFTER R processing completes.
+/// First frame: cross_channel_prev = None → engines fall back to non-stereo path.
 #[no_mangle]
 pub extern "C" fn process_block_ch(channel: u32, len: u32) {
     unsafe {
+        let l = (len as usize).min(128);
+        let input = &*STATE.input_buf.get();
+        let output = &mut *STATE.output_buf.get();
+
         let engine_cell = if channel == 0 {
             &STATE.engine_l
         } else {
             &STATE.engine_r
         };
-        let input = &*STATE.input_buf.get();
-        let output = &mut *STATE.output_buf.get();
 
         if let Some(engine) = (*engine_cell.get()).as_mut() {
-            let l = (len as usize).min(128);
-            output[..l].copy_from_slice(&input[..l]);
-            engine.process(&mut output[..l]);
+            if channel == 0 {
+                // Step 1: Save L dry input (input_buf will be overwritten by R)
+                let saved = &mut *STATE.input_l_saved.get();
+                saved[..l].copy_from_slice(&input[..l]);
+
+                // Step 2: Inject previous frame's cross-channel context
+                engine.context_mut().cross_channel = *STATE.cross_channel_prev.get();
+
+                // Step 3: Process L
+                output[..l].copy_from_slice(&input[..l]);
+                engine.process(&mut output[..l]);
+            } else {
+                // Step 1: Inject same previous frame's cross-channel context (symmetric)
+                engine.context_mut().cross_channel = *STATE.cross_channel_prev.get();
+
+                // Step 2: Process R
+                output[..l].copy_from_slice(&input[..l]);
+                engine.process(&mut output[..l]);
+
+                // Step 3: Compute cross-channel from dry L (saved) + dry R (input_buf)
+                // This happens AFTER R processing — not used until next frame
+                let saved_l = &*STATE.input_l_saved.get();
+                let cc = CrossChannelContext::from_lr(&saved_l[..l], &input[..l]);
+                *STATE.cross_channel_current.get() = Some(cc);
+
+                // Step 4: Rotate: current → prev (for next frame)
+                *STATE.cross_channel_prev.get() = *STATE.cross_channel_current.get();
+            }
         }
     }
 }
@@ -152,5 +202,68 @@ pub extern "C" fn set_dynamics(value: f32) {
 pub extern "C" fn set_transient(value: f32) {
     let mut config = current_config();
     config.transient = value.clamp(0.0, 1.0);
+    with_both_engines(|e| e.update_config(config));
+}
+
+// ─── Style / Character exports ───
+
+/// Set style preset by index:
+/// 0=Reference, 1=Grand, 2=Smooth, 3=Vocal, 4=Punch, 5=Air, 6=Night
+#[no_mangle]
+pub extern "C" fn set_style(preset_index: u32) {
+    let preset = match preset_index {
+        0 => StylePreset::Reference,
+        1 => StylePreset::Grand,
+        2 => StylePreset::Smooth,
+        3 => StylePreset::Vocal,
+        4 => StylePreset::Punch,
+        5 => StylePreset::Air,
+        6 => StylePreset::Night,
+        _ => StylePreset::Reference,
+    };
+    let mut config = current_config();
+    config.style = StyleConfig::from_preset(preset);
+    with_both_engines(|e| e.update_config(config));
+}
+
+#[no_mangle]
+pub extern "C" fn set_warmth(value: f32) {
+    let mut config = current_config();
+    config.style.warmth = value.clamp(0.0, 1.0);
+    with_both_engines(|e| e.update_config(config));
+}
+
+#[no_mangle]
+pub extern "C" fn set_air_brightness(value: f32) {
+    let mut config = current_config();
+    config.style.air_brightness = value.clamp(0.0, 1.0);
+    with_both_engines(|e| e.update_config(config));
+}
+
+#[no_mangle]
+pub extern "C" fn set_smoothness(value: f32) {
+    let mut config = current_config();
+    config.style.smoothness = value.clamp(0.0, 1.0);
+    with_both_engines(|e| e.update_config(config));
+}
+
+#[no_mangle]
+pub extern "C" fn set_spatial_spread(value: f32) {
+    let mut config = current_config();
+    config.style.spatial_spread = value.clamp(0.0, 1.0);
+    with_both_engines(|e| e.update_config(config));
+}
+
+#[no_mangle]
+pub extern "C" fn set_impact_gain(value: f32) {
+    let mut config = current_config();
+    config.style.impact_gain = value.clamp(0.0, 1.0);
+    with_both_engines(|e| e.update_config(config));
+}
+
+#[no_mangle]
+pub extern "C" fn set_body(value: f32) {
+    let mut config = current_config();
+    config.style.body = value.clamp(0.0, 1.0);
     with_both_engines(|e| e.update_config(config));
 }

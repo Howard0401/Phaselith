@@ -52,8 +52,9 @@ impl CirrusModule for SelfReprojectionValidator {
         };
 
         // Ensure validated residual is allocated
-        if ctx.validated.data.len() != samples.len() {
-            ctx.validated = ValidatedResidual::new(samples.len());
+        let sample_len = samples.len();
+        if ctx.validated.data.len() != sample_len {
+            ctx.validated = ValidatedResidual::new(sample_len);
         }
         if ctx.validated.acceptance_mask.len() != core_bins {
             ctx.validated.acceptance_mask = vec![1.0; core_bins];
@@ -82,11 +83,18 @@ impl CirrusModule for SelfReprojectionValidator {
                 core_bins,
             );
 
-            // 3. Compute acceptance mask
-            let mask = acceptance::compute_acceptance_mask(&e_rep, cutoff_bin);
+            // 3. Compute acceptance mask (dynamics-controlled threshold)
+            let mask = acceptance::compute_acceptance_mask_dynamic(
+                &e_rep, cutoff_bin, ctx.config.dynamics,
+            );
 
-            // 4. Apply constraints (low-band lock, etc.)
-            let constrained_mask = constraints::apply_constraints(&mask, cutoff_bin);
+            // 4. Apply constraints (low-band lock + impact band)
+            let constrained_mask = constraints::apply_constraints_styled(
+                &mask, cutoff_bin, ctx.sample_rate,
+                ctx.lattice.core.fft_size,
+                ctx.config.style.impact_gain,
+                &ctx.fields.transient,
+            );
 
             // 5. Shrink residual where error is high
             for k in 0..current_residual.len().min(constrained_mask.len()) {
@@ -118,6 +126,13 @@ impl CirrusModule for SelfReprojectionValidator {
             // Approximate contribution from frequency bin to time domain
             // This is a placeholder; real implementation uses overlap-add ISTFT
             ctx.validated.data[k % out_len] += current_residual[k] * scale;
+        }
+
+        // Time-domain residuals bypass freq-domain validation — no additional scaling.
+        // Declip already has internal scaling (clipping_severity * dynamics * transient).
+        let time_len = ctx.time_candidate.len().min(ctx.validated.time_residual.len());
+        for i in 0..time_len {
+            ctx.validated.time_residual[i] = ctx.time_candidate[i];
         }
 
         ctx.validated.consistency_score =

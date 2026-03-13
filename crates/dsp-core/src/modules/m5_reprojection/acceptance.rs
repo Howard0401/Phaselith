@@ -3,11 +3,23 @@
 /// A(m,k) = 1 if E_rep < threshold → accept the residual
 /// A(m,k) = shrunk value if E_rep >= threshold → partially reject
 pub fn compute_acceptance_mask(error: &[f32], cutoff_bin: usize) -> Vec<f32> {
+    compute_acceptance_mask_dynamic(error, cutoff_bin, 0.6)
+}
+
+/// Acceptance mask with dynamics-controlled threshold.
+/// Higher `dynamics` → more lenient threshold → more residual accepted.
+pub fn compute_acceptance_mask_dynamic(
+    error: &[f32],
+    cutoff_bin: usize,
+    dynamics: f32,
+) -> Vec<f32> {
     let len = error.len();
     let mut mask = vec![1.0f32; len];
 
     // Compute threshold from error statistics
-    let threshold = compute_adaptive_threshold(error);
+    // dynamics 0.0 → MAD mult 2.5 (strict), 1.0 → MAD mult 1.5 (lenient)
+    let mad_mult = 2.5 - dynamics.clamp(0.0, 1.0) * 1.0;
+    let threshold = compute_adaptive_threshold_scaled(error, mad_mult);
 
     for k in 0..len {
         if error[k] > threshold {
@@ -26,7 +38,12 @@ pub fn compute_acceptance_mask(error: &[f32], cutoff_bin: usize) -> Vec<f32> {
 
 /// Compute adaptive threshold based on error distribution.
 /// Uses median + MAD (median absolute deviation) for robustness.
+#[allow(dead_code)]
 fn compute_adaptive_threshold(error: &[f32]) -> f32 {
+    compute_adaptive_threshold_scaled(error, 2.0)
+}
+
+fn compute_adaptive_threshold_scaled(error: &[f32], mad_multiplier: f32) -> f32 {
     if error.is_empty() {
         return 0.01;
     }
@@ -41,8 +58,8 @@ fn compute_adaptive_threshold(error: &[f32]) -> f32 {
     deviations.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let mad = deviations[deviations.len() / 2];
 
-    // Threshold = median + 2 * MAD (reject outliers)
-    (median + 2.0 * mad).max(0.01)
+    // Threshold = median + multiplier * MAD
+    (median + mad_multiplier * mad).max(0.01)
 }
 
 /// Apply constrained shrinkage to the residual.

@@ -7,9 +7,25 @@ pub fn compute_declip_residual(
     clipping_severity: f32,
     residual: &mut [f32],
 ) {
+    compute_declip_residual_scaled(samples, clipping_severity, 1.0, 0.5, residual);
+}
+
+/// Extended declip with dynamics and transient scaling.
+/// - `dynamics`: scales overall declip contribution (0.0-1.0)
+/// - `transient`: controls peak estimation aggressiveness (0.0-1.0)
+pub fn compute_declip_residual_scaled(
+    samples: &[f32],
+    clipping_severity: f32,
+    dynamics: f32,
+    transient: f32,
+    residual: &mut [f32],
+) {
     let threshold = 0.99;
     let len = samples.len().min(residual.len());
-    let strength = clipping_severity.clamp(0.0, 1.0);
+    let strength = clipping_severity.clamp(0.0, 1.0) * dynamics;
+
+    // Peak estimation scaling: transient 0.0 → 0.15 (conservative), 1.0 → 0.35 (aggressive)
+    let peak_scale = 0.15 + transient * 0.20;
 
     let mut clip_start: Option<usize> = None;
 
@@ -21,7 +37,9 @@ pub fn compute_declip_residual(
                 clip_start = Some(i);
             }
             (false, Some(start)) => {
-                compute_region_residual(samples, start, i, threshold, strength, residual);
+                compute_region_residual_inner(
+                    samples, start, i, threshold, strength, peak_scale, residual,
+                );
                 clip_start = None;
             }
             _ => {}
@@ -29,12 +47,13 @@ pub fn compute_declip_residual(
     }
 }
 
-fn compute_region_residual(
+fn compute_region_residual_inner(
     samples: &[f32],
     start: usize,
     end: usize,
     threshold: f32,
     strength: f32,
+    peak_scale: f32,
     residual: &mut [f32],
 ) {
     if end <= start {
@@ -55,7 +74,7 @@ fn compute_region_residual(
     };
 
     let estimated_peak =
-        threshold + (slope_before.abs() + slope_after.abs()) * 0.5 * (end - start) as f32 * 0.25;
+        threshold + (slope_before.abs() + slope_after.abs()) * 0.5 * (end - start) as f32 * peak_scale;
     let peak = estimated_peak.min(threshold * 1.5);
 
     let region_len = (end - start).max(1);

@@ -103,5 +103,6 @@ function updateConfig(cfg) {
     enabled: cfg.enabled !== undefined ? cfg.enabled : true,
     hfReconstruction: (cfg.hfReconstruction ?? 80) / 100,
     dynamics: (cfg.dynamics ?? 60) / 100,
+    stylePreset: cfg.stylePreset ?? 0,
   });
 }

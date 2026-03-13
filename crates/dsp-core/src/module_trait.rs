@@ -17,8 +17,15 @@ pub struct ProcessContext {
     pub lattice: crate::types::TriLattice,
     /// Written by M3: structured field decomposition.
     pub fields: crate::types::StructuredFields,
-    /// Written by M4: inverse residual candidate.
+    /// Written by M4: inverse residual candidate (freq-domain only).
     pub residual: crate::types::ResidualCandidate,
+    /// Written by M4: time-domain residual candidate (per-sample, from declip).
+    /// Separate from freq-domain residual to avoid domain mixing.
+    /// Sized to sample count, not bin count.
+    pub time_candidate: Vec<f32>,
+    /// Cross-channel stereo context from previous frame (symmetric one-frame delay).
+    /// None in mono mode or on first frame. Used as gate/bias for side recovery.
+    pub cross_channel: Option<crate::types::CrossChannelContext>,
     /// Written by M5: validated residual after self-reprojection.
     pub validated: crate::types::ValidatedResidual,
     /// Dry signal copy for M6 safety mixing.
@@ -36,6 +43,8 @@ impl ProcessContext {
             lattice: crate::types::TriLattice::default(),
             fields: crate::types::StructuredFields::default(),
             residual: crate::types::ResidualCandidate::default(),
+            time_candidate: Vec::new(),
+            cross_channel: None,
             validated: crate::types::ValidatedResidual::default(),
             dry_buffer: Vec::new(),
         }

@@ -29,7 +29,7 @@ async function startCapture() {
 
     // Read saved config from storage (offscreen can't access chrome.storage)
     const config = await chrome.storage.local.get(
-      ['strength', 'hfReconstruction', 'dynamics', 'enabled']
+      ['strength', 'hfReconstruction', 'dynamics', 'enabled', 'stylePreset']
     );
 
     chrome.runtime.sendMessage({

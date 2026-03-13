@@ -10,11 +10,16 @@
 
 use crate::format_negotiate;
 use crate::mmap_ipc::MmapIpc;
-use asce_dsp_core::config::{EngineConfig, PhaseMode, QualityMode};
+use asce_dsp_core::config::{EngineConfig, PhaseMode, QualityMode, StyleConfig};
 use asce_dsp_core::engine::{CirrusEngine, CirrusEngineBuilder};
 
 /// The ASCE APO instance.
 /// Created by ClassFactory, one per audio stream.
+///
+/// TODO: APO is currently a single-engine sequential mono path with reset between channels.
+/// This prevents L→R state contamination but wastes work on reset.
+/// Future: redesign as stereo-native reference runtime (dual-engine with shared
+/// cross-channel analysis, or true interleaved stereo processing).
 pub struct AsceApo {
     engine: Option<CirrusEngine>,
     mmap: Option<MmapIpc>,
@@ -22,6 +27,9 @@ pub struct AsceApo {
     channels: u16,
     frame_size: usize,
     locked: bool,
+    /// Pre-allocated scratch buffer for de-interleaved channel data.
+    /// Sized in lock_for_process() to avoid allocation in process().
+    channel_buf: Vec<f32>,
 }
 
 impl AsceApo {
@@ -33,6 +41,7 @@ impl AsceApo {
             channels: 2,
             frame_size: 480, // 10ms at 48kHz
             locked: false,
+            channel_buf: Vec::new(),
         }
     }
 
@@ -70,6 +79,10 @@ impl AsceApo {
                 .with_channels(self.channels)
                 .build_default(),
         );
+
+        // Pre-allocate channel scratch buffer for de-interleaving.
+        // This avoids Vec allocation inside process() (RT safety).
+        self.channel_buf = vec![0.0f32; frame_size];
 
         self.locked = true;
     }
@@ -117,19 +130,26 @@ impl AsceApo {
             } else {
                 // Multi-channel: process each channel separately
                 // De-interleave → process → re-interleave
+                // Uses pre-allocated channel_buf (no allocation in hot path)
                 for c in 0..ch {
-                    // Extract channel
-                    let mut channel_buf: Vec<f32> = (0..frames)
-                        .map(|f| input[f * ch + c])
-                        .collect();
+                    // Extract channel into pre-allocated buffer
+                    for f in 0..frames {
+                        self.channel_buf[f] = input[f * ch + c];
+                    }
 
-                    engine.process(&mut channel_buf);
+                    engine.process(&mut self.channel_buf[..frames]);
 
                     // Write back
                     for f in 0..frames {
-                        output[f * ch + c] = channel_buf[f];
+                        output[f * ch + c] = self.channel_buf[f];
                     }
 
+                    // Reset between channels to prevent L→R state contamination.
+                    // CirrusEngine is stateful (frame_index, damage, lattice, fields,
+                    // validated all accumulate). Without reset, R channel would inherit
+                    // L channel's processing history.
+                    // TODO: Replace with proper stereo-native architecture
+                    // (dual-engine + shared cross-channel, or interleaved processing).
                     if c == 0 {
                         engine.reset();
                     }
@@ -167,6 +187,7 @@ impl AsceApo {
                     2 => QualityMode::Ultra,
                     _ => QualityMode::Standard,
                 },
+                style: StyleConfig::default(),
             }
         } else {
             EngineConfig::default()

@@ -17,6 +17,8 @@ pub struct EngineConfig {
     pub quality_mode: QualityMode,
     /// Global enable/disable.
     pub enabled: bool,
+    /// Style / character preset.
+    pub style: StyleConfig,
 }
 
 impl Default for EngineConfig {
@@ -29,7 +31,83 @@ impl Default for EngineConfig {
             phase_mode: PhaseMode::Linear,
             quality_mode: QualityMode::Standard,
             enabled: true,
+            style: StyleConfig::default(),
         }
+    }
+}
+
+// ─── Style / Character System ───
+
+/// Style preset identifiers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StylePreset {
+    Reference,
+    Grand,
+    Smooth,
+    Vocal,
+    Punch,
+    Air,
+    Night,
+}
+
+/// Six-axis character configuration.
+/// These parameters drive the "character layer" that operates
+/// independently of damage-driven restoration, ensuring every
+/// song — even high-quality sources — gets a perceptible upgrade.
+#[derive(Debug, Clone, Copy)]
+pub struct StyleConfig {
+    /// Subtle even-harmonic saturation (tube-like warmth). 0.0-1.0
+    pub warmth: f32,
+    /// HF extension slope multiplier (darker ↔ brighter). 0.0-1.0
+    pub air_brightness: f32,
+    /// Upper-mid roughness suppression. 0.0-1.0
+    pub smoothness: f32,
+    /// Stereo side recovery aggressiveness. 0.0-1.0
+    pub spatial_spread: f32,
+    /// Impact band (80-180 Hz) opening for transient punch. 0.0-1.0
+    pub impact_gain: f32,
+    /// Low-mid harmonic body reinforcement. 0.0-1.0
+    pub body: f32,
+}
+
+impl Default for StyleConfig {
+    fn default() -> Self {
+        Self::from_preset(StylePreset::Reference)
+    }
+}
+
+impl StyleConfig {
+    /// Create a StyleConfig from a named preset.
+    pub fn from_preset(preset: StylePreset) -> Self {
+        match preset {
+            //                  warmth  air_br  smooth  spatial impact  body
+            StylePreset::Reference => Self::new(0.15, 0.50, 0.40, 0.30, 0.15, 0.40),
+            StylePreset::Grand     => Self::new(0.25, 0.80, 0.50, 0.45, 0.18, 0.35),
+            StylePreset::Smooth    => Self::new(0.20, 0.30, 0.75, 0.25, 0.12, 0.50),
+            StylePreset::Vocal     => Self::new(0.18, 0.40, 0.45, 0.20, 0.20, 0.55),
+            StylePreset::Punch     => Self::new(0.20, 0.45, 0.35, 0.30, 0.35, 0.60),
+            StylePreset::Air       => Self::new(0.10, 0.90, 0.35, 0.40, 0.10, 0.30),
+            StylePreset::Night     => Self::new(0.30, 0.20, 0.80, 0.20, 0.10, 0.55),
+        }
+    }
+
+    /// Construct with explicit values.
+    pub fn new(
+        warmth: f32,
+        air_brightness: f32,
+        smoothness: f32,
+        spatial_spread: f32,
+        impact_gain: f32,
+        body: f32,
+    ) -> Self {
+        Self { warmth, air_brightness, smoothness, spatial_spread, impact_gain, body }
+    }
+
+    /// Overall character intensity (average of all axes).
+    /// Used to compute the character floor in M6.
+    pub fn character_intensity(&self) -> f32 {
+        (self.warmth + self.air_brightness + self.smoothness
+            + self.spatial_spread + self.impact_gain + self.body) / 6.0
     }
 }
 
