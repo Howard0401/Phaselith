@@ -1,59 +1,59 @@
 // Background service worker
 // Manages tab capture and offscreen document lifecycle.
-//
-// Flow: tabCapture.getMediaStreamId → offscreen document → AudioContext + WASM
+// Reads saved config from chrome.storage and sends to offscreen with stream.
 
 let offscreenCreated = false;
 
-// Handle messages from popup and offscreen
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'START_CAPTURE') {
     startCapture();
   } else if (msg.type === 'STOP_CAPTURE') {
-    stopCapture();
+    chrome.runtime.sendMessage({ type: 'OFFSCREEN_STOP' }).catch(() => {});
   } else if (msg.type === 'CONFIG_UPDATE') {
-    // Forward config to offscreen document
-    forwardToOffscreen(msg);
+    // Forward config to offscreen
+    chrome.runtime.sendMessage(msg).catch(() => {});
   }
-  return true;
+  // Never return true — avoids "message channel closed" errors
 });
 
 async function startCapture() {
   try {
-    // Get the active tab
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) return;
 
-    // Get media stream ID for this tab
     const streamId = await chrome.tabCapture.getMediaStreamId({
       targetTabId: tab.id,
     });
 
-    // Create offscreen document if not exists
     await ensureOffscreen();
 
-    // Send stream ID to offscreen document to start processing
+    // Read saved config from storage (offscreen can't access chrome.storage)
+    const config = await chrome.storage.local.get(
+      ['strength', 'hfReconstruction', 'dynamics', 'enabled']
+    );
+
     chrome.runtime.sendMessage({
       type: 'OFFSCREEN_START',
       streamId,
       tabId: tab.id,
-    });
+      config,
+    }).catch(() => {});
   } catch (err) {
     console.error('ASCE: Failed to start capture:', err);
   }
 }
 
-async function stopCapture() {
-  chrome.runtime.sendMessage({ type: 'OFFSCREEN_STOP' });
-}
-
 async function ensureOffscreen() {
   if (offscreenCreated) return;
 
-  const existing = await chrome.offscreen.hasDocument?.() ?? false;
-  if (existing) {
-    offscreenCreated = true;
-    return;
+  try {
+    const existing = await chrome.offscreen.hasDocument();
+    if (existing) {
+      offscreenCreated = true;
+      return;
+    }
+  } catch (e) {
+    // hasDocument might not exist in older Chrome versions
   }
 
   await chrome.offscreen.createDocument({
@@ -62,10 +62,4 @@ async function ensureOffscreen() {
     justification: 'ASCE audio processing requires AudioContext with WASM AudioWorklet',
   });
   offscreenCreated = true;
-}
-
-function forwardToOffscreen(msg) {
-  chrome.runtime.sendMessage(msg).catch(() => {
-    // Offscreen might not be created yet, ignore
-  });
 }

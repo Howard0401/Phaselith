@@ -46,19 +46,28 @@ impl CirrusModule for PerceptualSafetyMixer {
         }
 
         let len = samples.len().min(ctx.validated.data.len());
+        let limit = 0.99f32;
 
-        // Add validated residual to samples with safety guards
+        // Add validated residual to samples with per-sample ceiling.
+        // If dry + residual would exceed limit, scale down the residual
+        // contribution for that sample. The dry signal is NEVER attenuated.
         for i in 0..len {
+            let dry = samples[i];
             let residual = ctx.validated.data[i] * mix_gain;
+            let mixed = dry + residual;
 
-            // Add-only: don't reduce existing signal energy
-            let mixed = samples[i] + residual;
+            if mixed.abs() > limit {
+                // How much headroom is available above dry?
+                let headroom = (limit - dry.abs()).max(0.0);
+                // Clamp residual to fit within headroom, preserving sign
+                samples[i] = dry + residual.signum() * headroom.min(residual.abs());
+            } else {
+                samples[i] = mixed;
+            }
 
-            samples[i] = mixed;
+            // Final safety clamp: handles dry input already above limit
+            samples[i] = samples[i].clamp(-limit, limit);
         }
-
-        // Apply true peak guard
-        true_peak::apply_true_peak_guard(samples, 0.99);
     }
 
     fn reset(&mut self) {}

@@ -41,14 +41,24 @@ function saveAndNotify() {
   updateUI();
 }
 
-enableToggle.addEventListener('change', () => {
+enableToggle.addEventListener('change', async () => {
+  // Save config FIRST so background reads the correct values
+  const state = {
+    enabled: enableToggle.checked,
+    strength: parseInt(strengthSlider.value),
+    hfReconstruction: parseInt(hfSlider.value),
+    dynamics: parseInt(dynSlider.value),
+  };
+  await chrome.storage.local.set(state);
+  updateUI();
+
   if (enableToggle.checked) {
-    // Start capture when enabling
     chrome.runtime.sendMessage({ type: 'START_CAPTURE' });
   } else {
     chrome.runtime.sendMessage({ type: 'STOP_CAPTURE' });
   }
-  saveAndNotify();
+  // Also send CONFIG_UPDATE for immediate effect
+  chrome.runtime.sendMessage({ type: 'CONFIG_UPDATE', ...state });
 });
 
 strengthSlider.addEventListener('input', saveAndNotify);

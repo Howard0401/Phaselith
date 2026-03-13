@@ -1,18 +1,23 @@
 /// Apply true peak guard to prevent inter-sample peaks from exceeding limit.
 ///
-/// Simple implementation: hard limits samples and applies a tiny fade
-/// to avoid discontinuities.
+/// Uses uniform gain reduction across the entire block instead of per-sample
+/// hard clipping. This preserves waveform shape (especially low-frequency
+/// content) while still preventing clipping.
 pub fn apply_true_peak_guard(samples: &mut [f32], limit: f32) {
-    for i in 0..samples.len() {
-        if samples[i].abs() > limit {
-            samples[i] = samples[i].signum() * limit;
+    // Find peak amplitude in this block
+    let mut peak = 0.0f32;
+    for &s in samples.iter() {
+        let a = s.abs();
+        if a > peak {
+            peak = a;
+        }
+    }
 
-            // Smooth the transition to avoid a discontinuity
-            if i > 0 {
-                let blend = 0.5;
-                samples[i] = samples[i] * blend + samples[i - 1] * (1.0 - blend);
-                samples[i] = samples[i].clamp(-limit, limit);
-            }
+    // If peak exceeds limit, apply uniform gain reduction to entire block
+    if peak > limit {
+        let gain = limit / peak;
+        for s in samples.iter_mut() {
+            *s *= gain;
         }
     }
 }

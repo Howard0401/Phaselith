@@ -1,19 +1,18 @@
 // Offscreen document: hosts AudioContext + WASM AudioWorklet
 //
-// Flow:
-//   1. Receives streamId from background
-//   2. Creates MediaStream from streamId via getUserMedia constraint hack
-//   3. Creates AudioContext → MediaStreamSource → AudioWorkletNode → destination
-//   4. AudioWorklet loads WASM and processes audio in real-time
+// 1. Fetches WASM binary and sends to worklet (worklet can't fetch)
+// 2. Does NOT use chrome.storage (not available in offscreen)
+// 3. Config comes via msg.config from background
 
 let audioCtx = null;
 let sourceNode = null;
 let workletNode = null;
 let mediaStream = null;
+let wasmBinary = null; // Cached WASM binary
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'OFFSCREEN_START') {
-    startProcessing(msg.streamId);
+    startProcessing(msg.streamId, msg.config);
   } else if (msg.type === 'OFFSCREEN_STOP') {
     stopProcessing();
   } else if (msg.type === 'CONFIG_UPDATE') {
@@ -21,12 +20,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
-async function startProcessing(streamId) {
+async function loadWasmBinary() {
+  if (wasmBinary) return wasmBinary;
+  const url = chrome.runtime.getURL('asce_wasm_bridge.wasm');
+  const response = await fetch(url);
+  wasmBinary = await response.arrayBuffer();
+  return wasmBinary;
+}
+
+async function startProcessing(streamId, config) {
   try {
-    // Stop any existing processing
     stopProcessing();
 
-    // Get the tab's audio stream using the streamId
+    // Load WASM binary first (offscreen has fetch, worklet doesn't)
+    const binary = await loadWasmBinary();
+
     mediaStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         mandatory: {
@@ -36,29 +44,43 @@ async function startProcessing(streamId) {
       },
     });
 
-    // Create AudioContext at tab's sample rate
     audioCtx = new AudioContext({ sampleRate: 48000 });
+    await audioCtx.audioWorklet.addModule(chrome.runtime.getURL('src/worklet-processor.js'));
 
-    // Load the AudioWorklet processor
-    await audioCtx.audioWorklet.addModule('src/worklet-processor.js');
-
-    // Create source from captured stream
     sourceNode = audioCtx.createMediaStreamSource(mediaStream);
-
-    // Create worklet node
     workletNode = new AudioWorkletNode(audioCtx, 'asce-processor', {
       numberOfInputs: 1,
       numberOfOutputs: 1,
       outputChannelCount: [2],
     });
 
-    // Connect: source → ASCE worklet → speakers
+    // Listen for worklet messages
+    workletNode.port.onmessage = (e) => {
+      const d = e.data;
+      if (d.type === 'WASM_READY') {
+        console.log('ASCE: WASM engine ready');
+        // Worklet caches and replays config on init — no need to resend here.
+        // Sending startup config would overwrite newer CONFIG_UPDATE values
+        // that arrived while WASM was loading.
+      } else if (d.type === 'WASM_ERROR') {
+        console.error('ASCE: WASM init error:', d.error);
+      }
+    };
+
+    // Send initial config to worklet so it caches the values before WASM loads.
+    // The worklet will replay these cached values in _initWasm() after WASM_READY.
+    if (config) updateConfig(config);
+
+    // Send WASM binary to worklet (it can't fetch on its own)
+    // .slice(0) creates a copy so the cached wasmBinary stays intact
+    const wasmCopy = binary.slice(0);
+    workletNode.port.postMessage(
+      { type: 'WASM_BINARY', buffer: wasmCopy },
+      [wasmCopy] // transfer (zero-copy move to worklet thread)
+    );
+
     sourceNode.connect(workletNode);
     workletNode.connect(audioCtx.destination);
-
-    // Load saved config
-    const data = await chrome.storage.local.get(['strength', 'hfReconstruction', 'dynamics', 'enabled']);
-    updateConfig(data);
 
     console.log('ASCE: Audio processing started');
   } catch (err) {
@@ -67,23 +89,10 @@ async function startProcessing(streamId) {
 }
 
 function stopProcessing() {
-  if (workletNode) {
-    workletNode.disconnect();
-    workletNode = null;
-  }
-  if (sourceNode) {
-    sourceNode.disconnect();
-    sourceNode = null;
-  }
-  if (audioCtx) {
-    audioCtx.close();
-    audioCtx = null;
-  }
-  if (mediaStream) {
-    mediaStream.getTracks().forEach(t => t.stop());
-    mediaStream = null;
-  }
-  console.log('ASCE: Audio processing stopped');
+  if (workletNode) { workletNode.disconnect(); workletNode = null; }
+  if (sourceNode) { sourceNode.disconnect(); sourceNode = null; }
+  if (audioCtx) { audioCtx.close(); audioCtx = null; }
+  if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
 }
 
 function updateConfig(cfg) {
@@ -91,6 +100,8 @@ function updateConfig(cfg) {
   workletNode.port.postMessage({
     type: 'config',
     strength: (cfg.strength ?? 70) / 100,
-    enabled: cfg.enabled ?? true,
+    enabled: cfg.enabled !== undefined ? cfg.enabled : true,
+    hfReconstruction: (cfg.hfReconstruction ?? 80) / 100,
+    dynamics: (cfg.dynamics ?? 60) / 100,
   });
 }
