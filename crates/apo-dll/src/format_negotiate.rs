@@ -3,10 +3,10 @@
 // APO supports: 32-bit float PCM, mono/stereo only, 44.1/48/96/192 kHz.
 //
 // Channel support is deliberately limited to 1-2 channels.
-// CirrusEngine is stateful (frame_index, damage, lattice, fields, validated
-// all accumulate). The current sequential-mono architecture resets between
-// channels, which prevents state contamination but means >2 channels would
-// get incorrect processing. Future: stereo-native architecture.
+// Dual-engine architecture: two independent mono CirrusEngines (L/R) with
+// symmetric one-frame-delayed cross-channel context. Each engine maintains
+// its own state (frame_index, damage, lattice, fields, validated).
+// >2 channels would require additional engines and cross-channel topology.
 
 /// Check if we support the given audio format parameters
 pub fn is_format_supported(
