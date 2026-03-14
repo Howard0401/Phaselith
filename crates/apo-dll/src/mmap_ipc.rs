@@ -10,6 +10,8 @@ use windows::Win32::Foundation::{HANDLE, CloseHandle, INVALID_HANDLE_VALUE};
 #[cfg(windows)]
 use windows::Win32::System::Memory::*;
 #[cfg(windows)]
+use windows::Win32::Security::*;
+#[cfg(windows)]
 use windows::core::PCWSTR;
 
 /// Shared config written by Tauri, read by APO (lock-free via atomics)
@@ -97,14 +99,39 @@ unsafe impl Sync for MmapIpc {}
 impl MmapIpc {
     /// Open or create the shared memory regions.
     /// Called during APO initialization (not on real-time thread).
+    ///
+    /// Uses a NULL DACL security descriptor so that both the Tauri app
+    /// (running as the logged-in user) and the APO DLL (running inside
+    /// audiodg.exe as NT AUTHORITY\LocalService) can access the mapping.
     pub fn open_or_create() -> Result<Self, String> {
         unsafe {
             let config_name = to_wide(MMAP_CONFIG_NAME);
             let status_name = to_wide(MMAP_STATUS_NAME);
 
+            // Build a SECURITY_ATTRIBUTES with a NULL DACL → all access for any account
+            let mut sd = SECURITY_DESCRIPTOR::default();
+            let sd_ptr = PSECURITY_DESCRIPTOR(&mut sd as *mut _ as *mut _);
+            InitializeSecurityDescriptor(
+                sd_ptr,
+                1, // SECURITY_DESCRIPTOR_REVISION
+            ).map_err(|e| format!("InitializeSecurityDescriptor: {e}"))?;
+
+            SetSecurityDescriptorDacl(
+                sd_ptr,
+                true,             // bDaclPresent = true
+                None,             // pDacl = NULL → allow all
+                false,            // bDaclDefaulted = false
+            ).map_err(|e| format!("SetSecurityDescriptorDacl: {e}"))?;
+
+            let sa = SECURITY_ATTRIBUTES {
+                nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+                lpSecurityDescriptor: sd_ptr.0,
+                bInheritHandle: false.into(),
+            };
+
             let config_handle = CreateFileMappingW(
                 INVALID_HANDLE_VALUE,
-                None,
+                Some(&sa),
                 PAGE_READWRITE,
                 0,
                 std::mem::size_of::<SharedConfig>() as u32,
@@ -125,7 +152,7 @@ impl MmapIpc {
 
             let status_handle = CreateFileMappingW(
                 INVALID_HANDLE_VALUE,
-                None,
+                Some(&sa),
                 PAGE_READWRITE,
                 0,
                 std::mem::size_of::<SharedStatus>() as u32,

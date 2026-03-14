@@ -66,7 +66,6 @@ pub fn get_config() -> ConfigResponse {
 
 #[tauri::command]
 pub fn install_apo() -> Result<String, String> {
-    // Run regsvr32 to register the APO DLL
     #[cfg(windows)]
     {
         let dll_path = std::env::current_exe()
@@ -79,25 +78,19 @@ pub fn install_apo() -> Result<String, String> {
             return Err(format!("APO DLL not found at: {}", dll_path.display()));
         }
 
-        let output = std::process::Command::new("regsvr32")
-            .arg("/s")
-            .arg(&dll_path)
-            .output()
-            .map_err(|e| format!("Failed to run regsvr32: {e}"))?;
+        // Use ShellExecuteW with "runas" to request UAC elevation
+        run_elevated("regsvr32", &format!("/s \"{}\"", dll_path.display()))?;
 
-        if output.status.success() {
-            // After COM registration, bind APO to all render endpoints
-            let bind_result = crate::endpoint_bind::bind_to_all_render_endpoints();
-            match bind_result {
-                Ok(n) => Ok(format!(
-                    "APO registered and bound to {n} endpoint(s). Restart audio service to activate."
-                )),
-                Err(e) => Ok(format!(
-                    "APO registered but endpoint binding failed: {e}. Manual binding may be needed."
-                )),
-            }
-        } else {
-            Err("regsvr32 failed. Run as administrator.".into())
+        // After COM registration, bind APO to all render endpoints (also needs admin)
+        // Use an elevated helper to write registry
+        let bind_result = crate::endpoint_bind::bind_to_all_render_endpoints();
+        match bind_result {
+            Ok(n) => Ok(format!(
+                "APO registered and bound to {n} endpoint(s). Restart audio service to activate."
+            )),
+            Err(e) => Ok(format!(
+                "APO registered but endpoint binding failed: {e}. Manual binding may be needed."
+            )),
         }
     }
 
@@ -118,20 +111,39 @@ pub fn uninstall_apo() -> Result<String, String> {
         // Unbind from endpoints first
         let _ = crate::endpoint_bind::unbind_from_all_render_endpoints();
 
-        let output = std::process::Command::new("regsvr32")
-            .arg("/u")
-            .arg("/s")
-            .arg(&dll_path)
-            .output()
-            .map_err(|e| format!("Failed to run regsvr32: {e}"))?;
+        // Use ShellExecuteW with "runas" to request UAC elevation
+        run_elevated("regsvr32", &format!("/u /s \"{}\"", dll_path.display()))?;
 
-        if output.status.success() {
-            Ok("APO unregistered and unbound. Restart audio service to deactivate.".into())
-        } else {
-            Err("regsvr32 /u failed.".into())
-        }
+        Ok("APO unregistered and unbound. Restart audio service to deactivate.".into())
     }
 
     #[cfg(not(windows))]
     Err("APO is only supported on Windows".into())
+}
+
+/// Run a command with UAC elevation via ShellExecuteW("runas").
+/// Shows a UAC prompt to the user, then runs the command as administrator.
+#[cfg(windows)]
+fn run_elevated(program: &str, args: &str) -> Result<(), String> {
+    use windows::core::HSTRING;
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
+
+    let verb = HSTRING::from("runas");
+    let file = HSTRING::from(program);
+    let params = HSTRING::from(args);
+
+    let result = unsafe {
+        ShellExecuteW(None, &verb, &file, &params, None, SW_HIDE)
+    };
+
+    // ShellExecuteW returns HINSTANCE > 32 on success
+    let code = result.0 as usize;
+    if code > 32 {
+        // Wait a moment for regsvr32 to complete
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        Ok(())
+    } else {
+        Err(format!("UAC elevation failed or was cancelled (code: {code})"))
+    }
 }

@@ -132,9 +132,12 @@ impl IAudioProcessingObject_Impl for AsceApoCom_Impl {
     fn Initialize(&self, _cbdatasize: u32, _pbydata: *const u8) -> Result<()> {
         // APO initialization is called by audiodg before any processing.
         // We defer engine creation to LockForProcess where we know the format.
-        self.inner
-            .borrow_mut()
-            .initialize(self.sample_rate.get(), self.channels.get());
+        // Wrap in catch_unwind to avoid killing audiodg on mmap/init failures.
+        let sr = self.sample_rate.get();
+        let ch = self.channels.get();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.inner.borrow_mut().initialize(sr, ch);
+        }));
         self.initialized.set(true);
         Ok(())
     }
@@ -207,15 +210,25 @@ impl IAudioProcessingObjectConfiguration_Impl for AsceApoCom_Impl {
             self.frame_size.set(frame_count);
         }
 
-        // Initialize engine with discovered format, then lock
-        self.inner
-            .borrow_mut()
-            .initialize(self.sample_rate.get(), self.channels.get());
-        self.inner
-            .borrow_mut()
-            .lock_for_process(self.frame_size.get());
-        self.locked.set(true);
+        // Initialize engine with discovered format, then lock.
+        // Wrap in catch_unwind: if DSP engine creation panics, fall back to
+        // pure bypass mode rather than killing audiodg.exe.
+        let sr = self.sample_rate.get();
+        let ch = self.channels.get();
+        let fs = self.frame_size.get();
 
+        let init_ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut inner = self.inner.borrow_mut();
+            inner.initialize(sr, ch);
+            inner.lock_for_process(fs);
+        }));
+
+        if init_ok.is_err() {
+            // Engine init failed — enter bypass mode (passthrough audio)
+            self.inner.borrow_mut().set_bypass_mode();
+        }
+
+        self.locked.set(true);
         Ok(())
     }
 
@@ -262,13 +275,21 @@ impl IAudioProcessingObjectRT_Impl for AsceApoCom_Impl {
             }
 
             let ch = self.channels.get() as usize;
+            if ch == 0 { return; }
             let sample_count = frames * ch;
 
+            // Validate buffer pointers before creating slices
+            let in_ptr = input_prop.pBuffer as *const f32;
+            let out_ptr = output_prop.pBuffer as *mut f32;
+            if in_ptr.is_null() || out_ptr.is_null() || sample_count == 0 {
+                return;
+            }
+
             let input = unsafe {
-                std::slice::from_raw_parts(input_prop.pBuffer as *const f32, sample_count)
+                std::slice::from_raw_parts(in_ptr, sample_count)
             };
             let output = unsafe {
-                std::slice::from_raw_parts_mut(output_prop.pBuffer as *mut f32, sample_count)
+                std::slice::from_raw_parts_mut(out_ptr, sample_count)
             };
 
             self.inner.borrow_mut().process(input, output);

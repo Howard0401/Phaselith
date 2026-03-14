@@ -29,6 +29,8 @@ pub struct AsceApo {
     channels: u16,
     frame_size: usize,
     locked: bool,
+    /// If true, engine init failed — pure passthrough, never attempt DSP.
+    bypass_mode: bool,
     /// Pre-allocated scratch buffer for de-interleaved L channel data.
     channel_buf_l: Vec<f32>,
     /// Pre-allocated scratch buffer for de-interleaved R channel data.
@@ -52,12 +54,22 @@ impl AsceApo {
             channels: 2,
             frame_size: 480, // 10ms at 48kHz
             locked: false,
+            bypass_mode: false,
             channel_buf_l: Vec::new(),
             channel_buf_r: Vec::new(),
             dry_lr_saved: Vec::new(),
             cross_channel_prev: None,
             last_config_version: 0,
         }
+    }
+
+    /// Enter permanent bypass mode (engine init failed).
+    /// Audio passes through unmodified — never crashes.
+    pub fn set_bypass_mode(&mut self) {
+        self.bypass_mode = true;
+        self.engine_l = None;
+        self.engine_r = None;
+        self.locked = true;
     }
 
     /// Called during APO initialization (non-real-time)
@@ -129,15 +141,19 @@ impl AsceApo {
     /// - No I/O
     /// - No panic (wrapped in catch_unwind by caller)
     pub fn process(&mut self, input: &[f32], output: &mut [f32]) {
-        if !self.locked {
-            output[..input.len()].copy_from_slice(input);
+        // Safe copy helper — always works even if sizes mismatch
+        let copy_len = input.len().min(output.len());
+        if copy_len == 0 { return; }
+
+        if !self.locked || self.bypass_mode {
+            output[..copy_len].copy_from_slice(&input[..copy_len]);
             return;
         }
 
         // Check bypass via mmap
         if let Some(ref mmap) = self.mmap {
             if !mmap.config().is_enabled() {
-                output[..input.len()].copy_from_slice(input);
+                output[..copy_len].copy_from_slice(&input[..copy_len]);
                 return;
             }
 
@@ -158,7 +174,20 @@ impl AsceApo {
         }
 
         let ch = self.channels as usize;
+        if ch == 0 {
+            output[..copy_len].copy_from_slice(&input[..copy_len]);
+            return;
+        }
         let frames = input.len() / ch;
+
+        // Validate scratch buffers are large enough
+        if frames > self.channel_buf_l.len() || frames > self.channel_buf_r.len()
+            || frames * 2 > self.dry_lr_saved.len()
+        {
+            // Buffer too small — passthrough rather than crash
+            output[..copy_len].copy_from_slice(&input[..copy_len]);
+            return;
+        }
 
         if ch == 1 {
             // Mono: use L engine only
@@ -168,9 +197,15 @@ impl AsceApo {
             } else {
                 output[..frames].copy_from_slice(&input[..frames]);
             }
-        } else {
+        } else if ch >= 2 {
             // Stereo: dual-engine with symmetric cross-channel context.
             // Aligned with WASM bridge process_block_ch() pattern.
+
+            // Validate we have enough samples for stereo de-interleave
+            if input.len() < frames * 2 || output.len() < frames * 2 {
+                output[..copy_len].copy_from_slice(&input[..copy_len]);
+                return;
+            }
 
             // De-interleave into pre-allocated buffers and save dry copies
             for f in 0..frames {
