@@ -1,6 +1,7 @@
 pub mod config;
 pub mod types;
 pub mod ports;
+pub mod frame;
 pub mod module_trait;
 pub mod modules;
 pub mod engine;
@@ -18,6 +19,7 @@ pub use types::{
     DamagePosterior, GaussianEstimate, Lattice, TriLattice,
     StructuredFields, ResidualCandidate, ValidatedResidual, QualityTier,
 };
+pub use frame::{FrameParams, FrameClock, SynthesisMode};
 
 // ─── Legacy re-exports (backward compat) ───
 pub use config::{DspConfig, QualityPreset};

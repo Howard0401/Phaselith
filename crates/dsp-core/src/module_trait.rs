@@ -1,4 +1,5 @@
 use crate::config::EngineConfig;
+use crate::frame::{FrameParams, SynthesisMode};
 
 /// Shared mutable context passed through the M0-M7 CIRRUS pipeline.
 /// Earlier modules write fields that later modules read.
@@ -9,8 +10,18 @@ pub struct ProcessContext {
     pub config: EngineConfig,
     pub sample_rate: u32,
     pub channels: u16,
-    /// Current frame index (monotonically increasing).
+    /// Current host callback index (monotonically increasing per process() call).
     pub frame_index: u64,
+    /// Frame/hop runtime parameters (immutable during processing).
+    pub frame_params: FrameParams,
+    /// Analysis frame index — increments on hop boundaries, not on every host callback.
+    /// Written by M0 FrameOrchestrator when enough samples accumulate for a new hop.
+    pub analysis_frame_index: u64,
+    /// Number of hops that completed in the current host callback.
+    /// Written by M0. Downstream modules use this to know if new analysis is available.
+    pub hops_this_block: usize,
+    /// Synthesis mode — controls M5 freq→time conversion path.
+    pub synthesis_mode: SynthesisMode,
     /// Written by M1: damage posterior estimation.
     pub damage: crate::types::DamagePosterior,
     /// Written by M2: tri-lattice STFT analysis.
@@ -34,11 +45,16 @@ pub struct ProcessContext {
 
 impl ProcessContext {
     pub fn new(sample_rate: u32, channels: u16, config: EngineConfig) -> Self {
+        let frame_params = FrameParams::new(128, sample_rate, config.quality_mode);
         Self {
             config,
             sample_rate,
             channels,
             frame_index: 0,
+            frame_params,
+            analysis_frame_index: 0,
+            hops_this_block: 0,
+            synthesis_mode: SynthesisMode::default(),
             damage: crate::types::DamagePosterior::default(),
             lattice: crate::types::TriLattice::default(),
             fields: crate::types::StructuredFields::default(),

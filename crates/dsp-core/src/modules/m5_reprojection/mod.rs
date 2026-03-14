@@ -2,9 +2,13 @@ pub mod degrader;
 pub mod error;
 pub mod acceptance;
 pub mod constraints;
+pub mod synthesizer;
+pub mod overlap_add;
 
+use crate::frame::SynthesisMode;
 use crate::module_trait::{CirrusModule, ProcessContext};
-use crate::types::{ValidatedResidual, CORE_FFT_SIZE};
+use crate::modules::m2_lattice::stft::StftEngine;
+use crate::types::{Lattice, ValidatedResidual, CORE_FFT_SIZE};
 
 /// M5: Self-Reprojection Validator.
 ///
@@ -27,6 +31,13 @@ pub struct SelfReprojectionValidator {
     /// Pre-allocated scratch: cosine table for synthesis (max_frame_size).
     /// Avoids repeated cos() calls for the same n values.
     synthesis_cos_cache: Vec<f32>,
+    /// StftEngine for pilot ISTFT synthesis (Phase B1-A).
+    /// Uses the real IFFT path instead of sum-of-cosines.
+    pilot_engine: Option<StftEngine>,
+    /// Scratch Lattice for building ISTFT input from residual + original phase.
+    pilot_lattice: Lattice,
+    /// Scratch buffer for ISTFT output (fft_size samples).
+    pilot_istft_buf: Vec<f32>,
 }
 
 impl SelfReprojectionValidator {
@@ -36,6 +47,68 @@ impl SelfReprojectionValidator {
             combined_buf: Vec::new(),
             reprojected_buf: Vec::new(),
             synthesis_cos_cache: Vec::new(),
+            pilot_engine: None,
+            pilot_lattice: Lattice::new(CORE_FFT_SIZE),
+            pilot_istft_buf: Vec::new(),
+        }
+    }
+
+    /// Pilot ISTFT synthesis: builds a Lattice from validated residual magnitudes
+    /// + original analysis phase, then uses StftEngine.synthesize_into() for a
+    /// proper IFFT reconstruction.
+    ///
+    /// This is a single-frame ISTFT (no OLA) — a stepping stone toward full
+    /// hop-aligned ISTFT+OLA in Phase B1-B.
+    ///
+    /// Takes individual fields instead of &mut self to avoid borrow conflicts
+    /// with combined_buf in the caller.
+    fn synthesize_pilot_inner(
+        engine: &mut StftEngine,
+        lattice: &mut Lattice,
+        istft_buf: &mut Vec<f32>,
+        combined: &[f32],
+        analysis_phase: &[f32],
+        cutoff_bin: usize,
+        fft_size: usize,
+        scale: f32,
+        output: &mut [f32],
+    ) {
+        if fft_size != engine.fft_size() || scale < 1e-6 {
+            output.iter_mut().for_each(|s| *s = 0.0);
+            return;
+        }
+
+        let num_bins = fft_size / 2 + 1;
+
+        // Ensure lattice is sized correctly
+        if lattice.magnitude.len() != num_bins {
+            *lattice = Lattice::new(fft_size);
+        }
+
+        // Build lattice: residual magnitude (scaled) + original analysis phase.
+        // Bins below cutoff are zeroed (low-band lock).
+        for k in 0..num_bins {
+            if k < cutoff_bin || k >= combined.len() || k >= analysis_phase.len() {
+                lattice.magnitude[k] = 0.0;
+                lattice.phase[k] = 0.0;
+            } else {
+                lattice.magnitude[k] = combined[k] * scale;
+                lattice.phase[k] = analysis_phase[k];
+            }
+        }
+
+        // ISTFT: freq-domain → time-domain via real IFFT
+        if istft_buf.len() < fft_size {
+            istft_buf.resize(fft_size, 0.0);
+        }
+        engine.synthesize_into(lattice, istft_buf);
+
+        // Copy to output, truncating to output length.
+        // The ISTFT produces fft_size samples; we take the first output.len().
+        let copy_len = output.len().min(fft_size);
+        output[..copy_len].copy_from_slice(&istft_buf[..copy_len]);
+        for i in copy_len..output.len() {
+            output[i] = 0.0;
         }
     }
 }
@@ -51,6 +124,10 @@ impl CirrusModule for SelfReprojectionValidator {
         self.combined_buf = vec![0.0; core_bins];
         self.reprojected_buf = vec![0.0; max_frame_size];
         self.synthesis_cos_cache = vec![0.0; max_frame_size];
+        // Phase B1-A: pre-allocate ISTFT engine + scratch for pilot synthesis
+        self.pilot_engine = Some(StftEngine::new(CORE_FFT_SIZE));
+        self.pilot_lattice = Lattice::new(CORE_FFT_SIZE);
+        self.pilot_istft_buf = vec![0.0; CORE_FFT_SIZE];
     }
 
     fn process(&mut self, samples: &mut [f32], ctx: &mut ProcessContext) {
@@ -130,42 +207,52 @@ impl CirrusModule for SelfReprojectionValidator {
             ctx.validated.acceptance_mask = constrained_mask;
         }
 
-        // ── Additive synthesis: freq-domain → time-domain ──
-        // Convert validated frequency-domain residual to time-domain output.
-        //
-        // For each accepted bin k, synthesize its contribution:
-        //   x[n] += (2/N) · R[k] · cos(2π·k·n/N + φ[k])
-        //
-        // Uses the original signal's phase from M2 lattice analysis.
-        // Factor 2/N accounts for real-signal symmetry (positive freqs only).
-        // DC (k=0) and Nyquist (k=N/2) should use 1/N, but cutoff_bin is
-        // typically well above 0 and the Nyquist error is negligible.
-        let out_len = ctx.validated.data.len();
-        for i in 0..out_len {
-            ctx.validated.data[i] = 0.0;
-        }
-
+        // ── Synthesis: freq-domain → time-domain ──
         let scale = ctx.config.strength * ctx.damage.overall_confidence;
-        if fft_size > 0 && scale > 1e-6 {
-            let inv_fft = 2.0 / fft_size as f32;
-            let two_pi_over_n = std::f32::consts::TAU / fft_size as f32;
-            let num_synth_bins = self.combined_buf.len()
-                .min(ctx.lattice.core.phase.len())
-                .min(core_bins);
+        let num_synth_bins = self.combined_buf.len()
+            .min(ctx.lattice.core.phase.len())
+            .min(core_bins);
 
-            for n in 0..out_len {
-                let mut sum = 0.0f32;
-                let omega_n = two_pi_over_n * n as f32;
-
-                for k in cutoff_bin..num_synth_bins {
-                    let mag = self.combined_buf[k];
-                    if mag.abs() < 1e-8 {
-                        continue; // skip negligible bins
-                    }
-                    let phase = ctx.lattice.core.phase[k];
-                    sum += mag * (omega_n * k as f32 + phase).cos();
+        match ctx.synthesis_mode {
+            SynthesisMode::FftOlaPilot => {
+                // Phase B1-A: Pilot ISTFT via StftEngine.
+                // Uses real IFFT instead of sum-of-cosines. Single-frame (no OLA yet).
+                if let Some(engine) = &mut self.pilot_engine {
+                    Self::synthesize_pilot_inner(
+                        engine,
+                        &mut self.pilot_lattice,
+                        &mut self.pilot_istft_buf,
+                        &self.combined_buf[..num_synth_bins],
+                        &ctx.lattice.core.phase[..num_synth_bins],
+                        cutoff_bin,
+                        fft_size,
+                        scale,
+                        &mut ctx.validated.data,
+                    );
+                } else {
+                    // No engine available, fall back to legacy
+                    synthesizer::synthesize(
+                        SynthesisMode::LegacyAdditive,
+                        &self.combined_buf[..num_synth_bins],
+                        &ctx.lattice.core.phase[..num_synth_bins],
+                        cutoff_bin,
+                        fft_size,
+                        scale,
+                        &mut ctx.validated.data,
+                    );
                 }
-                ctx.validated.data[n] = sum * scale * inv_fft;
+            }
+            _ => {
+                // LegacyAdditive (proven path) or FftOlaFull (future).
+                synthesizer::synthesize(
+                    ctx.synthesis_mode,
+                    &self.combined_buf[..num_synth_bins],
+                    &ctx.lattice.core.phase[..num_synth_bins],
+                    cutoff_bin,
+                    fft_size,
+                    scale,
+                    &mut ctx.validated.data,
+                );
             }
         }
 
@@ -186,6 +273,8 @@ impl CirrusModule for SelfReprojectionValidator {
         self.combined_buf.fill(0.0);
         self.reprojected_buf.fill(0.0);
         self.synthesis_cos_cache.fill(0.0);
+        self.pilot_istft_buf.fill(0.0);
+        // pilot_lattice magnitude/phase cleared by fill(0.0) on next use
     }
 }
 
@@ -699,6 +788,103 @@ mod tests {
         m5.process(&mut samples, &mut ctx);
 
         assert!(ctx.validated.data.iter().all(|s| s.is_finite()));
+    }
+
+    // ── Phase B1-A: Pilot ISTFT tests ──
+
+    #[test]
+    fn pilot_istft_produces_finite_output() {
+        let mut m5 = SelfReprojectionValidator::new();
+        m5.init(128, 48000);
+        let mut config = EngineConfig::default();
+        config.strength = 1.0;
+        let mut ctx = ProcessContext::new(48000, 2, config);
+        ctx.synthesis_mode = crate::frame::SynthesisMode::FftOlaPilot;
+        ctx.lattice = TriLattice::new();
+        ctx.damage.cutoff.mean = 5000.0;
+        ctx.damage.overall_confidence = 1.0;
+
+        let core_bins = ctx.lattice.core.num_bins();
+        ctx.residual = ResidualCandidate::new(core_bins);
+        ctx.residual.harmonic[200] = 0.3;
+
+        let mut samples = vec![0.0; 128];
+        m5.process(&mut samples, &mut ctx);
+
+        assert!(
+            ctx.validated.data.iter().all(|s| s.is_finite()),
+            "Pilot ISTFT output should be finite"
+        );
+        let energy: f32 = ctx.validated.data.iter().map(|s| s * s).sum();
+        assert!(energy > 0.0, "Pilot ISTFT should produce non-zero output");
+    }
+
+    #[test]
+    fn pilot_istft_zero_residual_produces_zero() {
+        let mut m5 = SelfReprojectionValidator::new();
+        m5.init(128, 48000);
+        let mut ctx = ProcessContext::new(48000, 2, EngineConfig::default());
+        ctx.synthesis_mode = crate::frame::SynthesisMode::FftOlaPilot;
+        ctx.lattice = TriLattice::new();
+        ctx.damage.cutoff.mean = 15000.0;
+        ctx.damage.overall_confidence = 0.8;
+
+        let core_bins = ctx.lattice.core.num_bins();
+        ctx.residual = ResidualCandidate::new(core_bins);
+        // All zeros
+
+        let mut samples = vec![0.5; 128];
+        m5.process(&mut samples, &mut ctx);
+
+        let max_val = ctx.validated.data.iter()
+            .map(|s| s.abs())
+            .fold(0.0f32, f32::max);
+        assert!(max_val < 1e-6, "Zero residual → zero pilot output, got {max_val}");
+    }
+
+    #[test]
+    fn pilot_istft_matches_legacy_direction() {
+        // Both paths should produce energy for the same bin.
+        // They won't be identical (additive vs ISTFT), but should agree in direction.
+        let mut m5_legacy = SelfReprojectionValidator::new();
+        let mut m5_pilot = SelfReprojectionValidator::new();
+        m5_legacy.init(128, 48000);
+        m5_pilot.init(128, 48000);
+
+        let mut config = EngineConfig::default();
+        config.strength = 1.0;
+
+        // Legacy run
+        let mut ctx_legacy = ProcessContext::new(48000, 2, config);
+        ctx_legacy.synthesis_mode = crate::frame::SynthesisMode::LegacyAdditive;
+        ctx_legacy.lattice = TriLattice::new();
+        ctx_legacy.damage.cutoff.mean = 5000.0;
+        ctx_legacy.damage.overall_confidence = 1.0;
+        let core_bins = ctx_legacy.lattice.core.num_bins();
+        ctx_legacy.residual = ResidualCandidate::new(core_bins);
+        ctx_legacy.residual.harmonic[200] = 0.3;
+        let mut samples_l = vec![0.0; 128];
+        m5_legacy.process(&mut samples_l, &mut ctx_legacy);
+
+        // Pilot run
+        let mut ctx_pilot = ProcessContext::new(48000, 2, config);
+        ctx_pilot.synthesis_mode = crate::frame::SynthesisMode::FftOlaPilot;
+        ctx_pilot.lattice = TriLattice::new();
+        ctx_pilot.damage.cutoff.mean = 5000.0;
+        ctx_pilot.damage.overall_confidence = 1.0;
+        ctx_pilot.residual = ResidualCandidate::new(core_bins);
+        ctx_pilot.residual.harmonic[200] = 0.3;
+        let mut samples_p = vec![0.0; 128];
+        m5_pilot.process(&mut samples_p, &mut ctx_pilot);
+
+        let legacy_energy: f32 = ctx_legacy.validated.data.iter().map(|s| s * s).sum();
+        let pilot_energy: f32 = ctx_pilot.validated.data.iter().map(|s| s * s).sum();
+
+        assert!(legacy_energy > 0.0, "Legacy should produce energy");
+        assert!(pilot_energy > 0.0, "Pilot should produce energy");
+
+        // Both should have non-zero output (direction agreement)
+        // Energy magnitudes may differ due to different synthesis methods
     }
 
     #[test]

@@ -127,6 +127,11 @@ impl CirrusEngineBuilder {
     /// Build with whatever modules have been added.
     pub fn build(mut self) -> CirrusEngine {
         let mut context = ProcessContext::new(self.sample_rate, self.channels, self.config);
+        context.frame_params = crate::frame::FrameParams::new(
+            self.max_frame_size,
+            self.sample_rate,
+            self.config.quality_mode,
+        );
         context.dry_buffer = vec![0.0; self.max_frame_size];
 
         for module in &mut self.modules {

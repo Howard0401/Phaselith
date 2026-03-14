@@ -31,6 +31,21 @@ impl PerceptualSafetyMixer {
             post_rms_sq_ema: 0.0,
         }
     }
+
+    /// Update EMA-smoothed RMS² trackers. Called unconditionally (including
+    /// during bypass) so the smoother doesn't go stale.
+    fn update_ema(&mut self, dry_rms_sq: f32, post_rms_sq: f32, block_len: usize) {
+        let block_dur = block_len as f32 / self.sample_rate as f32;
+        let alpha = 1.0 - (-block_dur / 0.3_f32).exp(); // 300ms time constant
+
+        if self.dry_rms_sq_ema < 1e-20 {
+            self.dry_rms_sq_ema = dry_rms_sq;
+            self.post_rms_sq_ema = post_rms_sq;
+        } else {
+            self.dry_rms_sq_ema += alpha * (dry_rms_sq - self.dry_rms_sq_ema);
+            self.post_rms_sq_ema += alpha * (post_rms_sq - self.post_rms_sq_ema);
+        }
+    }
 }
 
 impl CirrusModule for PerceptualSafetyMixer {
@@ -57,19 +72,24 @@ impl CirrusModule for PerceptualSafetyMixer {
         let character_floor = style.character_intensity() * 0.15;
         let mix_gain = restoration_gain.max(character_floor);
 
-        if mix_gain < 0.001 && style.warmth < 0.01 && style.smoothness < 0.01 {
-            return; // nothing to do
-        }
-
         let len = samples.len();
         let limit = 0.99f32;
 
         // ── Global output level reference ──
-        // Measure dry RMS² for this block. Fed into EMA smoother at the end.
+        // Measure dry RMS² for this block. Must happen BEFORE early return
+        // so the EMA stays warm during bypass periods — prevents audible
+        // compensation jumps when processing resumes after quiet/bypass sections.
         let dry_rms_sq_block = ctx.dry_buffer.iter()
             .take(len)
             .map(|s| s * s)
             .sum::<f32>() / len.max(1) as f32;
+
+        if mix_gain < 0.001 && style.warmth < 0.01 && style.smoothness < 0.01 {
+            // Bypass: still update EMA so it doesn't go stale.
+            // During bypass, post == dry, so ratio stays ~1.0 — correct.
+            self.update_ema(dry_rms_sq_block, dry_rms_sq_block, len);
+            return;
+        }
 
         // ── Phase 1a: Mix freq-domain validated residual ──
         if has_residual && mix_gain > 0.001 {
@@ -153,20 +173,7 @@ impl CirrusModule for PerceptualSafetyMixer {
         // Conservative: only compensates level LOSS (ratio >= 1), never cuts.
         // Capped at +3 dB (~1.414x) to prevent runaway amplification.
         let post_rms_sq_block = samples.iter().map(|s| s * s).sum::<f32>() / len.max(1) as f32;
-
-        // EMA coefficient: ~300ms at 48kHz with 128-sample blocks → ~113 blocks
-        // α = 1 - exp(-block_duration / time_constant)
-        let block_dur = len as f32 / self.sample_rate as f32;
-        let alpha = 1.0 - (-block_dur / 0.3_f32).exp(); // 300ms time constant
-
-        // Bootstrap: if EMA is uninitialized, seed with current block
-        if self.dry_rms_sq_ema < 1e-20 {
-            self.dry_rms_sq_ema = dry_rms_sq_block;
-            self.post_rms_sq_ema = post_rms_sq_block;
-        } else {
-            self.dry_rms_sq_ema += alpha * (dry_rms_sq_block - self.dry_rms_sq_ema);
-            self.post_rms_sq_ema += alpha * (post_rms_sq_block - self.post_rms_sq_ema);
-        }
+        self.update_ema(dry_rms_sq_block, post_rms_sq_block, len);
 
         if self.dry_rms_sq_ema > 1e-12 && self.post_rms_sq_ema > 1e-12 {
             let ratio = (self.dry_rms_sq_ema / self.post_rms_sq_ema).sqrt();
