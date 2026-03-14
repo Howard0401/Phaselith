@@ -49,6 +49,12 @@ impl KWeightingFilter {
     /// Create K-weighting filter for the given sample rate.
     /// Uses ITU-R BS.1770-4 coefficients for 48kHz and 44.1kHz.
     /// Other rates fall back to 48kHz coefficients (close enough for level tracking).
+    ///
+    /// TODO: For 96kHz/192kHz, the 48kHz fallback shifts filter turnover frequencies.
+    /// This doesn't break functionality but the measurement is no longer strictly
+    /// BS.1770-compliant at those rates. To fix: implement bilinear transform
+    /// coefficient generation from the analog prototype, or add pre-computed
+    /// coefficients for 96k/192k. Low priority since browser runtime is 48kHz.
     pub fn new(sample_rate: u32) -> Self {
         let (s1, s2) = match sample_rate {
             44100 => (

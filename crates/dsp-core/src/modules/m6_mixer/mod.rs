@@ -147,21 +147,49 @@ impl CirrusModule for PerceptualSafetyMixer {
         // (reverb tails get low consistency_score → attenuated). This can make
         // the output sound "too dry" compared to the original.
         //
-        // Compensation: blend back a fraction of the lost diffuse energy.
-        // diff = dry - processed, scaled by ambience_preserve.
-        // Only active when ambience_preserve > 0 and processing changed the signal.
+        // Three gates prevent this from becoming a global undo knob:
+        // 1. Diffuse gate: only active when consistency_score is low (M5 rejected diffuse content)
+        // 2. Non-transient gate: skips transient frames (preserve attack clarity)
+        // 3. Envelope decay gate: only active when signal energy is decreasing (tail region)
+        //
+        // Without these gates, this would blend back direct sound changes,
+        // low-freq cleanup, and character modifications — destroying front image.
         let amb = ctx.config.ambience_preserve;
         if amb > 0.001 && has_residual {
-            let dry_len = len.min(ctx.dry_buffer.len());
-            for i in 0..dry_len {
-                let dry = ctx.dry_buffer[i];
-                let processed = samples[i];
-                let diff = dry - processed;
-                // Blend back a small fraction of the difference.
-                // amb is expected to be very small (0.05-0.15), so the effect is subtle.
-                let tail_add = diff * amb * 0.5; // extra 0.5× safety factor
-                let mixed = processed + tail_add;
-                samples[i] = mixed.clamp(-limit, limit);
+            // Gate 1: Diffuse gate — only compensate when M5 actually rejected diffuse content.
+            // consistency_score near 1.0 = structured content passed → no compensation needed.
+            // consistency_score near 0.0 = diffuse content shrunk → compensate.
+            let diffuse_amount = (1.0 - ctx.validated.consistency_score).max(0.0);
+            // Only activate when significant diffuse rejection occurred
+            let diffuse_gate = if diffuse_amount > 0.2 { diffuse_amount } else { 0.0 };
+
+            // Gate 2: Non-transient gate — skip transient frames to preserve attack clarity.
+            let transient_gate = if ctx.fields.is_transient { 0.0 } else { 1.0 };
+
+            // Gate 3: Envelope decay gate — only blend in tail/decay regions.
+            // Compare current block energy to dry energy; if post < dry, we're in decay.
+            let dry_energy: f32 = ctx.dry_buffer.iter().take(len)
+                .map(|s| s * s).sum::<f32>() / len.max(1) as f32;
+            let post_energy: f32 = samples.iter().take(len)
+                .map(|s| s * s).sum::<f32>() / len.max(1) as f32;
+            let decay_gate = if dry_energy > 1e-10 && post_energy < dry_energy * 0.95 {
+                1.0 // signal got quieter → likely in decay/tail region
+            } else {
+                0.0 // signal is steady or louder → not a tail
+            };
+
+            let combined_gate = diffuse_gate * transient_gate * decay_gate;
+
+            if combined_gate > 0.001 {
+                let effective_amb = amb * 0.5 * combined_gate; // extra 0.5× safety factor
+                let dry_len = len.min(ctx.dry_buffer.len());
+                for i in 0..dry_len {
+                    let dry = ctx.dry_buffer[i];
+                    let processed = samples[i];
+                    let diff = dry - processed;
+                    let tail_add = diff * effective_amb;
+                    samples[i] = (processed + tail_add).clamp(-limit, limit);
+                }
             }
         }
 
