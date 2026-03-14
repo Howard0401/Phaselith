@@ -134,3 +134,7 @@ This repository is licensed under the GNU Affero General Public License v3.0 or 
 - See [docs/10-DEFENSIVE-PUBLICATION.md](docs/10-DEFENSIVE-PUBLICATION.md) for the defensive-publication-style technical disclosure.
 
 Commercial licensing is available for teams that want to use, embed, or redistribute CIRRUS without AGPL obligations.
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=Howard0401/CIRRUS&type=Date)](https://star-history.com/#Howard0401/CIRRUS&Date)
