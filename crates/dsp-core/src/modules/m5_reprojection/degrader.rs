@@ -14,25 +14,43 @@ pub fn approximate_degradation(
 ) -> Vec<f32> {
     let len = original.len();
     let mut result = vec![0.0f32; len];
+    approximate_degradation_into(original, residual, damage, cutoff_bin, &mut result);
+    result
+}
+
+/// Zero-alloc variant: writes into pre-allocated `out` buffer.
+/// `out` must be at least `original.len()` long.
+pub fn approximate_degradation_into(
+    original: &[f32],
+    residual: &[f32],
+    damage: &DamagePosterior,
+    cutoff_bin: usize,
+    out: &mut [f32],
+) {
+    let len = original.len().min(out.len());
 
     // Start with original + residual
     for i in 0..len {
-        result[i] = original[i];
+        out[i] = original[i];
         if i < residual.len() {
-            result[i] += residual[i];
+            out[i] += residual[i];
         }
+    }
+    // Zero remainder
+    for i in len..out.len() {
+        out[i] = 0.0;
     }
 
     // Apply approximate cutoff (zero above cutoff in freq domain approximation)
     // Simplified: attenuate high-index samples (this is a time-domain approx)
     if damage.cutoff.mean < 19500.0 && cutoff_bin > 0 {
-        apply_approx_lowpass(&mut result, cutoff_bin, len);
+        apply_approx_lowpass(&mut out[..len], cutoff_bin, len);
     }
 
     // Apply approximate limiting
     if damage.limiting.mean > 0.1 {
         let threshold = 1.0 - damage.limiting.mean * 0.3;
-        for s in &mut result {
+        for s in &mut out[..len] {
             *s = soft_clip(*s, threshold);
         }
     }
@@ -40,12 +58,10 @@ pub fn approximate_degradation(
     // Apply approximate clipping
     if damage.clipping.mean > 0.05 {
         let clip_threshold = 0.99;
-        for s in &mut result {
+        for s in &mut out[..len] {
             *s = s.clamp(-clip_threshold, clip_threshold);
         }
     }
-
-    result
 }
 
 /// Simplified lowpass: attenuate the "high frequency" portion.

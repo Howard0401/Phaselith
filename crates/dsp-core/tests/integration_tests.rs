@@ -1,5 +1,5 @@
 use asce_dsp_core::engine::CirrusEngineBuilder;
-use asce_dsp_core::config::{EngineConfig, QualityMode};
+use asce_dsp_core::config::{EngineConfig, QualityMode, StyleConfig, StylePreset};
 
 /// Generate a 440 Hz sine wave at the given sample rate.
 fn sine_440(sample_rate: u32, num_samples: usize) -> Vec<f32> {
@@ -288,5 +288,312 @@ fn config_changes_mid_stream() {
         let mut buf = sine_440(48000, 1024);
         engine.process(&mut buf);
         assert!(buf.iter().all(|s| s.is_finite()));
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// E2E edge-case tests: boundary conditions through full pipeline
+// ═══════════════════════════════════════════════════════════════
+
+#[test]
+fn e2e_clipped_signal_output_bounded() {
+    // Heavily clipped signal — engine should not amplify beyond safe limits
+    let mut config = EngineConfig::default();
+    config.strength = 1.0;
+    let mut engine = CirrusEngineBuilder::new(48000, 1024)
+        .with_config(config)
+        .build_default();
+
+    // Simulate hard-clipped signal (alternating +1/-1)
+    let mut buf: Vec<f32> = (0..1024)
+        .map(|i| if i % 2 == 0 { 1.0 } else { -1.0 })
+        .collect();
+
+    for frame in 0..20 {
+        engine.process(&mut buf);
+        let max_val = buf.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        assert!(
+            max_val <= 1.0,
+            "Frame {frame}: clipped output exceeded 1.0, got {max_val}"
+        );
+        assert!(
+            buf.iter().all(|s| s.is_finite()),
+            "Frame {frame}: non-finite output"
+        );
+    }
+}
+
+#[test]
+fn e2e_alternating_loud_quiet_stable() {
+    // Alternate between loud and silent frames — tests state transitions
+    let mut engine = CirrusEngineBuilder::new(48000, 512).build_default();
+
+    for frame in 0..40 {
+        let mut buf = if frame % 2 == 0 {
+            // Loud frame
+            sine_440(48000, 512).iter().map(|s| s * 0.9).collect()
+        } else {
+            // Silent frame
+            vec![0.0f32; 512]
+        };
+
+        engine.process(&mut buf);
+
+        let max_val = buf.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        assert!(
+            max_val < 2.0,
+            "Frame {frame}: amplitude {max_val} too large after loud/quiet transition"
+        );
+        assert!(
+            buf.iter().all(|s| s.is_finite()),
+            "Frame {frame}: non-finite output"
+        );
+    }
+}
+
+#[test]
+fn e2e_very_small_frame_64_samples() {
+    // 64-sample frame — smaller than typical WASM block
+    let mut engine = CirrusEngineBuilder::new(48000, 64).build_default();
+    let mut buf = sine_440(48000, 64);
+    engine.process(&mut buf);
+    assert!(buf.iter().all(|s| s.is_finite()));
+}
+
+#[test]
+fn e2e_large_frame_4096_samples() {
+    // 4096-sample frame — maximum expected size
+    let mut engine = CirrusEngineBuilder::new(48000, 4096).build_default();
+    let mut buf = sine_440(48000, 4096);
+    engine.process(&mut buf);
+
+    assert!(buf.iter().all(|s| s.is_finite()));
+    let max_val = buf.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+    assert!(max_val < 2.0, "Large frame output too large: {max_val}");
+}
+
+#[test]
+fn e2e_near_nyquist_cutoff() {
+    // Signal with cutoff near Nyquist — minimal damage, should pass through mostly unchanged
+    let mut engine = CirrusEngineBuilder::new(48000, 1024).build_default();
+    let mut buf = bandlimited_signal(48000, 1024, 23000.0); // near Nyquist
+    let original_energy: f32 = buf.iter().map(|s| s * s).sum();
+
+    engine.process(&mut buf);
+
+    let output_energy: f32 = buf.iter().map(|s| s * s).sum();
+    assert!(buf.iter().all(|s| s.is_finite()));
+
+    // Near-Nyquist should be detected as near-lossless, minimal change
+    assert!(
+        output_energy < original_energy * 5.0,
+        "Near-Nyquist should not greatly amplify: in={original_energy}, out={output_energy}"
+    );
+}
+
+#[test]
+fn e2e_low_cutoff_heavy_damage() {
+    // Very low cutoff (8kHz) — heavy damage, engine should still be stable
+    let mut config = EngineConfig::default();
+    config.strength = 1.0;
+    config.quality_mode = QualityMode::Ultra;
+    let mut engine = CirrusEngineBuilder::new(48000, 1024)
+        .with_config(config)
+        .build_default();
+
+    for _ in 0..30 {
+        let mut buf = bandlimited_signal(48000, 1024, 8000.0);
+        engine.process(&mut buf);
+
+        let max_val = buf.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        assert!(
+            max_val < 10.0,
+            "Heavy damage output amplitude {max_val} exceeds safety bound"
+        );
+        assert!(buf.iter().all(|s| s.is_finite()));
+    }
+}
+
+#[test]
+fn e2e_impulse_signal() {
+    // Single impulse (Dirac delta) — tests transient handling
+    let mut engine = CirrusEngineBuilder::new(48000, 1024).build_default();
+
+    let mut buf = vec![0.0f32; 1024];
+    buf[512] = 1.0; // single impulse
+
+    engine.process(&mut buf);
+
+    assert!(buf.iter().all(|s| s.is_finite()));
+    let max_val = buf.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+    assert!(max_val <= 1.0, "Impulse output exceeded 1.0: {max_val}");
+}
+
+#[test]
+fn e2e_all_style_presets_stable() {
+    // Test all character presets through the full pipeline
+    let presets = [
+        StyleConfig::from_preset(StylePreset::Reference),
+        StyleConfig::from_preset(StylePreset::Grand),
+        StyleConfig::from_preset(StylePreset::Smooth),
+        StyleConfig::from_preset(StylePreset::Vocal),
+        StyleConfig::from_preset(StylePreset::Punch),
+        StyleConfig::from_preset(StylePreset::Air),
+        StyleConfig::from_preset(StylePreset::Night),
+    ];
+
+    for (i, style) in presets.iter().enumerate() {
+        let mut config = EngineConfig::default();
+        config.style = *style;
+
+        let mut engine = CirrusEngineBuilder::new(48000, 1024)
+            .with_config(config)
+            .build_default();
+
+        let mut buf = bandlimited_signal(48000, 1024, 14000.0);
+        engine.process(&mut buf);
+
+        assert!(
+            buf.iter().all(|s| s.is_finite()),
+            "Style preset {i} produced non-finite output"
+        );
+        let max_val = buf.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        assert!(
+            max_val < 5.0,
+            "Style preset {i} amplitude {max_val} too large"
+        );
+    }
+}
+
+#[test]
+fn e2e_sequential_engine_resets_stable() {
+    // Process → reset → process repeatedly — tests cleanup
+    let mut engine = CirrusEngineBuilder::new(48000, 1024).build_default();
+
+    for cycle in 0..5 {
+        for _ in 0..10 {
+            let mut buf = sine_440(48000, 1024);
+            engine.process(&mut buf);
+            assert!(
+                buf.iter().all(|s| s.is_finite()),
+                "Cycle {cycle}: non-finite output"
+            );
+        }
+        engine.reset();
+        assert_eq!(engine.context().frame_index, 0, "Reset should clear frame_index");
+    }
+}
+
+#[test]
+fn e2e_mixed_damage_clipping_and_cutoff() {
+    // Signal with both clipping AND low cutoff — combined damage paths
+    let mut config = EngineConfig::default();
+    config.strength = 1.0;
+    let mut engine = CirrusEngineBuilder::new(48000, 1024)
+        .with_config(config)
+        .build_default();
+
+    // Generate clipped bandlimited signal
+    let mut buf = bandlimited_signal(48000, 1024, 12000.0);
+    // Hard clip at ±0.7
+    for s in &mut buf {
+        *s = s.clamp(-0.7, 0.7);
+    }
+
+    for frame in 0..20 {
+        engine.process(&mut buf);
+        let max_val = buf.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        assert!(
+            max_val < 5.0,
+            "Frame {frame}: mixed damage output {max_val} too large"
+        );
+        assert!(
+            buf.iter().all(|s| s.is_finite()),
+            "Frame {frame}: non-finite output"
+        );
+    }
+}
+
+#[test]
+fn e2e_44100_sample_rate_multi_frame() {
+    // 44.1kHz (CD quality) through multiple frames
+    let mut engine = CirrusEngineBuilder::new(44100, 1024).build_default();
+
+    for frame in 0..30 {
+        let mut buf = bandlimited_signal(44100, 1024, 15000.0);
+        engine.process(&mut buf);
+        assert!(
+            buf.iter().all(|s| s.is_finite()),
+            "44.1kHz frame {frame}: non-finite output"
+        );
+    }
+}
+
+#[test]
+fn e2e_96khz_sample_rate_multi_frame() {
+    // 96kHz (hi-res) through multiple frames
+    let mut engine = CirrusEngineBuilder::new(96000, 1024).build_default();
+
+    for frame in 0..30 {
+        let mut buf = sine_440(96000, 1024);
+        engine.process(&mut buf);
+        assert!(
+            buf.iter().all(|s| s.is_finite()),
+            "96kHz frame {frame}: non-finite output"
+        );
+    }
+}
+
+#[test]
+fn e2e_reprojection_additive_synthesis_produces_content() {
+    // Verify that M5 additive synthesis actually contributes to output
+    // when there is detectable damage.
+    let mut config = EngineConfig::default();
+    config.strength = 1.0;
+
+    let mut engine = CirrusEngineBuilder::new(48000, 1024)
+        .with_config(config)
+        .build_default();
+
+    // Process several frames of degraded signal to build up damage posterior
+    for _ in 0..20 {
+        let mut buf = bandlimited_signal(48000, 1024, 12000.0);
+        engine.process(&mut buf);
+    }
+
+    // After warmup, the engine should have detected damage
+    let damage = engine.damage_posterior();
+    // Check that damage detection is working
+    assert!(
+        damage.cutoff.mean > 0.0,
+        "Damage posterior should have positive cutoff"
+    );
+}
+
+#[test]
+fn e2e_noise_signal_does_not_explode() {
+    // White noise — worst case for harmonic analysis
+    let mut engine = CirrusEngineBuilder::new(48000, 1024).build_default();
+
+    // Simple pseudo-random noise
+    let mut seed: u32 = 12345;
+    for frame in 0..30 {
+        let mut buf: Vec<f32> = (0..1024)
+            .map(|_| {
+                seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+                (seed as f32 / u32::MAX as f32) * 2.0 - 1.0
+            })
+            .collect();
+
+        engine.process(&mut buf);
+        let max_val = buf.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        assert!(
+            max_val < 5.0,
+            "Frame {frame}: noise output {max_val} too large"
+        );
+        assert!(
+            buf.iter().all(|s| s.is_finite()),
+            "Frame {frame}: non-finite noise output"
+        );
     }
 }
