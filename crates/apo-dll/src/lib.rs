@@ -14,6 +14,8 @@ mod class_factory;
 #[cfg(windows)]
 mod apo_impl;
 #[cfg(windows)]
+mod apo_com;
+#[cfg(windows)]
 mod format_negotiate;
 #[cfg(windows)]
 mod mmap_ipc;
@@ -42,7 +44,7 @@ pub extern "system" fn DllGetClassObject(
         return E_POINTER;
     }
     unsafe {
-        class_factory::AsceClassFactory::get_class_object(&*rclsid, &*riid, ppv)
+        class_factory::get_class_object(&*rclsid, &*riid, ppv)
     }
 }
 
