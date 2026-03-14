@@ -3,7 +3,7 @@
 Contributions are welcome, but this project is maintained with a dual-track licensing strategy:
 
 1. The public repository is licensed under `AGPL-3.0-or-later`.
-2. The project owner may also ship commercial licenses for the same codebase.
+2. Howard Chen, as Project Owner, may also ship commercial licenses for the same codebase.
 
 If you are comfortable contributing under those terms, you are welcome here.
 
@@ -34,7 +34,7 @@ By submitting a patch, pull request, issue attachment, or any other contribution
 
 1. You have the legal right to submit the contribution.
 2. Your contribution may be distributed under `AGPL-3.0-or-later` as part of this repository.
-3. You additionally grant the project owner a perpetual, worldwide, irrevocable, non-exclusive, sublicensable right to use, modify, sublicense, relicense, and commercialize your contribution as part of CIRRUS and related products.
+3. You additionally grant Howard Chen, as Project Owner, a perpetual, worldwide, irrevocable, non-exclusive, sublicensable right to use, modify, sublicense, relicense, and commercialize your contribution as part of CIRRUS and related products.
 4. Your contribution may be included in paid, proprietary, or commercially licensed editions of CIRRUS.
 5. Attribution may be preserved through Git history, release notes, contributor records, or a contributors list when maintained.
 
@@ -48,7 +48,7 @@ For substantial external contributions, the maintainer may additionally ask cont
 
 This is an owner-led project.
 
-- The project owner retains final authority over roadmap, merges, licensing, branding, and commercial distribution.
+- Howard Chen, as Project Owner, retains final authority over roadmap, merges, licensing, branding, and commercial distribution.
 - Contributions are welcome and credited, but the repository is not governed as a community-owned project.
 
 ## Code Areas

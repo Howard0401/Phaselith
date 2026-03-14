@@ -37,11 +37,13 @@ The project welcomes contributions, but it is not community-owned.
 
 It is an owner-led project with a commercial licensing path.
 
+For repository governance and contribution relicensing purposes, the Project Owner is **Howard Chen**.
+
 To keep that path viable, accepted contributors must agree that:
 
 1. their contribution may remain in the AGPL repository
-2. the project owner may also use and relicense that contribution commercially
-3. contributors are credited, but repository stewardship stays with the project owner
+2. Howard Chen, as Project Owner, may also use and relicense that contribution commercially
+3. contributors are credited, but repository stewardship stays with Howard Chen, as Project Owner
 
 See:
 

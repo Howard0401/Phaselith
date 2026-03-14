@@ -26,3 +26,5 @@ This directory is organized by function and reading order.
    Defensive-publication-style disclosure of the CIRRUS technical idea space.
 11. [11-CHROME-STORE-LAUNCH-AND-MONETIZATION.md](11-CHROME-STORE-LAUNCH-AND-MONETIZATION.md)
    Chrome Web Store launch copy, Early Access messaging, and future Lite + Pro monetization plan.
+12. [12-PUBLIC-V0.1-OPEN-SOURCE-PACKAGING.md](12-PUBLIC-V0.1-OPEN-SOURCE-PACKAGING.md)
+   Public-release checklist, packaging rules, and what should or should not be included in the first open-source launch.

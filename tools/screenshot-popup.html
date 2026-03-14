@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      background: #0a0a14;
+    }
+
+    .popup-frame {
+      width: 340px;
+      margin: 0 auto;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0f0f1a;
+      color: #e8e8f0;
+      overflow: hidden;
+      user-select: none;
+      border-radius: 12px;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 20px 20px 16px;
+      background: linear-gradient(135deg, #0f0f1a 0%, #161630 100%);
+    }
+    .brand { display: flex; align-items: center; gap: 10px; }
+    .brand-logo { width: 28px; height: 28px; }
+    .brand-name {
+      font-size: 18px; font-weight: 700; letter-spacing: 3px;
+      background: linear-gradient(135deg, #00d4ff, #7b68ee);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    .status-badge {
+      font-size: 10px; font-weight: 600; padding: 4px 10px; border-radius: 12px;
+      letter-spacing: 0.5px; text-transform: uppercase;
+      background: rgba(74, 222, 128, 0.15); color: #4ade80;
+      box-shadow: 0 0 12px rgba(74, 222, 128, 0.1);
+    }
+    .divider {
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(0, 212, 255, 0.15), transparent);
+      margin: 0 20px;
+    }
+    .content { padding: 16px 20px 20px; display: flex; flex-direction: column; gap: 12px; }
+    .toggle-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 14px; background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.06); border-radius: 12px;
+    }
+    .toggle-label { font-size: 13px; font-weight: 500; color: #c8c8d8; }
+    .switch { position: relative; width: 44px; height: 24px; flex-shrink: 0; }
+    .switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+    .switch-track {
+      position: absolute; cursor: pointer; inset: 0;
+      background: linear-gradient(135deg, #00d4ff, #7b68ee);
+      box-shadow: 0 0 16px rgba(0, 212, 255, 0.25);
+      border-radius: 12px;
+    }
+    .switch-track::before {
+      content: ""; position: absolute; height: 18px; width: 18px;
+      left: 23px; bottom: 3px; background: #fff; border-radius: 50%;
+    }
+    .section {
+      background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 12px; padding: 14px;
+    }
+    .section-label {
+      font-size: 11px; font-weight: 600; color: #888;
+      text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px;
+    }
+    .style-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+    .style-btn {
+      font-family: inherit; font-size: 11px; font-weight: 500;
+      padding: 7px 4px; border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 8px; background: rgba(255,255,255,0.02);
+      color: #999; cursor: pointer; text-align: center;
+    }
+    .style-btn.selected {
+      border-color: rgba(0, 212, 255, 0.5); background: rgba(0, 212, 255, 0.1);
+      color: #00d4ff; font-weight: 600; box-shadow: 0 0 12px rgba(0, 212, 255, 0.08);
+    }
+    .slider-group { display: flex; flex-direction: column; gap: 2px; }
+    .slider-header { display: flex; justify-content: space-between; align-items: center; }
+    .slider-name { font-size: 12px; font-weight: 500; color: #999; }
+    .slider-value {
+      font-size: 12px; font-weight: 600; color: #00d4ff;
+      min-width: 32px; text-align: right; font-variant-numeric: tabular-nums;
+    }
+    input[type="range"] {
+      -webkit-appearance: none; appearance: none; width: 100%; height: 4px;
+      border-radius: 2px; background: rgba(255,255,255,0.08); outline: none; margin: 6px 0 2px;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none; width: 14px; height: 14px;
+      border-radius: 50%; background: #00d4ff; cursor: pointer;
+      box-shadow: 0 0 8px rgba(0, 212, 255, 0.4);
+    }
+    .footer { text-align: center; padding: 8px 20px 16px; }
+    .lang-switcher { display: flex; justify-content: center; gap: 4px; margin-bottom: 8px; }
+    .lang-btn {
+      font-family: inherit; font-size: 10px; font-weight: 500;
+      padding: 3px 10px; border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 6px; background: transparent; color: #555; cursor: pointer;
+    }
+    .lang-btn.selected {
+      color: #00d4ff; border-color: rgba(0, 212, 255, 0.3);
+      background: rgba(0, 212, 255, 0.06);
+    }
+    .footer-text { font-size: 10px; color: #444; letter-spacing: 0.5px; }
+  </style>
+</head>
+<body>
+  <div class="popup-frame">
+    <div class="header">
+      <div class="brand">
+        <img class="brand-logo" src="../chrome-ext/icons/icon48.png" alt="">
+        <span class="brand-name">CIRRUS</span>
+      </div>
+      <span class="status-badge">ACTIVE</span>
+    </div>
+    <div class="divider"></div>
+    <div class="content">
+      <div class="toggle-row">
+        <span class="toggle-label">Enable Enhancement</span>
+        <label class="switch">
+          <input type="checkbox" checked>
+          <span class="switch-track"></span>
+        </label>
+      </div>
+      <div class="section">
+        <div class="section-label">STYLE</div>
+        <div class="style-grid">
+          <button class="style-btn selected">Reference</button>
+          <button class="style-btn">Grand</button>
+          <button class="style-btn">Smooth</button>
+          <button class="style-btn">Vocal</button>
+          <button class="style-btn">Punch</button>
+          <button class="style-btn">Air</button>
+          <button class="style-btn">Night</button>
+        </div>
+      </div>
+      <div class="section">
+        <div class="slider-group">
+          <div class="slider-header">
+            <span class="slider-name">Strength</span>
+            <span class="slider-value">100%</span>
+          </div>
+          <input type="range" min="0" max="100" value="100">
+        </div>
+      </div>
+      <div class="section">
+        <div class="slider-group">
+          <div class="slider-header">
+            <span class="slider-name">HF Reconstruction</span>
+            <span class="slider-value">100%</span>
+          </div>
+          <input type="range" min="0" max="100" value="100">
+        </div>
+      </div>
+      <div class="section">
+        <div class="slider-group">
+          <div class="slider-header">
+            <span class="slider-name">Dynamics</span>
+            <span class="slider-value">100%</span>
+          </div>
+          <input type="range" min="0" max="100" value="100">
+        </div>
+      </div>
+    </div>
+    <div class="footer">
+      <div class="lang-switcher">
+        <button class="lang-btn selected">EN</button>
+        <button class="lang-btn">繁中</button>
+        <button class="lang-btn">简中</button>
+      </div>
+      <span class="footer-text">CIRRUS v0.1.0</span>
+    </div>
+  </div>
+</body>
+</html>
