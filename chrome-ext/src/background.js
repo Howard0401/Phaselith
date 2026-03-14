@@ -9,6 +9,7 @@
 let offscreenCreated = false;
 let capturedTabId = null; // Currently captured tab
 let isEnabled = false;    // Whether the extension is active
+let captureGeneration = 0; // Monotonic counter to discard stale captures
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'START_CAPTURE') {
@@ -56,6 +57,11 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 async function startCapture() {
+  // Increment generation — any in-flight capture with an older generation
+  // will be discarded when it resolves. This prevents fast tab-switching
+  // from letting a stale capture overwrite a newer one.
+  const thisGeneration = ++captureGeneration;
+
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) return;
@@ -69,9 +75,22 @@ async function startCapture() {
       targetTabId: tab.id,
     });
 
+    // Race guard: if another startCapture() was called while we awaited,
+    // this capture is stale — discard it.
+    if (thisGeneration !== captureGeneration) {
+      console.log(`ASCE: Discarding stale capture (gen ${thisGeneration}, current ${captureGeneration})`);
+      return;
+    }
+
     capturedTabId = tab.id;
 
     await ensureOffscreen();
+
+    // Second race check after ensureOffscreen (also async)
+    if (thisGeneration !== captureGeneration) {
+      console.log(`ASCE: Discarding stale capture after offscreen (gen ${thisGeneration})`);
+      return;
+    }
 
     // Read saved config from storage (offscreen can't access chrome.storage)
     const config = await chrome.storage.local.get(
