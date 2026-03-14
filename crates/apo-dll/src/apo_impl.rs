@@ -10,38 +10,53 @@
 
 use crate::format_negotiate;
 use crate::mmap_ipc::MmapIpc;
-use asce_dsp_core::config::{EngineConfig, PhaseMode, QualityMode, StyleConfig};
+use asce_dsp_core::config::{EngineConfig, PhaseMode, QualityMode, StyleConfig, SynthesisMode};
 use asce_dsp_core::engine::{CirrusEngine, CirrusEngineBuilder};
+use asce_dsp_core::types::CrossChannelContext;
 
 /// The ASCE APO instance.
 /// Created by ClassFactory, one per audio stream.
 ///
-/// TODO: APO is currently a single-engine sequential mono path with reset between channels.
-/// This prevents L→R state contamination but wastes work on reset.
-/// Future: redesign as stereo-native reference runtime (dual-engine with shared
-/// cross-channel analysis, or true interleaved stereo processing).
+/// Dual-engine architecture (aligned with browser WASM bridge):
+/// - Two independent mono engines (L/R) with no state contamination
+/// - Symmetric one-frame-delayed cross-channel context
+/// - Each engine sees the same CrossChannelContext from the previous frame
 pub struct AsceApo {
-    engine: Option<CirrusEngine>,
+    engine_l: Option<CirrusEngine>,
+    engine_r: Option<CirrusEngine>,
     mmap: Option<MmapIpc>,
     sample_rate: u32,
     channels: u16,
     frame_size: usize,
     locked: bool,
-    /// Pre-allocated scratch buffer for de-interleaved channel data.
-    /// Sized in lock_for_process() to avoid allocation in process().
-    channel_buf: Vec<f32>,
+    /// Pre-allocated scratch buffer for de-interleaved L channel data.
+    channel_buf_l: Vec<f32>,
+    /// Pre-allocated scratch buffer for de-interleaved R channel data.
+    channel_buf_r: Vec<f32>,
+    /// Saved dry input for cross-channel computation (pre-allocated).
+    /// [0..frame_size] = L dry, [frame_size..2*frame_size] = R dry.
+    dry_lr_saved: Vec<f32>,
+    /// Cross-channel context from previous frame (symmetric one-frame delay).
+    cross_channel_prev: Option<CrossChannelContext>,
+    /// Last seen config version from mmap (for change-only updates).
+    last_config_version: u32,
 }
 
 impl AsceApo {
     pub fn new() -> Self {
         Self {
-            engine: None,
+            engine_l: None,
+            engine_r: None,
             mmap: None,
             sample_rate: 48000,
             channels: 2,
             frame_size: 480, // 10ms at 48kHz
             locked: false,
-            channel_buf: Vec::new(),
+            channel_buf_l: Vec::new(),
+            channel_buf_r: Vec::new(),
+            dry_lr_saved: Vec::new(),
+            cross_channel_prev: None,
+            last_config_version: 0,
         }
     }
 
@@ -71,26 +86,32 @@ impl AsceApo {
 
         // Load config from mmap, or use defaults
         let config = self.load_config();
-
-        // TODO(stereo): APO is currently a transitional mono-per-channel runtime.
-        // Engine is built with with_channels(self.channels) but process() de-interleaves
-        // and feeds mono slices per channel with reset() between them.
-        // This means ctx.channels is wrong for stereo, and M1/M3/M4 stereo-dependent
-        // logic (spatial analysis, side recovery) sees incorrect data.
-        // Phase D0+ should either: (a) use dual-engine with with_channels(1), or
-        // (b) implement true interleaved stereo processing.
-        // For now, browser (WASM) is the reference stereo runtime.
         let fft_size = config.quality_mode.core_fft_size();
-        self.engine = Some(
+
+        // Dual-engine: each engine processes one mono channel independently.
+        // Aligned with browser WASM bridge architecture (with_channels(1)).
+        self.engine_l = Some(
             CirrusEngineBuilder::new(self.sample_rate, fft_size)
                 .with_config(config)
-                .with_channels(self.channels)
+                .with_channels(1)
                 .build_default(),
         );
 
-        // Pre-allocate channel scratch buffer for de-interleaving.
-        // This avoids Vec allocation inside process() (RT safety).
-        self.channel_buf = vec![0.0f32; frame_size];
+        if self.channels >= 2 {
+            self.engine_r = Some(
+                CirrusEngineBuilder::new(self.sample_rate, fft_size)
+                    .with_config(config)
+                    .with_channels(1)
+                    .build_default(),
+            );
+        }
+
+        // Pre-allocate scratch buffers (no allocation in hot path)
+        self.channel_buf_l = vec![0.0f32; frame_size];
+        self.channel_buf_r = vec![0.0f32; frame_size];
+        self.dry_lr_saved = vec![0.0f32; frame_size * 2]; // L dry + R dry
+        self.cross_channel_prev = None;
+        self.last_config_version = 0;
 
         self.locked = true;
     }
@@ -98,7 +119,8 @@ impl AsceApo {
     /// Release resources
     pub fn unlock_for_process(&mut self) {
         self.locked = false;
-        self.engine = None;
+        self.engine_l = None;
+        self.engine_r = None;
     }
 
     /// Real-time audio processing. MUST be deterministic:
@@ -108,7 +130,6 @@ impl AsceApo {
     /// - No panic (wrapped in catch_unwind by caller)
     pub fn process(&mut self, input: &[f32], output: &mut [f32]) {
         if !self.locked {
-            // Not locked, pass through
             output[..input.len()].copy_from_slice(input);
             return;
         }
@@ -120,61 +141,91 @@ impl AsceApo {
                 return;
             }
 
-            // Hot-reload config changes (atomic read, no lock)
-            self.maybe_update_config(mmap.config().version.load(
+            // Hot-reload config only on version change (atomic read, no lock)
+            let current_version = mmap.config().version.load(
                 std::sync::atomic::Ordering::Relaxed,
-            ));
+            );
+            if current_version != self.last_config_version {
+                self.last_config_version = current_version;
+                let config = self.load_config();
+                if let Some(ref mut e) = self.engine_l {
+                    e.update_config(config);
+                }
+                if let Some(ref mut e) = self.engine_r {
+                    e.update_config(config);
+                }
+            }
         }
 
-        if let Some(ref mut engine) = self.engine {
-            // Process each channel
-            let frames = input.len() / self.channels as usize;
-            let ch = self.channels as usize;
+        let ch = self.channels as usize;
+        let frames = input.len() / ch;
 
-            if ch == 1 {
-                // Mono: direct processing
+        if ch == 1 {
+            // Mono: use L engine only
+            if let Some(ref mut engine) = self.engine_l {
                 output[..frames].copy_from_slice(&input[..frames]);
                 engine.process(&mut output[..frames]);
             } else {
-                // Multi-channel: process each channel separately
-                // De-interleave → process → re-interleave
-                // Uses pre-allocated channel_buf (no allocation in hot path)
-                for c in 0..ch {
-                    // Extract channel into pre-allocated buffer
-                    for f in 0..frames {
-                        self.channel_buf[f] = input[f * ch + c];
-                    }
+                output[..frames].copy_from_slice(&input[..frames]);
+            }
+        } else {
+            // Stereo: dual-engine with symmetric cross-channel context.
+            // Aligned with WASM bridge process_block_ch() pattern.
 
-                    engine.process(&mut self.channel_buf[..frames]);
-
-                    // Write back
-                    for f in 0..frames {
-                        output[f * ch + c] = self.channel_buf[f];
-                    }
-
-                    // Reset between channels to prevent state contamination.
-                    // CirrusEngine is stateful (frame_index, damage, lattice, fields,
-                    // validated all accumulate). Without reset, the next channel would
-                    // inherit this channel's processing history.
-                    // Reset after every channel except the last one.
-                    // TODO: Replace with proper stereo-native architecture
-                    // (dual-engine + shared cross-channel, or interleaved processing).
-                    if c < ch - 1 {
-                        engine.reset();
-                    }
-                }
+            // De-interleave into pre-allocated buffers and save dry copies
+            for f in 0..frames {
+                let l = input[f * 2];
+                let r = input[f * 2 + 1];
+                self.channel_buf_l[f] = l;
+                self.channel_buf_r[f] = r;
+                self.dry_lr_saved[f] = l;               // L dry
+                self.dry_lr_saved[frames + f] = r;       // R dry
             }
 
-            // Update status via mmap
-            if let Some(ref mmap) = self.mmap {
-                let status = mmap.status();
-                status.increment_frames();
+            // Inject previous frame's cross-channel context into L engine
+            if let Some(ref mut engine) = self.engine_l {
+                engine.context_mut().cross_channel = self.cross_channel_prev;
+                engine.process(&mut self.channel_buf_l[..frames]);
+            }
+
+            // Inject same cross-channel context into R engine (symmetric)
+            if let Some(ref mut engine) = self.engine_r {
+                engine.context_mut().cross_channel = self.cross_channel_prev;
+                engine.process(&mut self.channel_buf_r[..frames]);
+            }
+
+            // Compute cross-channel from saved dry L + dry R (AFTER processing)
+            // Not used until next frame — symmetric one-frame delay
+            let cc = CrossChannelContext::from_lr(
+                &self.dry_lr_saved[..frames],
+                &self.dry_lr_saved[frames..frames * 2],
+            );
+            self.cross_channel_prev = Some(cc);
+
+            // Re-interleave output
+            for f in 0..frames {
+                output[f * 2] = self.channel_buf_l[f];
+                output[f * 2 + 1] = self.channel_buf_r[f];
+            }
+        }
+
+        // Update status via mmap (separate borrow scope to avoid conflicts)
+        if let Some(ref mmap) = self.mmap {
+            let status = mmap.status();
+            status.increment_frames();
+            if let Some(ref engine) = self.engine_l {
                 let damage = engine.damage_posterior();
                 status.set_cutoff(Some(damage.cutoff.mean));
                 status.set_clipping(damage.clipping.mean);
+                // Processing load: engine processing time / buffer duration
+                let buffer_duration_us = (frames as f32 / self.sample_rate as f32) * 1_000_000.0;
+                let load_percent = if buffer_duration_us > 0.0 {
+                    (engine.context().processing_time_us / buffer_duration_us) * 100.0
+                } else {
+                    0.0
+                };
+                status.set_processing_load(load_percent);
             }
-        } else {
-            output[..input.len()].copy_from_slice(input);
         }
     }
 
@@ -197,20 +248,15 @@ impl AsceApo {
                     _ => QualityMode::Standard,
                 },
                 style: StyleConfig::default(),
-                synthesis_mode: asce_dsp_core::config::SynthesisMode::default(),
+                synthesis_mode: match sc.synthesis_mode.load(std::sync::atomic::Ordering::Relaxed) {
+                    0 => SynthesisMode::LegacyAdditive,
+                    2 => SynthesisMode::FftOlaFull,
+                    _ => SynthesisMode::FftOlaPilot, // default to Pilot (current best)
+                },
                 ambience_preserve: 0.0,
             }
         } else {
             EngineConfig::default()
-        }
-    }
-
-    fn maybe_update_config(&mut self, _new_version: u32) {
-        // TODO: track config version and only update on change
-        // For now, update every frame (atomic reads are cheap)
-        let config = self.load_config();
-        if let Some(ref mut engine) = self.engine {
-            engine.update_config(config);
         }
     }
 }

@@ -23,6 +23,7 @@ pub struct SharedConfig {
     pub transient_repair_u32: AtomicU32,
     pub phase_mode: AtomicU8,      // 0=Linear, 1=Minimum
     pub quality_preset: AtomicU8,  // 0=Light, 1=Standard, 2=Ultra
+    pub synthesis_mode: AtomicU8,  // 0=LegacyAdditive, 1=FftOlaPilot, 2=FftOlaFull
 }
 
 impl SharedConfig {
