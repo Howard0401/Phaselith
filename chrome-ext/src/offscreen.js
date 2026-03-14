@@ -9,11 +9,14 @@ let sourceNode = null;
 let workletNode = null;
 let mediaStream = null;
 let wasmBinary = null; // Cached WASM binary
+let capturedTabId = null; // Tab being processed
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'OFFSCREEN_START') {
+    capturedTabId = msg.tabId ?? null;
     startProcessing(msg.streamId, msg.config);
   } else if (msg.type === 'OFFSCREEN_STOP') {
+    capturedTabId = null;
     stopProcessing();
   } else if (msg.type === 'CONFIG_UPDATE') {
     updateConfig(msg);
@@ -82,7 +85,7 @@ async function startProcessing(streamId, config) {
     sourceNode.connect(workletNode);
     workletNode.connect(audioCtx.destination);
 
-    console.log('ASCE: Audio processing started');
+    console.log(`ASCE: Audio processing started (tab ${capturedTabId})`);
   } catch (err) {
     console.error('ASCE: Failed to start processing:', err);
   }
