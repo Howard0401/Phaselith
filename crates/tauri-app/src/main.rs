@@ -7,6 +7,7 @@
 
 mod ipc_bridge;
 mod commands;
+mod endpoint_bind;
 
 fn main() {
     tauri::Builder::default()

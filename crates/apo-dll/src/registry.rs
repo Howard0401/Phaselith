@@ -1,8 +1,9 @@
 // COM + APO registry operations for DllRegisterServer / DllUnregisterServer.
 //
-// Registers ASCE APO as:
-// 1. COM InprocServer32 under HKCR\CLSID\{our-guid}
-// 2. AudioEngine APO under HKLM\SOFTWARE\Classes\AudioEngine\AudioProcessingObjects\{our-guid}
+// Registration has two phases:
+// 1. DllRegisterServer (regsvr32): COM InprocServer32 + AudioEngine APO catalog
+// 2. bind_to_all_render_endpoints (Tauri app): writes APO CLSID to each
+//    audio endpoint's FxProperties so audiodg.exe knows to load us
 
 use crate::guids::*;
 use windows::core::{GUID, HRESULT, HSTRING};
@@ -188,6 +189,159 @@ fn delete_registry_tree(root: HKEY, subkey: &str) -> Result<(), ()> {
     unsafe {
         let subkey_h = HSTRING::from(subkey);
         let result = RegDeleteTreeW(root, &subkey_h);
+        if result == ERROR_SUCCESS { Ok(()) } else { Err(()) }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Endpoint binding: write APO CLSID to audio device FxProperties
+// ---------------------------------------------------------------------------
+
+/// PKEY_FX_StreamEffectClsid = {d04e05a6-594b-4fb6-a80d-01af5eed7d1d},5
+/// This tells the audio engine to load our APO as a stream-level effect (SFX).
+const PKEY_FX_STREAM_EFFECT_CLSID_NAME: &str =
+    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},5";
+
+/// Base registry path for audio render endpoints
+const MMDEVICES_RENDER_PATH: &str =
+    "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\MMDevices\\Audio\\Render";
+
+/// Bind our APO to all render audio endpoints.
+/// Called from Tauri app after DllRegisterServer succeeds.
+/// Writes PKEY_FX_StreamEffectClsid to each endpoint's FxProperties.
+pub fn bind_to_all_render_endpoints() -> std::result::Result<u32, String> {
+    let guid_str = guid_to_string(&CLSID_ASCE_APO);
+    let mut bound_count = 0u32;
+
+    unsafe {
+        // Open the Render devices key
+        let render_h = HSTRING::from(MMDEVICES_RENDER_PATH);
+        let mut render_key = HKEY::default();
+        let result = RegOpenKeyExW(
+            HKEY_LOCAL_MACHINE,
+            &render_h,
+            0,
+            KEY_READ,
+            &mut render_key,
+        );
+        if result != ERROR_SUCCESS {
+            return Err(format!("Cannot open MMDevices\\Render: {:?}", result));
+        }
+
+        // Enumerate endpoint subkeys (each is a GUID like {xxxxxxxx-...})
+        let mut index = 0u32;
+        loop {
+            let mut name_buf = [0u16; 260];
+            let mut name_len = name_buf.len() as u32;
+            let result = RegEnumKeyExW(
+                render_key,
+                index,
+                windows::core::PWSTR(name_buf.as_mut_ptr()),
+                &mut name_len,
+                None,
+                windows::core::PWSTR::null(),
+                None,
+                None,
+            );
+            if result != ERROR_SUCCESS {
+                break; // No more subkeys
+            }
+
+            let endpoint_name = String::from_utf16_lossy(&name_buf[..name_len as usize]);
+            let fx_path = format!("{}\\{}\\FxProperties", MMDEVICES_RENDER_PATH, endpoint_name);
+
+            // Write our APO CLSID as the stream effect
+            if set_registry_value(
+                HKEY_LOCAL_MACHINE,
+                &fx_path,
+                PKEY_FX_STREAM_EFFECT_CLSID_NAME,
+                &guid_str,
+            ).is_ok() {
+                bound_count += 1;
+            }
+
+            index += 1;
+        }
+
+        let _ = RegCloseKey(render_key);
+    }
+
+    if bound_count > 0 {
+        Ok(bound_count)
+    } else {
+        Err("No audio render endpoints found".into())
+    }
+}
+
+/// Unbind our APO from all render audio endpoints.
+/// Removes PKEY_FX_StreamEffectClsid from each endpoint's FxProperties.
+pub fn unbind_from_all_render_endpoints() -> std::result::Result<u32, String> {
+    let mut unbound_count = 0u32;
+
+    unsafe {
+        let render_h = HSTRING::from(MMDEVICES_RENDER_PATH);
+        let mut render_key = HKEY::default();
+        let result = RegOpenKeyExW(
+            HKEY_LOCAL_MACHINE,
+            &render_h,
+            0,
+            KEY_READ,
+            &mut render_key,
+        );
+        if result != ERROR_SUCCESS {
+            return Err(format!("Cannot open MMDevices\\Render: {:?}", result));
+        }
+
+        let mut index = 0u32;
+        loop {
+            let mut name_buf = [0u16; 260];
+            let mut name_len = name_buf.len() as u32;
+            let result = RegEnumKeyExW(
+                render_key,
+                index,
+                windows::core::PWSTR(name_buf.as_mut_ptr()),
+                &mut name_len,
+                None,
+                windows::core::PWSTR::null(),
+                None,
+                None,
+            );
+            if result != ERROR_SUCCESS {
+                break;
+            }
+
+            let endpoint_name = String::from_utf16_lossy(&name_buf[..name_len as usize]);
+            let fx_path = format!("{}\\{}\\FxProperties", MMDEVICES_RENDER_PATH, endpoint_name);
+
+            // Delete the stream effect CLSID value
+            if delete_registry_value(
+                HKEY_LOCAL_MACHINE,
+                &fx_path,
+                PKEY_FX_STREAM_EFFECT_CLSID_NAME,
+            ).is_ok() {
+                unbound_count += 1;
+            }
+
+            index += 1;
+        }
+
+        let _ = RegCloseKey(render_key);
+    }
+
+    Ok(unbound_count)
+}
+
+fn delete_registry_value(root: HKEY, subkey: &str, name: &str) -> Result<(), ()> {
+    unsafe {
+        let subkey_h = HSTRING::from(subkey);
+        let mut hkey = HKEY::default();
+        let result = RegOpenKeyExW(root, &subkey_h, 0, KEY_SET_VALUE, &mut hkey);
+        if result != ERROR_SUCCESS {
+            return Err(());
+        }
+        let name_h = HSTRING::from(name);
+        let result = RegDeleteValueW(hkey, &name_h);
+        let _ = RegCloseKey(hkey);
         if result == ERROR_SUCCESS { Ok(()) } else { Err(()) }
     }
 }

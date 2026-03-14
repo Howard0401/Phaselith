@@ -86,7 +86,16 @@ pub fn install_apo() -> Result<String, String> {
             .map_err(|e| format!("Failed to run regsvr32: {e}"))?;
 
         if output.status.success() {
-            Ok("APO registered successfully. Restart audio service to activate.".into())
+            // After COM registration, bind APO to all render endpoints
+            let bind_result = crate::endpoint_bind::bind_to_all_render_endpoints();
+            match bind_result {
+                Ok(n) => Ok(format!(
+                    "APO registered and bound to {n} endpoint(s). Restart audio service to activate."
+                )),
+                Err(e) => Ok(format!(
+                    "APO registered but endpoint binding failed: {e}. Manual binding may be needed."
+                )),
+            }
         } else {
             Err("regsvr32 failed. Run as administrator.".into())
         }
@@ -106,6 +115,9 @@ pub fn uninstall_apo() -> Result<String, String> {
             .ok_or("No parent dir")?
             .join("asce_apo.dll");
 
+        // Unbind from endpoints first
+        let _ = crate::endpoint_bind::unbind_from_all_render_endpoints();
+
         let output = std::process::Command::new("regsvr32")
             .arg("/u")
             .arg("/s")
@@ -114,7 +126,7 @@ pub fn uninstall_apo() -> Result<String, String> {
             .map_err(|e| format!("Failed to run regsvr32: {e}"))?;
 
         if output.status.success() {
-            Ok("APO unregistered. Restart audio service to deactivate.".into())
+            Ok("APO unregistered and unbound. Restart audio service to deactivate.".into())
         } else {
             Err("regsvr32 /u failed.".into())
         }
