@@ -1,0 +1,19 @@
+{
+  "appName": { "message": "CIRRUS" },
+  "appDesc": { "message": "\u5373\u6642\u97f3\u8a0a\u4fee\u5fa9\u5f15\u64ce \u2014 \u9084\u539f\u58d3\u7e2e\u97f3\u8a0a\u4e2d\u907a\u5931\u7684\u8ae7\u6ce2\u3001\u7a7a\u6c23\u611f\u8207\u7d30\u7bc0\u3002" },
+  "statusActive": { "message": "\u5df2\u555f\u7528" },
+  "statusInactive": { "message": "\u672a\u555f\u7528" },
+  "enableEnhancement": { "message": "\u555f\u7528\u589e\u5f37" },
+  "styleLabel": { "message": "\u98a8\u683c" },
+  "presetReference": { "message": "\u53c3\u8003" },
+  "presetGrand": { "message": "\u78c5\u7921" },
+  "presetSmooth": { "message": "\u6eab\u6f64" },
+  "presetVocal": { "message": "\u4eba\u8072" },
+  "presetPunch": { "message": "\u529b\u9053" },
+  "presetAir": { "message": "\u7a7a\u6c23\u611f" },
+  "presetNight": { "message": "\u591c\u9593" },
+  "strengthLabel": { "message": "\u5f37\u5ea6" },
+  "hfLabel": { "message": "\u9ad8\u983b\u91cd\u5efa" },
+  "dynamicsLabel": { "message": "\u52d5\u614b" },
+  "footerVersion": { "message": "v0.1.0" }
+}

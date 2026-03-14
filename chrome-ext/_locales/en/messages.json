@@ -1,0 +1,19 @@
+{
+  "appName": { "message": "CIRRUS" },
+  "appDesc": { "message": "Real-time audio restoration engine \u2014 recovers lost harmonics, air, and detail from compressed browser audio." },
+  "statusActive": { "message": "Active" },
+  "statusInactive": { "message": "Inactive" },
+  "enableEnhancement": { "message": "Enable Enhancement" },
+  "styleLabel": { "message": "Style" },
+  "presetReference": { "message": "Reference" },
+  "presetGrand": { "message": "Grand" },
+  "presetSmooth": { "message": "Smooth" },
+  "presetVocal": { "message": "Vocal" },
+  "presetPunch": { "message": "Punch" },
+  "presetAir": { "message": "Air" },
+  "presetNight": { "message": "Night" },
+  "strengthLabel": { "message": "Strength" },
+  "hfLabel": { "message": "HF Reconstruction" },
+  "dynamicsLabel": { "message": "Dynamics" },
+  "footerVersion": { "message": "v0.1.0" }
+}

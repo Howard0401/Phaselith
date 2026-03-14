@@ -24,7 +24,7 @@ class AsceProcessor extends AudioWorkletProcessor {
     this.hfReconstruction = 0.8;
     this.dynamics = 0.6;
     this.stylePreset = 0; // 0=Reference
-    this.synthesisMode = 0; // 0=LegacyAdditive, 1=FftOlaPilot
+    this.synthesisMode = 1; // FftOlaPilot (default)
 
     this.port.onmessage = (e) => {
       const msg = e.data;
@@ -81,9 +81,9 @@ class AsceProcessor extends AudioWorkletProcessor {
 
       this.wasmReady = true;
       this.port.postMessage({ type: 'WASM_READY' });
-      console.log('ASCE WorkletProcessor: WASM loaded');
+      console.log('CIRRUS WorkletProcessor: WASM loaded');
     } catch (err) {
-      console.error('ASCE WorkletProcessor: Failed to init WASM:', err);
+      console.error('CIRRUS WorkletProcessor: Failed to init WASM:', err);
       this.port.postMessage({ type: 'WASM_ERROR', error: err.message });
     }
   }

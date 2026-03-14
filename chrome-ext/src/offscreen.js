@@ -61,12 +61,12 @@ async function startProcessing(streamId, config) {
     workletNode.port.onmessage = (e) => {
       const d = e.data;
       if (d.type === 'WASM_READY') {
-        console.log('ASCE: WASM engine ready');
+        console.log('CIRRUS: WASM engine ready');
         // Worklet caches and replays config on init — no need to resend here.
         // Sending startup config would overwrite newer CONFIG_UPDATE values
         // that arrived while WASM was loading.
       } else if (d.type === 'WASM_ERROR') {
-        console.error('ASCE: WASM init error:', d.error);
+        console.error('CIRRUS: WASM init error:', d.error);
       }
     };
 
@@ -85,9 +85,9 @@ async function startProcessing(streamId, config) {
     sourceNode.connect(workletNode);
     workletNode.connect(audioCtx.destination);
 
-    console.log(`ASCE: Audio processing started (tab ${capturedTabId})`);
+    console.log(`CIRRUS: Audio processing started (tab ${capturedTabId})`);
   } catch (err) {
-    console.error('ASCE: Failed to start processing:', err);
+    console.error('CIRRUS: Failed to start processing:', err);
   }
 }
 

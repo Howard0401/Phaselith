@@ -32,33 +32,50 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
   if (!isEnabled) return;
   if (activeInfo.tabId === capturedTabId) return; // same tab, no-op
 
-  // Verify the tab is not an internal Chrome page.
-  // Note: without "tabs" permission, tab.url is only available for tabs where
-  // the extension has host permission. If tab.url is undefined, we still attempt
-  // capture — tabCapture.getMediaStreamId will fail gracefully for uncapturable tabs.
-  try {
-    const tab = await chrome.tabs.get(activeInfo.tabId);
-    const url = tab?.url || '';
-    if (url.startsWith('chrome://') || url.startsWith('chrome-extension://')) {
-      return; // skip internal pages
-    }
-  } catch {
-    return; // tab doesn't exist
-  }
+  if (!await isCapturableTab(activeInfo.tabId)) return;
 
-  console.log(`ASCE: Tab switched ${capturedTabId} → ${activeInfo.tabId}, re-capturing`);
+  console.log(`CIRRUS: Tab switched ${capturedTabId} → ${activeInfo.tabId}, re-capturing`);
   startCapture();
 });
 
 // Handle captured tab being closed
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (tabId === capturedTabId) {
-    console.log('ASCE: Captured tab closed, stopping');
+    console.log('CIRRUS: Captured tab closed, stopping');
     capturedTabId = null;
     chrome.runtime.sendMessage({ type: 'OFFSCREEN_STOP' }).catch(() => {});
     // Don't set isEnabled=false — if user opens a new tab it will auto-capture
   }
 });
+
+// Check if a tab can be captured (not a restricted page)
+async function isCapturableTab(tabId) {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    const url = tab?.url || '';
+
+    // Without "tabs" permission, tab.url may be undefined for pages
+    // where we don't have host permission. In that case, we still
+    // attempt capture — it will fail gracefully.
+    if (!url) return true;
+
+    // Chrome internal pages, devtools, web store, and new tab cannot be captured
+    if (url.startsWith('chrome://') ||
+        url.startsWith('chrome-extension://') ||
+        url.startsWith('devtools://') ||
+        url.startsWith('chrome-devtools://') ||
+        url.startsWith('https://chrome.google.com/webstore') ||
+        url.startsWith('https://chromewebstore.google.com') ||
+        url.startsWith('about:') ||
+        url.startsWith('edge://') ||
+        url === '') {
+      return false;
+    }
+    return true;
+  } catch {
+    return false; // tab doesn't exist
+  }
+}
 
 async function startCapture() {
   // Increment generation — any in-flight capture with an older generation
@@ -70,19 +87,27 @@ async function startCapture() {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) return;
 
-    // Skip internal Chrome pages (can't capture them)
-    if (tab.url?.startsWith('chrome://') || tab.url?.startsWith('chrome-extension://')) {
+    if (!await isCapturableTab(tab.id)) {
+      console.log('CIRRUS: Skipping uncapturable tab:', tab.url || '(no url)');
       return;
     }
 
-    const streamId = await chrome.tabCapture.getMediaStreamId({
-      targetTabId: tab.id,
-    });
+    let streamId;
+    try {
+      streamId = await chrome.tabCapture.getMediaStreamId({
+        targetTabId: tab.id,
+      });
+    } catch (captureErr) {
+      // activeTab not granted for this tab (e.g. auto-follow without user click)
+      // This is normal — silently skip rather than logging an error
+      console.log('CIRRUS: Cannot capture tab (activeTab not granted):', tab.id);
+      return;
+    }
 
     // Race guard: if another startCapture() was called while we awaited,
     // this capture is stale — discard it.
     if (thisGeneration !== captureGeneration) {
-      console.log(`ASCE: Discarding stale capture (gen ${thisGeneration}, current ${captureGeneration})`);
+      console.log(`CIRRUS: Discarding stale capture (gen ${thisGeneration}, current ${captureGeneration})`);
       return;
     }
 
@@ -92,7 +117,7 @@ async function startCapture() {
 
     // Second race check after ensureOffscreen (also async)
     if (thisGeneration !== captureGeneration) {
-      console.log(`ASCE: Discarding stale capture after offscreen (gen ${thisGeneration})`);
+      console.log(`CIRRUS: Discarding stale capture after offscreen (gen ${thisGeneration})`);
       return;
     }
 
@@ -108,7 +133,7 @@ async function startCapture() {
       config,
     }).catch(() => {});
   } catch (err) {
-    console.error('ASCE: Failed to start capture:', err);
+    console.error('CIRRUS: Failed to start capture:', err);
   }
 }
 
@@ -130,7 +155,7 @@ async function ensureOffscreen() {
   await chrome.offscreen.createDocument({
     url: 'offscreen.html',
     reasons: ['USER_MEDIA'],
-    justification: 'ASCE audio processing requires AudioContext with WASM AudioWorklet',
+    justification: 'CIRRUS audio processing requires AudioContext with WASM AudioWorklet',
   });
   offscreenCreated = true;
 }

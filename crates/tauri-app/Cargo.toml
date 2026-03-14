@@ -2,6 +2,7 @@
 name = "asce-tauri"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 asce-dsp-core = { path = "../dsp-core" }
