@@ -57,3 +57,89 @@ pub fn suggest_format(
 
     (rate, bits, ch)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn supports_mono_stereo_float32() {
+        assert!(is_format_supported(48000, 32, 1, true));
+        assert!(is_format_supported(48000, 32, 2, true));
+    }
+
+    #[test]
+    fn rejects_multichannel() {
+        // 5.1, 7.1 etc. must be rejected
+        assert!(!is_format_supported(48000, 32, 3, true));
+        assert!(!is_format_supported(48000, 32, 6, true));
+        assert!(!is_format_supported(48000, 32, 8, true));
+    }
+
+    #[test]
+    fn rejects_zero_channels() {
+        assert!(!is_format_supported(48000, 32, 0, true));
+    }
+
+    #[test]
+    fn rejects_non_float() {
+        assert!(!is_format_supported(48000, 32, 2, false));
+        assert!(!is_format_supported(48000, 16, 2, true));
+        assert!(!is_format_supported(48000, 24, 2, true));
+    }
+
+    #[test]
+    fn supports_all_sample_rates() {
+        for sr in &[44100u32, 48000, 96000, 192000] {
+            assert!(
+                is_format_supported(*sr, 32, 2, true),
+                "Should support {sr} Hz"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_unsupported_sample_rates() {
+        assert!(!is_format_supported(22050, 32, 2, true));
+        assert!(!is_format_supported(32000, 32, 2, true));
+        assert!(!is_format_supported(88200, 32, 2, true));
+    }
+
+    #[test]
+    fn suggest_format_clamps_channels_to_stereo() {
+        let (_, _, ch) = suggest_format(48000, 32, 6);
+        assert_eq!(ch, 2, "6 channels should be clamped to 2");
+
+        let (_, _, ch) = suggest_format(48000, 32, 8);
+        assert_eq!(ch, 2, "8 channels should be clamped to 2");
+    }
+
+    #[test]
+    fn suggest_format_preserves_mono_stereo() {
+        let (_, _, ch) = suggest_format(48000, 32, 1);
+        assert_eq!(ch, 1);
+        let (_, _, ch) = suggest_format(48000, 32, 2);
+        assert_eq!(ch, 2);
+    }
+
+    #[test]
+    fn suggest_format_snaps_sample_rate() {
+        let (rate, _, _) = suggest_format(22050, 32, 2);
+        assert_eq!(rate, 44100);
+
+        let (rate, _, _) = suggest_format(48000, 32, 2);
+        assert_eq!(rate, 48000);
+
+        let (rate, _, _) = suggest_format(88200, 32, 2);
+        assert_eq!(rate, 96000);
+
+        let (rate, _, _) = suggest_format(384000, 32, 2);
+        assert_eq!(rate, 192000);
+    }
+
+    #[test]
+    fn suggest_format_always_32bit() {
+        let (_, bits, _) = suggest_format(48000, 16, 2);
+        assert_eq!(bits, 32);
+    }
+}

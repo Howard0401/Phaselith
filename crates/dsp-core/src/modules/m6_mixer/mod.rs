@@ -97,33 +97,65 @@ impl CirrusModule for PerceptualSafetyMixer {
             }
         }
 
-        // ── Phase 2: Warmth (subtle even-harmonic saturation) ──
-        // y = x - warmth * x³ / 3
-        // This naturally produces even harmonics (tube-like character).
-        // Independent of damage detection — works on any source.
-        if style.warmth > 0.01 {
-            let w = style.warmth * 0.15; // scale down: warmth 1.0 → 15% saturation drive
-            for i in 0..len {
-                let x = samples[i];
-                // Soft saturation: cubic waveshaper
-                let saturated = x - w * x * x * x / 3.0;
-                samples[i] = saturated.clamp(-limit, limit);
-            }
-        }
+        // ── Character layer with output level compensation ──
+        // Warmth (cubic waveshaper) and smoothness (3-tap averaging) both
+        // reduce peak/RMS without adding it back. This makes the processed
+        // version sound quieter than bypass in AB comparison.
+        // Fix: measure RMS before/after character processing, apply conservative
+        // makeup gain to compensate, still respecting true peak limit.
 
-        // ── Phase 3: Smoothness (time-domain micro-smoothing) ──
-        // Subtle 3-tap averaging that reduces digital harshness.
-        // Independent of damage detection — works on any source.
-        if style.smoothness > 0.15 && len >= 3 {
-            let smooth_amount = (style.smoothness - 0.15) * 0.12; // gentle: max ~10%
-            // Use prev sample as we go (causal filter, no allocation)
-            let mut prev = samples[0];
-            for i in 1..len - 1 {
-                let curr = samples[i];
-                let next = samples[i + 1];
-                let smoothed = prev * 0.25 + curr * 0.5 + next * 0.25;
-                samples[i] = curr + (smoothed - curr) * smooth_amount;
-                prev = curr;
+        let apply_warmth = style.warmth > 0.01;
+        let apply_smooth = style.smoothness > 0.15 && len >= 3;
+
+        if apply_warmth || apply_smooth {
+            // Measure RMS before character processing
+            let pre_rms_sq = samples.iter().map(|s| s * s).sum::<f32>() / len.max(1) as f32;
+
+            // ── Phase 2: Warmth (subtle even-harmonic saturation) ──
+            // y = x - warmth * x³ / 3
+            // This naturally produces even harmonics (tube-like character).
+            // Independent of damage detection — works on any source.
+            if apply_warmth {
+                let w = style.warmth * 0.15; // scale down: warmth 1.0 → 15% saturation drive
+                for i in 0..len {
+                    let x = samples[i];
+                    // Soft saturation: cubic waveshaper
+                    let saturated = x - w * x * x * x / 3.0;
+                    samples[i] = saturated.clamp(-limit, limit);
+                }
+            }
+
+            // ── Phase 3: Smoothness (time-domain micro-smoothing) ──
+            // Subtle 3-tap averaging that reduces digital harshness.
+            // Independent of damage detection — works on any source.
+            if apply_smooth {
+                let smooth_amount = (style.smoothness - 0.15) * 0.12; // gentle: max ~10%
+                // Use prev sample as we go (causal filter, no allocation)
+                let mut prev = samples[0];
+                for i in 1..len - 1 {
+                    let curr = samples[i];
+                    let next = samples[i + 1];
+                    let smoothed = prev * 0.25 + curr * 0.5 + next * 0.25;
+                    samples[i] = curr + (smoothed - curr) * smooth_amount;
+                    prev = curr;
+                }
+            }
+
+            // ── Phase 4: Output level compensation ──
+            // Measure RMS after character processing, apply makeup gain to
+            // match pre-character loudness. Clamped to [1.0, max_makeup] to
+            // ensure we only compensate lost level, never cut.
+            let post_rms_sq = samples.iter().map(|s| s * s).sum::<f32>() / len.max(1) as f32;
+
+            if post_rms_sq > 1e-12 && pre_rms_sq > 1e-12 {
+                let ratio = (pre_rms_sq / post_rms_sq).sqrt();
+                // Clamp: only compensate (ratio >= 1), max 3 dB makeup (~1.41x)
+                let makeup = ratio.clamp(1.0, 1.414);
+                if makeup > 1.001 {
+                    for i in 0..len {
+                        samples[i] = (samples[i] * makeup).clamp(-limit, limit);
+                    }
+                }
             }
         }
     }
@@ -272,5 +304,157 @@ mod tests {
         let orig_var: f32 = original.windows(2).map(|w| (w[1] - w[0]).abs()).sum();
         let smooth_var: f32 = samples.windows(2).map(|w| (w[1] - w[0]).abs()).sum();
         assert!(smooth_var < orig_var, "Smoothing should reduce variation");
+    }
+
+    // ── Level compensation tests ──
+
+    #[test]
+    fn warmth_level_compensation_preserves_rms() {
+        let mut m6 = PerceptualSafetyMixer::new();
+        m6.init(1024, 48000);
+        let mut config = EngineConfig::default();
+        config.style = StyleConfig::new(1.0, 0.0, 0.0, 0.0, 0.0, 0.0); // max warmth
+        let mut ctx = ProcessContext::new(48000, 2, config);
+        ctx.validated = ValidatedResidual::new(256);
+
+        let original: Vec<f32> = (0..256)
+            .map(|i| 0.6 * (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 48000.0).sin())
+            .collect();
+        let pre_rms: f32 = (original.iter().map(|s| s * s).sum::<f32>() / 256.0).sqrt();
+
+        let mut samples = original.clone();
+        m6.process(&mut samples, &mut ctx);
+
+        let post_rms: f32 = (samples.iter().map(|s| s * s).sum::<f32>() / 256.0).sqrt();
+
+        // Post-processing RMS should be close to pre-processing RMS
+        // (within 1 dB ≈ 12% tolerance)
+        let ratio = post_rms / pre_rms;
+        assert!(
+            ratio > 0.88 && ratio < 1.12,
+            "RMS should be compensated: pre={pre_rms:.4}, post={post_rms:.4}, ratio={ratio:.4}"
+        );
+    }
+
+    #[test]
+    fn smoothness_level_compensation_preserves_rms() {
+        let mut m6 = PerceptualSafetyMixer::new();
+        m6.init(1024, 48000);
+        let mut config = EngineConfig::default();
+        config.style = StyleConfig::new(0.0, 0.0, 1.0, 0.0, 0.0, 0.0); // max smoothness
+        let mut ctx = ProcessContext::new(48000, 2, config);
+        ctx.validated = ValidatedResidual::new(256);
+
+        let original: Vec<f32> = (0..256)
+            .map(|i| 0.5 * (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / 48000.0).sin())
+            .collect();
+        let pre_rms: f32 = (original.iter().map(|s| s * s).sum::<f32>() / 256.0).sqrt();
+
+        let mut samples = original.clone();
+        m6.process(&mut samples, &mut ctx);
+
+        let post_rms: f32 = (samples.iter().map(|s| s * s).sum::<f32>() / 256.0).sqrt();
+
+        let ratio = post_rms / pre_rms;
+        assert!(
+            ratio > 0.88 && ratio < 1.12,
+            "RMS should be compensated: pre={pre_rms:.4}, post={post_rms:.4}, ratio={ratio:.4}"
+        );
+    }
+
+    #[test]
+    fn combined_warmth_smoothness_level_compensated() {
+        let mut m6 = PerceptualSafetyMixer::new();
+        m6.init(1024, 48000);
+        let mut config = EngineConfig::default();
+        // Both warmth and smoothness active (typical preset)
+        config.style = StyleConfig::new(0.3, 0.0, 0.8, 0.0, 0.0, 0.0);
+        let mut ctx = ProcessContext::new(48000, 2, config);
+        ctx.validated = ValidatedResidual::new(256);
+
+        let original: Vec<f32> = (0..256)
+            .map(|i| 0.7 * (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 48000.0).sin())
+            .collect();
+        let pre_rms: f32 = (original.iter().map(|s| s * s).sum::<f32>() / 256.0).sqrt();
+
+        let mut samples = original.clone();
+        m6.process(&mut samples, &mut ctx);
+
+        let post_rms: f32 = (samples.iter().map(|s| s * s).sum::<f32>() / 256.0).sqrt();
+
+        let ratio = post_rms / pre_rms;
+        assert!(
+            ratio > 0.85 && ratio < 1.15,
+            "Combined character RMS compensated: pre={pre_rms:.4}, post={post_rms:.4}, ratio={ratio:.4}"
+        );
+    }
+
+    #[test]
+    fn level_compensation_respects_true_peak() {
+        let mut m6 = PerceptualSafetyMixer::new();
+        m6.init(1024, 48000);
+        let mut config = EngineConfig::default();
+        config.style = StyleConfig::new(1.0, 0.0, 1.0, 0.0, 0.0, 0.0); // max both
+        let mut ctx = ProcessContext::new(48000, 2, config);
+        ctx.validated = ValidatedResidual::new(128);
+
+        // Near-full-scale signal
+        let mut samples: Vec<f32> = (0..128)
+            .map(|i| 0.95 * (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 48000.0).sin())
+            .collect();
+        m6.process(&mut samples, &mut ctx);
+
+        for &s in &samples {
+            assert!(
+                s.abs() <= 0.99,
+                "Level compensation must not exceed true peak, got {}",
+                s
+            );
+        }
+    }
+
+    #[test]
+    fn level_compensation_no_effect_on_silence() {
+        let mut m6 = PerceptualSafetyMixer::new();
+        m6.init(1024, 48000);
+        let mut config = EngineConfig::default();
+        config.style = StyleConfig::new(0.5, 0.0, 0.5, 0.0, 0.0, 0.0);
+        let mut ctx = ProcessContext::new(48000, 2, config);
+        ctx.validated = ValidatedResidual::new(64);
+
+        let mut samples = vec![0.0f32; 64]; // silence
+        m6.process(&mut samples, &mut ctx);
+
+        // Silence should remain silence (no div-by-zero issues)
+        let max_val = samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        assert!(max_val < 1e-10, "Silence should stay silent, got {max_val}");
+    }
+
+    #[test]
+    fn level_compensation_capped_at_3db() {
+        // Even with extreme processing that somehow reduces RMS a lot,
+        // makeup gain should not exceed ~1.414 (3 dB)
+        let mut m6 = PerceptualSafetyMixer::new();
+        m6.init(1024, 48000);
+        let mut config = EngineConfig::default();
+        config.style = StyleConfig::new(1.0, 0.0, 1.0, 0.0, 0.0, 0.0); // max both
+        let mut ctx = ProcessContext::new(48000, 2, config);
+        ctx.validated = ValidatedResidual::new(256);
+
+        // Signal that would be heavily affected by warmth
+        let mut samples: Vec<f32> = (0..256)
+            .map(|i| 0.4 * (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 48000.0).sin())
+            .collect();
+        let pre_rms: f32 = (samples.iter().map(|s| s * s).sum::<f32>() / 256.0).sqrt();
+
+        m6.process(&mut samples, &mut ctx);
+
+        let post_rms: f32 = (samples.iter().map(|s| s * s).sum::<f32>() / 256.0).sqrt();
+
+        // Makeup gain should never push output above 3 dB over input
+        assert!(
+            post_rms <= pre_rms * 1.42,
+            "Makeup gain should be capped: pre={pre_rms:.4}, post={post_rms:.4}"
+        );
     }
 }
