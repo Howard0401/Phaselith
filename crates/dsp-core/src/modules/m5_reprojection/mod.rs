@@ -31,17 +31,27 @@ pub struct SelfReprojectionValidator {
     /// Pre-allocated scratch: cosine table for synthesis (max_frame_size).
     /// Avoids repeated cos() calls for the same n values.
     synthesis_cos_cache: Vec<f32>,
-    /// StftEngine for pilot ISTFT synthesis (Phase B1-A).
+    /// StftEngine for pilot ISTFT synthesis (Phase B1-A/B).
     /// Uses the real IFFT path instead of sum-of-cosines.
     pilot_engine: Option<StftEngine>,
     /// Scratch Lattice for building ISTFT input from residual + original phase.
     pilot_lattice: Lattice,
     /// Scratch buffer for ISTFT output (fft_size samples).
     pilot_istft_buf: Vec<f32>,
+    /// Phase B1-B: OLA accumulator for ISTFT frames.
+    /// Properly overlaps ISTFT frame tails across hop boundaries.
+    ola_buffer: overlap_add::OverlapAddBuffer,
+    /// Drain buffer: holds one hop of OLA output, drained block_size at a time.
+    ola_drain: Vec<f32>,
+    /// Current read position within ola_drain.
+    ola_drain_pos: usize,
+    /// Hop size used for OLA (cached from FrameParams).
+    ola_hop_size: usize,
 }
 
 impl SelfReprojectionValidator {
     pub fn new() -> Self {
+        let default_hop = 256;
         Self {
             sample_rate: 48000,
             combined_buf: Vec::new(),
@@ -50,19 +60,21 @@ impl SelfReprojectionValidator {
             pilot_engine: None,
             pilot_lattice: Lattice::new(CORE_FFT_SIZE),
             pilot_istft_buf: Vec::new(),
+            ola_buffer: overlap_add::OverlapAddBuffer::new(CORE_FFT_SIZE, default_hop),
+            ola_drain: vec![0.0; default_hop],
+            ola_drain_pos: default_hop, // start exhausted → first block outputs zeros until first hop
+            ola_hop_size: default_hop,
         }
     }
 
-    /// Pilot ISTFT synthesis: builds a Lattice from validated residual magnitudes
-    /// + original analysis phase, then uses StftEngine.synthesize_into() for a
-    /// proper IFFT reconstruction.
+    /// ISTFT one frame: builds a Lattice from residual magnitudes + analysis phase,
+    /// runs IFFT via StftEngine, and writes the result to `istft_buf`.
     ///
-    /// This is a single-frame ISTFT (no OLA) — a stepping stone toward full
-    /// hop-aligned ISTFT+OLA in Phase B1-B.
+    /// Does NOT write to output — caller decides how to deliver (truncation or OLA).
     ///
     /// Takes individual fields instead of &mut self to avoid borrow conflicts
     /// with combined_buf in the caller.
-    fn synthesize_pilot_inner(
+    fn istft_residual(
         engine: &mut StftEngine,
         lattice: &mut Lattice,
         istft_buf: &mut Vec<f32>,
@@ -71,11 +83,9 @@ impl SelfReprojectionValidator {
         cutoff_bin: usize,
         fft_size: usize,
         scale: f32,
-        output: &mut [f32],
-    ) {
+    ) -> bool {
         if fft_size != engine.fft_size() || scale < 1e-6 {
-            output.iter_mut().for_each(|s| *s = 0.0);
-            return;
+            return false;
         }
 
         let num_bins = fft_size / 2 + 1;
@@ -103,13 +113,7 @@ impl SelfReprojectionValidator {
         }
         engine.synthesize_into(lattice, istft_buf);
 
-        // Copy to output, truncating to output length.
-        // The ISTFT produces fft_size samples; we take the first output.len().
-        let copy_len = output.len().min(fft_size);
-        output[..copy_len].copy_from_slice(&istft_buf[..copy_len]);
-        for i in copy_len..output.len() {
-            output[i] = 0.0;
-        }
+        true
     }
 }
 
@@ -124,10 +128,15 @@ impl CirrusModule for SelfReprojectionValidator {
         self.combined_buf = vec![0.0; core_bins];
         self.reprojected_buf = vec![0.0; max_frame_size];
         self.synthesis_cos_cache = vec![0.0; max_frame_size];
-        // Phase B1-A: pre-allocate ISTFT engine + scratch for pilot synthesis
+        // Phase B1-A/B: pre-allocate ISTFT engine + scratch + OLA
         self.pilot_engine = Some(StftEngine::new(CORE_FFT_SIZE));
         self.pilot_lattice = Lattice::new(CORE_FFT_SIZE);
         self.pilot_istft_buf = vec![0.0; CORE_FFT_SIZE];
+        // OLA buffer uses default hop (256). Updated in process() if FrameParams differs.
+        let hop = self.ola_hop_size;
+        self.ola_buffer = overlap_add::OverlapAddBuffer::new(CORE_FFT_SIZE, hop);
+        self.ola_drain = vec![0.0; hop];
+        self.ola_drain_pos = hop; // exhausted → outputs zeros until first hop
     }
 
     fn process(&mut self, samples: &mut [f32], ctx: &mut ProcessContext) {
@@ -215,31 +224,70 @@ impl CirrusModule for SelfReprojectionValidator {
 
         match ctx.synthesis_mode {
             SynthesisMode::FftOlaPilot => {
-                // Phase B1-A: Pilot ISTFT via StftEngine.
-                // Uses real IFFT instead of sum-of-cosines. Single-frame (no OLA yet).
-                if let Some(engine) = &mut self.pilot_engine {
-                    Self::synthesize_pilot_inner(
-                        engine,
-                        &mut self.pilot_lattice,
-                        &mut self.pilot_istft_buf,
-                        &self.combined_buf[..num_synth_bins],
-                        &ctx.lattice.core.phase[..num_synth_bins],
-                        cutoff_bin,
-                        fft_size,
-                        scale,
-                        &mut ctx.validated.data,
+                // Phase B1-B: Pilot ISTFT + OLA.
+                // At hop boundaries: ISTFT → synthesis window → OLA accumulate.
+                // Every block: drain block_size samples from OLA output.
+                let hop_size = ctx.frame_params.hop_size;
+
+                // Lazily update OLA hop size if FrameParams changed
+                if hop_size != self.ola_hop_size && hop_size > 0 {
+                    self.ola_hop_size = hop_size;
+                    self.ola_buffer = overlap_add::OverlapAddBuffer::new(fft_size, hop_size);
+                    self.ola_drain = vec![0.0; hop_size];
+                    self.ola_drain_pos = hop_size;
+                }
+
+                // When hop boundary crossed: ISTFT + window + add to OLA
+                if ctx.hops_this_block > 0 {
+                    if let Some(engine) = &mut self.pilot_engine {
+                        let ok = Self::istft_residual(
+                            engine,
+                            &mut self.pilot_lattice,
+                            &mut self.pilot_istft_buf,
+                            &self.combined_buf[..num_synth_bins],
+                            &ctx.lattice.core.phase[..num_synth_bins],
+                            cutoff_bin,
+                            fft_size,
+                            scale,
+                        );
+
+                        if ok {
+                            // Apply synthesis Hann window for smooth OLA overlap
+                            let window = engine.window();
+                            let win_len = window.len().min(self.pilot_istft_buf.len());
+                            for i in 0..win_len {
+                                self.pilot_istft_buf[i] *= window[i];
+                            }
+
+                            // Add windowed frame to OLA accumulator
+                            // For multiple hops in one block, add the same frame multiple times
+                            // (analysis is the same within one block)
+                            for _ in 0..ctx.hops_this_block {
+                                self.ola_buffer.add_frame(&self.pilot_istft_buf[..fft_size]);
+                            }
+                        }
+                    }
+
+                    // Drain one hop from OLA into drain buffer
+                    if self.ola_buffer.readable() > 0 {
+                        self.ola_buffer.read_hop(&mut self.ola_drain);
+                        self.ola_drain_pos = 0;
+                    }
+                }
+
+                // Copy block_size samples from drain buffer to validated.data
+                let block_size = ctx.validated.data.len();
+                let avail = self.ola_drain.len().saturating_sub(self.ola_drain_pos);
+                let copy_len = block_size.min(avail);
+                if copy_len > 0 {
+                    ctx.validated.data[..copy_len].copy_from_slice(
+                        &self.ola_drain[self.ola_drain_pos..self.ola_drain_pos + copy_len],
                     );
-                } else {
-                    // No engine available, fall back to legacy
-                    synthesizer::synthesize(
-                        SynthesisMode::LegacyAdditive,
-                        &self.combined_buf[..num_synth_bins],
-                        &ctx.lattice.core.phase[..num_synth_bins],
-                        cutoff_bin,
-                        fft_size,
-                        scale,
-                        &mut ctx.validated.data,
-                    );
+                    self.ola_drain_pos += copy_len;
+                }
+                // Zero any remaining samples
+                for i in copy_len..block_size {
+                    ctx.validated.data[i] = 0.0;
                 }
             }
             _ => {
@@ -274,7 +322,9 @@ impl CirrusModule for SelfReprojectionValidator {
         self.reprojected_buf.fill(0.0);
         self.synthesis_cos_cache.fill(0.0);
         self.pilot_istft_buf.fill(0.0);
-        // pilot_lattice magnitude/phase cleared by fill(0.0) on next use
+        self.ola_buffer.reset();
+        self.ola_drain.fill(0.0);
+        self.ola_drain_pos = self.ola_hop_size;
     }
 }
 
@@ -790,10 +840,10 @@ mod tests {
         assert!(ctx.validated.data.iter().all(|s| s.is_finite()));
     }
 
-    // ── Phase B1-A: Pilot ISTFT tests ──
+    // ── Phase B1-B: Pilot ISTFT + OLA tests ──
 
     #[test]
-    fn pilot_istft_produces_finite_output() {
+    fn pilot_ola_produces_finite_output_on_hop() {
         let mut m5 = SelfReprojectionValidator::new();
         m5.init(128, 48000);
         let mut config = EngineConfig::default();
@@ -803,6 +853,7 @@ mod tests {
         ctx.lattice = TriLattice::new();
         ctx.damage.cutoff.mean = 5000.0;
         ctx.damage.overall_confidence = 1.0;
+        ctx.hops_this_block = 1; // simulate hop boundary
 
         let core_bins = ctx.lattice.core.num_bins();
         ctx.residual = ResidualCandidate::new(core_bins);
@@ -813,14 +864,39 @@ mod tests {
 
         assert!(
             ctx.validated.data.iter().all(|s| s.is_finite()),
-            "Pilot ISTFT output should be finite"
+            "Pilot OLA output should be finite"
         );
         let energy: f32 = ctx.validated.data.iter().map(|s| s * s).sum();
-        assert!(energy > 0.0, "Pilot ISTFT should produce non-zero output");
+        assert!(energy > 0.0, "Pilot OLA should produce non-zero output on hop");
     }
 
     #[test]
-    fn pilot_istft_zero_residual_produces_zero() {
+    fn pilot_ola_outputs_zeros_before_first_hop() {
+        let mut m5 = SelfReprojectionValidator::new();
+        m5.init(128, 48000);
+        let mut config = EngineConfig::default();
+        config.strength = 1.0;
+        let mut ctx = ProcessContext::new(48000, 2, config);
+        ctx.synthesis_mode = crate::frame::SynthesisMode::FftOlaPilot;
+        ctx.lattice = TriLattice::new();
+        ctx.damage.cutoff.mean = 5000.0;
+        ctx.damage.overall_confidence = 1.0;
+        ctx.hops_this_block = 0; // no hop yet
+
+        let core_bins = ctx.lattice.core.num_bins();
+        ctx.residual = ResidualCandidate::new(core_bins);
+        ctx.residual.harmonic[200] = 0.3;
+
+        let mut samples = vec![0.0; 128];
+        m5.process(&mut samples, &mut ctx);
+
+        // Before first hop, OLA drain is exhausted → zeros
+        let max_val = ctx.validated.data.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        assert!(max_val < 1e-6, "No hop → zero output, got {max_val}");
+    }
+
+    #[test]
+    fn pilot_ola_zero_residual_produces_zero() {
         let mut m5 = SelfReprojectionValidator::new();
         m5.init(128, 48000);
         let mut ctx = ProcessContext::new(48000, 2, EngineConfig::default());
@@ -828,6 +904,7 @@ mod tests {
         ctx.lattice = TriLattice::new();
         ctx.damage.cutoff.mean = 15000.0;
         ctx.damage.overall_confidence = 0.8;
+        ctx.hops_this_block = 1;
 
         let core_bins = ctx.lattice.core.num_bins();
         ctx.residual = ResidualCandidate::new(core_bins);
@@ -839,13 +916,69 @@ mod tests {
         let max_val = ctx.validated.data.iter()
             .map(|s| s.abs())
             .fold(0.0f32, f32::max);
-        assert!(max_val < 1e-6, "Zero residual → zero pilot output, got {max_val}");
+        assert!(max_val < 1e-6, "Zero residual → zero pilot OLA output, got {max_val}");
     }
 
     #[test]
-    fn pilot_istft_matches_legacy_direction() {
+    fn pilot_ola_drains_across_blocks() {
+        // Simulate 2-block-per-hop scenario (Standard mode: hop=256, block=128)
+        let mut m5 = SelfReprojectionValidator::new();
+        m5.init(128, 48000);
+        let mut config = EngineConfig::default();
+        config.strength = 1.0;
+
+        // Block 1: no hop (accumulating)
+        let mut ctx1 = ProcessContext::new(48000, 2, config);
+        ctx1.synthesis_mode = crate::frame::SynthesisMode::FftOlaPilot;
+        ctx1.lattice = TriLattice::new();
+        ctx1.damage.cutoff.mean = 5000.0;
+        ctx1.damage.overall_confidence = 1.0;
+        ctx1.hops_this_block = 0;
+        let core_bins = ctx1.lattice.core.num_bins();
+        ctx1.residual = ResidualCandidate::new(core_bins);
+        ctx1.residual.harmonic[200] = 0.3;
+        let mut samples1 = vec![0.0; 128];
+        m5.process(&mut samples1, &mut ctx1);
+        let energy1: f32 = ctx1.validated.data.iter().map(|s| s * s).sum();
+
+        // Block 2: hop boundary crossed
+        let mut ctx2 = ProcessContext::new(48000, 2, config);
+        ctx2.synthesis_mode = crate::frame::SynthesisMode::FftOlaPilot;
+        ctx2.lattice = TriLattice::new();
+        ctx2.damage.cutoff.mean = 5000.0;
+        ctx2.damage.overall_confidence = 1.0;
+        ctx2.hops_this_block = 1; // hop!
+        ctx2.residual = ResidualCandidate::new(core_bins);
+        ctx2.residual.harmonic[200] = 0.3;
+        let mut samples2 = vec![0.0; 128];
+        m5.process(&mut samples2, &mut ctx2);
+        let energy2: f32 = ctx2.validated.data.iter().map(|s| s * s).sum();
+
+        // Block 3: no hop (draining second half of hop output)
+        let mut ctx3 = ProcessContext::new(48000, 2, config);
+        ctx3.synthesis_mode = crate::frame::SynthesisMode::FftOlaPilot;
+        ctx3.lattice = TriLattice::new();
+        ctx3.damage.cutoff.mean = 5000.0;
+        ctx3.damage.overall_confidence = 1.0;
+        ctx3.hops_this_block = 0;
+        ctx3.residual = ResidualCandidate::new(core_bins);
+        ctx3.residual.harmonic[200] = 0.3;
+        let mut samples3 = vec![0.0; 128];
+        m5.process(&mut samples3, &mut ctx3);
+        let energy3: f32 = ctx3.validated.data.iter().map(|s| s * s).sum();
+
+        // Block 1: no hop, no prior data → zeros
+        assert!(energy1 < 1e-10, "Block 1 (no hop): should be zero, got {energy1}");
+        // Block 2: hop boundary → first half of hop drained
+        assert!(energy2 > 0.0, "Block 2 (hop): should have energy, got {energy2}");
+        // Block 3: no hop, draining second half
+        assert!(energy3 > 0.0, "Block 3 (drain): should have energy, got {energy3}");
+    }
+
+    #[test]
+    fn pilot_ola_matches_legacy_direction() {
         // Both paths should produce energy for the same bin.
-        // They won't be identical (additive vs ISTFT), but should agree in direction.
+        // They won't be identical (additive vs ISTFT+OLA), but should agree in direction.
         let mut m5_legacy = SelfReprojectionValidator::new();
         let mut m5_pilot = SelfReprojectionValidator::new();
         m5_legacy.init(128, 48000);
@@ -866,12 +999,13 @@ mod tests {
         let mut samples_l = vec![0.0; 128];
         m5_legacy.process(&mut samples_l, &mut ctx_legacy);
 
-        // Pilot run
+        // Pilot OLA run (with hop)
         let mut ctx_pilot = ProcessContext::new(48000, 2, config);
         ctx_pilot.synthesis_mode = crate::frame::SynthesisMode::FftOlaPilot;
         ctx_pilot.lattice = TriLattice::new();
         ctx_pilot.damage.cutoff.mean = 5000.0;
         ctx_pilot.damage.overall_confidence = 1.0;
+        ctx_pilot.hops_this_block = 1;
         ctx_pilot.residual = ResidualCandidate::new(core_bins);
         ctx_pilot.residual.harmonic[200] = 0.3;
         let mut samples_p = vec![0.0; 128];
@@ -881,10 +1015,7 @@ mod tests {
         let pilot_energy: f32 = ctx_pilot.validated.data.iter().map(|s| s * s).sum();
 
         assert!(legacy_energy > 0.0, "Legacy should produce energy");
-        assert!(pilot_energy > 0.0, "Pilot should produce energy");
-
-        // Both should have non-zero output (direction agreement)
-        // Energy magnitudes may differ due to different synthesis methods
+        assert!(pilot_energy > 0.0, "Pilot OLA should produce energy on hop");
     }
 
     #[test]

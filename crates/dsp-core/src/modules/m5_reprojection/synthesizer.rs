@@ -1,5 +1,4 @@
 use crate::frame::SynthesisMode;
-use crate::types::Lattice;
 
 /// Synthesize time-domain output from validated frequency-domain residual.
 ///
