@@ -5,6 +5,7 @@ pub mod constraints;
 pub mod synthesizer;
 pub mod overlap_add;
 
+use crate::fft::planner::SharedFftPlans;
 use crate::frame::SynthesisMode;
 use crate::module_trait::{CirrusModule, ProcessContext};
 use crate::modules::m2_lattice::stft::StftEngine;
@@ -65,6 +66,22 @@ impl SelfReprojectionValidator {
             ola_drain_pos: default_hop, // start exhausted → first block outputs zeros until first hop
             ola_hop_size: default_hop,
         }
+    }
+
+    /// Initialize using a shared FFT plan cache for the pilot ISTFT engine.
+    pub fn init_with_plans(&mut self, max_frame_size: usize, sample_rate: u32, plans: &mut SharedFftPlans) {
+        self.sample_rate = sample_rate;
+        let core_bins = CORE_FFT_SIZE / 2 + 1;
+        self.combined_buf = vec![0.0; core_bins];
+        self.reprojected_buf = vec![0.0; max_frame_size];
+        self.synthesis_cos_cache = vec![0.0; max_frame_size];
+        self.pilot_engine = Some(StftEngine::new_with_plans(plans, CORE_FFT_SIZE));
+        self.pilot_lattice = Lattice::new(CORE_FFT_SIZE);
+        self.pilot_istft_buf = vec![0.0; CORE_FFT_SIZE];
+        let hop = self.ola_hop_size;
+        self.ola_buffer = overlap_add::OverlapAddBuffer::new(CORE_FFT_SIZE, hop);
+        self.ola_drain = vec![0.0; hop];
+        self.ola_drain_pos = hop;
     }
 
     /// ISTFT one frame: builds a Lattice from residual magnitudes + analysis phase,
@@ -333,8 +350,15 @@ impl CirrusModule for SelfReprojectionValidator {
     }
 }
 
-/// Combine all residual components into a single frequency-domain vector.
+/// Combine freq-domain residual components into a single magnitude vector.
 /// Zero-alloc: writes into pre-allocated `out` buffer.
+///
+/// Only freq-domain magnitudes are summed here (harmonic + air + phase×0.1).
+/// Intentionally excluded:
+///   - `side`: ratio-like coefficient (0–ρ_max), not a magnitude — requires
+///     cross-channel context to produce actual side-channel energy.
+///   - transient/declip: time-domain corrections that flow through the
+///     independent `time_candidate` → `time_residual` path with their own gain.
 fn combine_residuals_into(
     residual: &crate::types::ResidualCandidate,
     num_bins: usize,

@@ -41,6 +41,10 @@ pub struct ProcessContext {
     pub validated: crate::types::ValidatedResidual,
     /// Dry signal copy for M6 safety mixing.
     pub dry_buffer: Vec<f32>,
+    /// Total processing time for the current block (microseconds).
+    /// Written by CirrusEngine::process() after the module loop.
+    /// Only measured on native targets; remains 0.0 in WASM.
+    pub processing_time_us: f32,
 }
 
 impl ProcessContext {
@@ -63,6 +67,7 @@ impl ProcessContext {
             cross_channel: None,
             validated: crate::types::ValidatedResidual::default(),
             dry_buffer: Vec::new(),
+            processing_time_us: 0.0,
         }
     }
 

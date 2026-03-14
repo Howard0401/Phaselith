@@ -1,4 +1,5 @@
 use crate::config::EngineConfig;
+use crate::fft::planner::SharedFftPlans;
 use crate::module_trait::{CirrusModule, ProcessContext};
 use crate::modules;
 
@@ -25,8 +26,16 @@ impl CirrusEngine {
 
         self.context.frame_index += 1;
 
+        #[cfg(not(target_arch = "wasm32"))]
+        let t0 = std::time::Instant::now();
+
         for module in &mut self.modules {
             module.process(samples, &mut self.context);
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.context.processing_time_us = t0.elapsed().as_micros() as f32;
         }
     }
 
@@ -113,13 +122,22 @@ impl CirrusEngineBuilder {
     }
 
     /// Build with the default M0-M7 CIRRUS module chain.
+    /// Uses a shared FFT plan cache so M2 and M5 reuse the same plans.
     pub fn build_default(self) -> CirrusEngine {
+        let mut plans = SharedFftPlans::new();
+
+        let mut m2 = modules::m2_lattice::TriLatticeAnalysis::new();
+        m2.init_with_plans(self.sample_rate, &mut plans);
+
+        let mut m5 = modules::m5_reprojection::SelfReprojectionValidator::new();
+        m5.init_with_plans(self.max_frame_size, self.sample_rate, &mut plans);
+
         self.add_module(Box::new(modules::m0_orchestrator::FrameOrchestrator::new()))
             .add_module(Box::new(modules::m1_damage::DamagePosteriorEngine::new()))
-            .add_module(Box::new(modules::m2_lattice::TriLatticeAnalysis::new()))
+            .add_module(Box::new(m2))
             .add_module(Box::new(modules::m3_factorizer::StructuredFactorizer::new()))
             .add_module(Box::new(modules::m4_solver::InverseResidualSolver::new()))
-            .add_module(Box::new(modules::m5_reprojection::SelfReprojectionValidator::new()))
+            .add_module(Box::new(m5))
             .add_module(Box::new(modules::m6_mixer::PerceptualSafetyMixer::new()))
             .add_module(Box::new(modules::m7_governor::QualityGovernor::new()))
             .build()

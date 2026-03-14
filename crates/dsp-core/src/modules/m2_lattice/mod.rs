@@ -2,6 +2,7 @@ pub mod stft;
 pub mod energy;
 pub mod group_delay;
 
+use crate::fft::planner::SharedFftPlans;
 use crate::module_trait::{CirrusModule, ProcessContext};
 use crate::types::{MICRO_FFT_SIZE, CORE_FFT_SIZE, AIR_FFT_SIZE};
 
@@ -37,6 +38,17 @@ impl TriLatticeAnalysis {
             air_engine: None,
             sample_rate: 48000,
         }
+    }
+
+    /// Initialize using a shared FFT plan cache (avoids redundant plan creation).
+    pub fn init_with_plans(&mut self, sample_rate: u32, plans: &mut SharedFftPlans) {
+        self.sample_rate = sample_rate;
+        self.micro_scratch = vec![0.0; MICRO_FFT_SIZE];
+        self.core_scratch = vec![0.0; CORE_FFT_SIZE];
+        self.air_scratch = vec![0.0; AIR_FFT_SIZE];
+        self.micro_engine = Some(stft::StftEngine::new_with_plans(plans, MICRO_FFT_SIZE));
+        self.core_engine = Some(stft::StftEngine::new_with_plans(plans, CORE_FFT_SIZE));
+        self.air_engine = Some(stft::StftEngine::new_with_plans(plans, AIR_FFT_SIZE));
     }
 }
 

@@ -57,9 +57,16 @@ impl CirrusModule for QualityGovernor {
     fn process(&mut self, _samples: &mut [f32], ctx: &mut ProcessContext) {
         self.frame_counter += 1;
 
+        // Update rolling average of processing time (EMA, α=0.05)
+        if ctx.processing_time_us > 0.0 {
+            let alpha = 0.05f32;
+            self.avg_process_time_us =
+                self.avg_process_time_us * (1.0 - alpha) + ctx.processing_time_us * alpha;
+        }
+
         // Update telemetry snapshot
         self.last_snapshot = TelemetrySnapshot {
-            processing_load: 0.0, // TODO: measure actual timing
+            processing_load: self.avg_process_time_us,
             cutoff_freq: ctx.damage.cutoff.mean,
             consistency_score: ctx.validated.consistency_score,
             quality_mode: match ctx.config.quality_mode {

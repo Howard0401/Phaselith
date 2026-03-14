@@ -3,8 +3,10 @@ use crate::frame::SynthesisMode;
 /// Synthesize time-domain output from validated frequency-domain residual.
 ///
 /// Dispatches to the appropriate synthesis path based on `SynthesisMode`.
-/// Currently only `LegacyAdditive` is implemented; FFT-based modes are stubs
-/// that will be filled in Phase B1.
+///
+/// NOTE: `FftOlaPilot` is handled directly in `SelfReprojectionValidator::process()`
+/// (mod.rs) via ISTFT + OLA, so this function is only reached for `LegacyAdditive`.
+/// The `FftOlaFull` arm remains a stub for future Phase B1-B work.
 pub fn synthesize(
     mode: SynthesisMode,
     combined: &[f32],
@@ -18,9 +20,14 @@ pub fn synthesize(
         SynthesisMode::LegacyAdditive => {
             synthesize_additive(combined, phase, cutoff_bin, fft_size, scale, output);
         }
-        SynthesisMode::FftOlaPilot | SynthesisMode::FftOlaFull => {
-            // Stub: will be implemented in Phase B1.
-            // For now, fall back to LegacyAdditive so sound never breaks.
+        SynthesisMode::FftOlaPilot => {
+            // FftOlaPilot is handled in SelfReprojectionValidator::process() (mod.rs)
+            // via the ISTFT + OLA path.  This arm should not be reached in normal
+            // operation.  Fall back to additive as a safety net.
+            synthesize_additive(combined, phase, cutoff_bin, fft_size, scale, output);
+        }
+        SynthesisMode::FftOlaFull => {
+            // Stub: full tri-lattice ISTFT+OLA — Phase B1-B future work.
             synthesize_additive(combined, phase, cutoff_bin, fft_size, scale, output);
         }
     }
@@ -103,7 +110,10 @@ mod tests {
     }
 
     #[test]
-    fn pilot_mode_falls_back_to_additive() {
+    fn pilot_mode_safety_fallback_matches_additive() {
+        // FftOlaPilot is normally handled in SelfReprojectionValidator::process()
+        // (mod.rs) via ISTFT+OLA.  If this synthesize() function is reached for
+        // Pilot mode (safety net), it should produce the same output as Legacy.
         let mut combined = vec![0.0; 513];
         let phase = vec![0.0; 513];
         combined[10] = 0.5;
@@ -114,11 +124,10 @@ mod tests {
         synthesize(SynthesisMode::LegacyAdditive, &combined, &phase, 0, 1024, 1.0, &mut output_legacy);
         synthesize(SynthesisMode::FftOlaPilot, &combined, &phase, 0, 1024, 1.0, &mut output_pilot);
 
-        // Until B1 implements FFT path, pilot should produce identical output
         for i in 0..128 {
             assert!(
                 (output_legacy[i] - output_pilot[i]).abs() < 1e-8,
-                "Pilot fallback should match legacy at sample {}",
+                "Pilot safety fallback should match legacy at sample {}",
                 i
             );
         }

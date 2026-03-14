@@ -5,7 +5,10 @@
 // freq-domain synthesis (ISTFT of windowed residual) and the host's
 // time-domain output buffer.
 //
-// Not yet connected to the main audio path — will be wired in Phase B1.
+// Connected to the main audio path via FftOlaPilot synthesis mode in
+// SelfReprojectionValidator::process() (mod.rs).  The OLA accumulator
+// receives ISTFT-windowed frames and drains hop-aligned output into
+// ctx.validated.data.
 
 /// Overlap-add accumulator for ISTFT synthesis output.
 ///

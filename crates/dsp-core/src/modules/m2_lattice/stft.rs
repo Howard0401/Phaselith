@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use rustfft::{Fft, FftPlanner, num_complex::Complex};
+use crate::fft::planner::SharedFftPlans;
 use crate::types::Lattice;
 
 // ─── Zero-alloc STFT Engine ───
@@ -25,6 +26,25 @@ impl StftEngine {
         let mut planner = FftPlanner::new();
         let fft_forward = planner.plan_fft_forward(fft_size);
         let fft_inverse = planner.plan_fft_inverse(fft_size);
+
+        Self {
+            fft_size,
+            window,
+            complex_buf,
+            fft_forward,
+            fft_inverse,
+        }
+    }
+
+    /// Create a new STFT engine using a shared FFT plan cache.
+    /// Plans for this `fft_size` are looked up (or created once) in `plans`.
+    pub fn new_with_plans(plans: &mut SharedFftPlans, fft_size: usize) -> Self {
+        let window: Vec<f32> = (0..fft_size)
+            .map(|i| hann_window(i, fft_size))
+            .collect();
+        let complex_buf = vec![Complex::new(0.0f32, 0.0); fft_size];
+        let fft_forward = plans.forward(fft_size);
+        let fft_inverse = plans.inverse(fft_size);
 
         Self {
             fft_size,
