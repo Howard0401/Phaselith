@@ -4,7 +4,7 @@ members = [
     "crates/dsp-core",
     "crates/apo-dll",
     "crates/wasm-bridge",
-    # "crates/tauri-app",  # Uncomment after tauri init
+    "crates/tauri-app",
 ]
 
 [workspace.package]

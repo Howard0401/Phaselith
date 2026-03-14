@@ -62,6 +62,15 @@
           <option :value="1">Minimum Phase</option>
         </select>
       </div>
+
+      <div class="select-row">
+        <label>Synthesis Mode</label>
+        <select v-model.number="config.synthesis_mode" @change="applyConfig">
+          <option :value="0">Legacy Additive</option>
+          <option :value="1">FFT-OLA Pilot</option>
+          <option :value="2">FFT-OLA Full</option>
+        </select>
+      </div>
     </section>
 
     <section class="actions">
@@ -86,6 +95,7 @@ const config = ref({
   transient: 0.5,
   phase_mode: 0,
   quality_preset: 1,
+  synthesis_mode: 1,
 });
 
 const status = ref(null);
