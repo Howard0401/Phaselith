@@ -23,6 +23,7 @@ pub struct SharedConfig {
     pub transient_repair_u32: AtomicU32,
     pub phase_mode: AtomicU8,
     pub quality_preset: AtomicU8,
+    pub synthesis_mode: AtomicU8,  // 0=LegacyAdditive, 1=FftOlaPilot, 2=FftOlaFull
 }
 
 #[repr(C)]
@@ -81,6 +82,7 @@ pub fn write_config(
     transient: f32,
     phase_mode: u8,
     quality_preset: u8,
+    synthesis_mode: u8,
 ) {
     if let Some(bridge) = BRIDGE.get() {
         if bridge.config_ptr.is_null() { return; }
@@ -92,6 +94,7 @@ pub fn write_config(
         config.transient_repair_u32.store((transient * 10000.0) as u32, Ordering::Relaxed);
         config.phase_mode.store(phase_mode, Ordering::Relaxed);
         config.quality_preset.store(quality_preset, Ordering::Relaxed);
+        config.synthesis_mode.store(synthesis_mode, Ordering::Relaxed);
         config.version.fetch_add(1, Ordering::Release);
     }
 }

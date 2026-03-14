@@ -12,7 +12,11 @@ pub struct ConfigPayload {
     pub transient: f32,
     pub phase_mode: u8,
     pub quality_preset: u8,
+    #[serde(default = "default_synthesis_mode")]
+    pub synthesis_mode: u8,
 }
+
+fn default_synthesis_mode() -> u8 { 1 } // FftOlaPilot
 
 #[derive(Serialize)]
 pub struct ConfigResponse {
@@ -23,6 +27,7 @@ pub struct ConfigResponse {
     pub transient: f32,
     pub phase_mode: u8,
     pub quality_preset: u8,
+    pub synthesis_mode: u8,
 }
 
 #[tauri::command]
@@ -40,6 +45,7 @@ pub fn set_config(config: ConfigPayload) {
         config.transient,
         config.phase_mode,
         config.quality_preset,
+        config.synthesis_mode,
     );
 }
 
@@ -54,6 +60,7 @@ pub fn get_config() -> ConfigResponse {
         transient: 0.5,
         phase_mode: 0,
         quality_preset: 1,
+        synthesis_mode: 1, // FftOlaPilot (default)
     }
 }
 
