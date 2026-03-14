@@ -1,6 +1,12 @@
-# CIRRUS
+<p align="center">
+  <img src="chrome-ext/icons/cirrus-logo.svg" width="128" alt="CIRRUS Logo">
+</p>
 
-**English** | **[繁體中文](README.zh-TW.md)** | **[简体中文](README.zh-CN.md)**
+<h1 align="center">CIRRUS</h1>
+
+<p align="center">
+  <strong>English</strong> | <strong><a href="README.zh-TW.md">繁體中文</a></strong> | <strong><a href="README.zh-CN.md">简体中文</a></strong>
+</p>
 
 CIRRUS = Constrained Inverse Restoration with Real-time Uncertainty and Reprojection Solver
 
