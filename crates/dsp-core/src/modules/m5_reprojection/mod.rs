@@ -187,9 +187,14 @@ impl CirrusModule for SelfReprojectionValidator {
                 core_bins,
             );
 
-            // 3. Compute acceptance mask (dynamics-controlled threshold)
-            let mask = acceptance::compute_acceptance_mask_dynamic(
-                &e_rep, cutoff_bin, ctx.config.dynamics,
+            // 3. Compute Wiener soft mask (dynamics-controlled spectral floor)
+            // Passes combined residual magnitudes so the Wiener gain can compute
+            // per-bin SNR: G[k] = R²/(R² + E²), giving smooth accept/reject.
+            let mask = acceptance::compute_wiener_mask(
+                &e_rep,
+                &self.combined_buf[..core_bins],
+                cutoff_bin,
+                ctx.config.dynamics,
             );
 
             // 4. Apply constraints (low-band lock + impact band)

@@ -190,6 +190,7 @@ impl AsceApo {
                 },
                 style: StyleConfig::default(),
                 synthesis_mode: asce_dsp_core::config::SynthesisMode::default(),
+                ambience_preserve: 0.0,
             }
         } else {
             EngineConfig::default()

@@ -64,6 +64,11 @@ pub struct EngineConfig {
     pub style: StyleConfig,
     /// Synthesis mode — controls freq→time conversion path in M5.
     pub synthesis_mode: SynthesisMode,
+    /// Ambience preserve: compensates the dereverb side-effect of M5 reprojection.
+    /// 0.0 = no compensation (default), 1.0 = full tail preservation.
+    /// Independent parameter — does NOT reuse spatial_spread.
+    /// Start very low (0.05-0.15) and tune by ear.
+    pub ambience_preserve: f32,
 }
 
 impl Default for EngineConfig {
@@ -78,6 +83,7 @@ impl Default for EngineConfig {
             enabled: true,
             style: StyleConfig::default(),
             synthesis_mode: SynthesisMode::default(),
+            ambience_preserve: 0.0,
         }
     }
 }

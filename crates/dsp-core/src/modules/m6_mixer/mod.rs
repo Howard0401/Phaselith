@@ -1,4 +1,5 @@
 pub mod crossover;
+pub mod kweighting;
 pub mod masking;
 pub mod true_peak;
 
@@ -17,10 +18,14 @@ use crate::module_trait::{CirrusModule, ProcessContext};
 /// - Character floor: ensures effect even on high-quality sources
 pub struct PerceptualSafetyMixer {
     sample_rate: u32,
-    /// EMA-smoothed dry RMS² (slow follower, ~300ms time constant)
+    /// EMA-smoothed dry K-weighted MS (slow follower, ~300ms time constant)
     dry_rms_sq_ema: f32,
-    /// EMA-smoothed post-processing RMS² (same time constant)
+    /// EMA-smoothed post-processing K-weighted MS (same time constant)
     post_rms_sq_ema: f32,
+    /// K-weighting filter for dry signal measurement
+    kweight_dry: kweighting::KWeightingFilter,
+    /// K-weighting filter for post-processing measurement
+    kweight_post: kweighting::KWeightingFilter,
 }
 
 impl PerceptualSafetyMixer {
@@ -29,6 +34,8 @@ impl PerceptualSafetyMixer {
             sample_rate: 48000,
             dry_rms_sq_ema: 0.0,
             post_rms_sq_ema: 0.0,
+            kweight_dry: kweighting::KWeightingFilter::new(48000),
+            kweight_post: kweighting::KWeightingFilter::new(48000),
         }
     }
 
@@ -55,6 +62,8 @@ impl CirrusModule for PerceptualSafetyMixer {
 
     fn init(&mut self, _max_frame_size: usize, sample_rate: u32) {
         self.sample_rate = sample_rate;
+        self.kweight_dry = kweighting::KWeightingFilter::new(sample_rate);
+        self.kweight_post = kweighting::KWeightingFilter::new(sample_rate);
     }
 
     fn process(&mut self, samples: &mut [f32], ctx: &mut ProcessContext) {
@@ -75,14 +84,15 @@ impl CirrusModule for PerceptualSafetyMixer {
         let len = samples.len();
         let limit = 0.99f32;
 
-        // ── Global output level reference ──
-        // Measure dry RMS² for this block. Must happen BEFORE early return
+        // ── Global output level reference (K-weighted) ──
+        // Measure dry K-weighted MS for this block. Must happen BEFORE early return
         // so the EMA stays warm during bypass periods — prevents audible
         // compensation jumps when processing resumes after quiet/bypass sections.
-        let dry_rms_sq_block = ctx.dry_buffer.iter()
-            .take(len)
-            .map(|s| s * s)
-            .sum::<f32>() / len.max(1) as f32;
+        // K-weighting (BS.1770) de-emphasizes low frequencies and boosts presence
+        // range, giving a loudness measurement that matches human perception.
+        let dry_rms_sq_block = self.kweight_dry.compute_weighted_ms(
+            &ctx.dry_buffer[..len.min(ctx.dry_buffer.len())]
+        );
 
         if mix_gain < 0.001 && style.warmth < 0.01 && style.smoothness < 0.01 {
             // Bypass: still update EMA so it doesn't go stale.
@@ -132,6 +142,29 @@ impl CirrusModule for PerceptualSafetyMixer {
             }
         }
 
+        // ── Phase 1c: Tail preserve (ambience compensation) ──
+        // M5 self-reprojection inherently shrinks diffuse/stochastic content
+        // (reverb tails get low consistency_score → attenuated). This can make
+        // the output sound "too dry" compared to the original.
+        //
+        // Compensation: blend back a fraction of the lost diffuse energy.
+        // diff = dry - processed, scaled by ambience_preserve.
+        // Only active when ambience_preserve > 0 and processing changed the signal.
+        let amb = ctx.config.ambience_preserve;
+        if amb > 0.001 && has_residual {
+            let dry_len = len.min(ctx.dry_buffer.len());
+            for i in 0..dry_len {
+                let dry = ctx.dry_buffer[i];
+                let processed = samples[i];
+                let diff = dry - processed;
+                // Blend back a small fraction of the difference.
+                // amb is expected to be very small (0.05-0.15), so the effect is subtle.
+                let tail_add = diff * amb * 0.5; // extra 0.5× safety factor
+                let mixed = processed + tail_add;
+                samples[i] = mixed.clamp(-limit, limit);
+            }
+        }
+
         // ── Phase 2: Warmth (subtle even-harmonic saturation) ──
         // y = x - warmth * x³ / 3
         // This naturally produces even harmonics (tube-like character).
@@ -172,7 +205,7 @@ impl CirrusModule for PerceptualSafetyMixer {
         //
         // Conservative: only compensates level LOSS (ratio >= 1), never cuts.
         // Capped at +3 dB (~1.414x) to prevent runaway amplification.
-        let post_rms_sq_block = samples.iter().map(|s| s * s).sum::<f32>() / len.max(1) as f32;
+        let post_rms_sq_block = self.kweight_post.compute_weighted_ms(samples);
         self.update_ema(dry_rms_sq_block, post_rms_sq_block, len);
 
         if self.dry_rms_sq_ema > 1e-12 && self.post_rms_sq_ema > 1e-12 {
@@ -197,6 +230,8 @@ impl CirrusModule for PerceptualSafetyMixer {
     fn reset(&mut self) {
         self.dry_rms_sq_ema = 0.0;
         self.post_rms_sq_ema = 0.0;
+        self.kweight_dry.reset();
+        self.kweight_post.reset();
     }
 }
 

@@ -206,6 +206,12 @@ pub struct StructuredFields {
     pub fundamental_freq: Option<f32>,
     /// Ridge score R(f0, m) for the detected fundamental.
     pub ridge_score: f32,
+    /// Spectral flux transient flag: true when significant spectral change detected.
+    /// Computed from frame-to-frame magnitude difference (L² norm).
+    /// Downstream modules can use this for adaptive behavior (e.g. relax OLA, hold gains).
+    pub is_transient: bool,
+    /// Raw spectral flux value (normalized, 0-1 range).
+    pub spectral_flux: f32,
 }
 
 impl Default for StructuredFields {
@@ -217,6 +223,8 @@ impl Default for StructuredFields {
             spatial: Vec::new(),
             fundamental_freq: None,
             ridge_score: 0.0,
+            is_transient: false,
+            spectral_flux: 0.0,
         }
     }
 }
@@ -230,6 +238,8 @@ impl StructuredFields {
             spatial: vec![0.0; num_bins],
             fundamental_freq: None,
             ridge_score: 0.0,
+            is_transient: false,
+            spectral_flux: 0.0,
         }
     }
 
@@ -240,6 +250,8 @@ impl StructuredFields {
         self.spatial.fill(0.0);
         self.fundamental_freq = None;
         self.ridge_score = 0.0;
+        self.is_transient = false;
+        self.spectral_flux = 0.0;
     }
 }
 
