@@ -1,5 +1,5 @@
-use crate::config::EngineConfig;
-use crate::frame::{FrameParams, SynthesisMode};
+use crate::config::{EngineConfig, SynthesisMode};
+use crate::frame::FrameParams;
 
 /// Shared mutable context passed through the M0-M7 CIRRUS pipeline.
 /// Earlier modules write fields that later modules read.
@@ -54,7 +54,7 @@ impl ProcessContext {
             frame_params,
             analysis_frame_index: 0,
             hops_this_block: 0,
-            synthesis_mode: SynthesisMode::default(),
+            synthesis_mode: config.synthesis_mode,
             damage: crate::types::DamagePosterior::default(),
             lattice: crate::types::TriLattice::default(),
             fields: crate::types::StructuredFields::default(),

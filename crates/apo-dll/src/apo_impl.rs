@@ -189,6 +189,7 @@ impl AsceApo {
                     _ => QualityMode::Standard,
                 },
                 style: StyleConfig::default(),
+                synthesis_mode: asce_dsp_core::config::SynthesisMode::default(),
             }
         } else {
             EngineConfig::default()

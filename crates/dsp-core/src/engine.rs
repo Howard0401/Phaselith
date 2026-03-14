@@ -32,6 +32,7 @@ impl CirrusEngine {
 
     /// Update configuration (called when UI changes params).
     pub fn update_config(&mut self, config: EngineConfig) {
+        self.context.synthesis_mode = config.synthesis_mode;
         self.context.config = config;
     }
 

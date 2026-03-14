@@ -1,3 +1,46 @@
+/// Synthesis mode selector — controls how M5 converts validated
+/// freq-domain residual to time-domain output.
+///
+/// Lives in config (not frame.rs) so it can be changed at runtime from the UI.
+/// LegacyAdditive preserves the existing sonic identity.
+/// FftOlaPilot enables the new ISTFT+OLA path for A/B comparison.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SynthesisMode {
+    /// Current additive synthesis path (sum of cosines).
+    LegacyAdditive,
+    /// Pilot: core-lattice only ISTFT + OLA.
+    FftOlaPilot,
+    /// Full hop-aligned ISTFT + OLA across all lattices.
+    FftOlaFull,
+}
+
+impl Default for SynthesisMode {
+    fn default() -> Self {
+        SynthesisMode::LegacyAdditive
+    }
+}
+
+impl SynthesisMode {
+    /// Convert from integer (for WASM/UI bridge).
+    /// 0=LegacyAdditive, 1=FftOlaPilot, 2=FftOlaFull.
+    pub fn from_u32(v: u32) -> Self {
+        match v {
+            1 => SynthesisMode::FftOlaPilot,
+            2 => SynthesisMode::FftOlaFull,
+            _ => SynthesisMode::LegacyAdditive,
+        }
+    }
+
+    /// Convert to integer for serialization.
+    pub fn to_u32(self) -> u32 {
+        match self {
+            SynthesisMode::LegacyAdditive => 0,
+            SynthesisMode::FftOlaPilot => 1,
+            SynthesisMode::FftOlaFull => 2,
+        }
+    }
+}
+
 /// CIRRUS engine configuration.
 /// Controlled by the UI (Tauri or Chrome popup) or shared memory (APO).
 /// All fields are plain data — safe to copy across thread boundaries.
@@ -19,6 +62,8 @@ pub struct EngineConfig {
     pub enabled: bool,
     /// Style / character preset.
     pub style: StyleConfig,
+    /// Synthesis mode — controls freq→time conversion path in M5.
+    pub synthesis_mode: SynthesisMode,
 }
 
 impl Default for EngineConfig {
@@ -32,6 +77,7 @@ impl Default for EngineConfig {
             quality_mode: QualityMode::Standard,
             enabled: true,
             style: StyleConfig::default(),
+            synthesis_mode: SynthesisMode::default(),
         }
     }
 }

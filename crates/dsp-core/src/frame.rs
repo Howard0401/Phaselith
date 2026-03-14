@@ -71,29 +71,9 @@ impl Default for FrameParams {
     }
 }
 
-/// Synthesis mode selector — controls how M5 converts validated
-/// freq-domain residual to time-domain output.
-///
-/// LegacyAdditive is the current working path that preserves the
-/// existing sonic identity. FFT-based modes are introduced incrementally
-/// and can be A/B compared at runtime.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SynthesisMode {
-    /// Current additive synthesis path (sum of cosines).
-    /// Proven to produce the existing CIRRUS sonic identity.
-    LegacyAdditive,
-    /// Pilot: core-lattice only ISTFT + OLA.
-    /// For initial A/B comparison against LegacyAdditive.
-    FftOlaPilot,
-    /// Full hop-aligned ISTFT + OLA across all lattices.
-    FftOlaFull,
-}
-
-impl Default for SynthesisMode {
-    fn default() -> Self {
-        SynthesisMode::LegacyAdditive
-    }
-}
+// SynthesisMode is defined in config.rs and re-exported from lib.rs.
+// Re-export here for backward compatibility with existing imports.
+pub use crate::config::SynthesisMode;
 
 /// Tracks hop-aligned frame accumulation state.
 /// Used by M0 to know when a full analysis frame is ready.
