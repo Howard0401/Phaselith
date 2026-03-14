@@ -32,14 +32,18 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
   if (!isEnabled) return;
   if (activeInfo.tabId === capturedTabId) return; // same tab, no-op
 
-  // Verify the tab is in a normal window (not devtools, popup, etc.)
+  // Verify the tab is not an internal Chrome page.
+  // Note: without "tabs" permission, tab.url is only available for tabs where
+  // the extension has host permission. If tab.url is undefined, we still attempt
+  // capture — tabCapture.getMediaStreamId will fail gracefully for uncapturable tabs.
   try {
     const tab = await chrome.tabs.get(activeInfo.tabId);
-    if (!tab?.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) {
+    const url = tab?.url || '';
+    if (url.startsWith('chrome://') || url.startsWith('chrome-extension://')) {
       return; // skip internal pages
     }
   } catch {
-    return; // tab doesn't exist or no permission
+    return; // tab doesn't exist
   }
 
   console.log(`ASCE: Tab switched ${capturedTabId} → ${activeInfo.tabId}, re-capturing`);

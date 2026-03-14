@@ -17,11 +17,19 @@ use crate::module_trait::{CirrusModule, ProcessContext};
 /// - Character floor: ensures effect even on high-quality sources
 pub struct PerceptualSafetyMixer {
     sample_rate: u32,
+    /// EMA-smoothed dry RMS² (slow follower, ~300ms time constant)
+    dry_rms_sq_ema: f32,
+    /// EMA-smoothed post-processing RMS² (same time constant)
+    post_rms_sq_ema: f32,
 }
 
 impl PerceptualSafetyMixer {
     pub fn new() -> Self {
-        Self { sample_rate: 48000 }
+        Self {
+            sample_rate: 48000,
+            dry_rms_sq_ema: 0.0,
+            post_rms_sq_ema: 0.0,
+        }
     }
 }
 
@@ -57,10 +65,8 @@ impl CirrusModule for PerceptualSafetyMixer {
         let limit = 0.99f32;
 
         // ── Global output level reference ──
-        // Measure dry RMS before any processing. At the end of M6, we'll
-        // match the output RMS to this reference. This ensures the processed
-        // version is never quieter than bypass in AB comparison.
-        let dry_rms_sq = ctx.dry_buffer.iter()
+        // Measure dry RMS² for this block. Fed into EMA smoother at the end.
+        let dry_rms_sq_block = ctx.dry_buffer.iter()
             .take(len)
             .map(|s| s * s)
             .sum::<f32>() / len.max(1) as f32;
@@ -137,27 +143,54 @@ impl CirrusModule for PerceptualSafetyMixer {
         }
 
         // ── Phase 4: Global output level compensation ──
-        // Match output RMS to dry input RMS. This covers ALL processing
-        // (residual mixing + warmth + smoothness), not just character layer.
-        // Conservative: only compensate level LOSS (ratio >= 1), never cut.
-        // Capped at +3 dB (~1.414x) to prevent any runaway amplification.
-        // Respects 0.99 true peak at all times.
-        if dry_rms_sq > 1e-12 {
-            let post_rms_sq = samples.iter().map(|s| s * s).sum::<f32>() / len.max(1) as f32;
+        // Uses EMA-smoothed RMS² (~300ms time constant) instead of per-block
+        // instantaneous RMS. This prevents the compensator from chasing waveform
+        // micro-structure and instead tracks perceived loudness over time.
+        //
+        // Headroom-aware: limits makeup per-sample to available headroom so that
+        // boosted samples don't just hit the 0.99 clamp and get eaten.
+        //
+        // Conservative: only compensates level LOSS (ratio >= 1), never cuts.
+        // Capped at +3 dB (~1.414x) to prevent runaway amplification.
+        let post_rms_sq_block = samples.iter().map(|s| s * s).sum::<f32>() / len.max(1) as f32;
 
-            if post_rms_sq > 1e-12 {
-                let ratio = (dry_rms_sq / post_rms_sq).sqrt();
-                let makeup = ratio.clamp(1.0, 1.414);
-                if makeup > 1.001 {
-                    for i in 0..len {
-                        samples[i] = (samples[i] * makeup).clamp(-limit, limit);
-                    }
+        // EMA coefficient: ~300ms at 48kHz with 128-sample blocks → ~113 blocks
+        // α = 1 - exp(-block_duration / time_constant)
+        let block_dur = len as f32 / self.sample_rate as f32;
+        let alpha = 1.0 - (-block_dur / 0.3_f32).exp(); // 300ms time constant
+
+        // Bootstrap: if EMA is uninitialized, seed with current block
+        if self.dry_rms_sq_ema < 1e-20 {
+            self.dry_rms_sq_ema = dry_rms_sq_block;
+            self.post_rms_sq_ema = post_rms_sq_block;
+        } else {
+            self.dry_rms_sq_ema += alpha * (dry_rms_sq_block - self.dry_rms_sq_ema);
+            self.post_rms_sq_ema += alpha * (post_rms_sq_block - self.post_rms_sq_ema);
+        }
+
+        if self.dry_rms_sq_ema > 1e-12 && self.post_rms_sq_ema > 1e-12 {
+            let ratio = (self.dry_rms_sq_ema / self.post_rms_sq_ema).sqrt();
+            let makeup = ratio.clamp(1.0, 1.414); // only boost, max +3 dB
+            if makeup > 1.001 {
+                for i in 0..len {
+                    // Headroom-aware: limit boost to what the sample can actually use
+                    // without hitting the ceiling. This prevents "boost then clamp" waste.
+                    let s = samples[i];
+                    let headroom_gain = if s.abs() > 0.001 {
+                        (limit / s.abs()).min(makeup)
+                    } else {
+                        makeup // near-zero samples have unlimited headroom
+                    };
+                    samples[i] = s * headroom_gain;
                 }
             }
         }
     }
 
-    fn reset(&mut self) {}
+    fn reset(&mut self) {
+        self.dry_rms_sq_ema = 0.0;
+        self.post_rms_sq_ema = 0.0;
+    }
 }
 
 #[cfg(test)]
