@@ -16,6 +16,10 @@ use crate::types::StructuredFields;
 pub struct StructuredFactorizer {
     num_bins: usize,
     sample_rate: u32,
+    /// Previous frame's core magnitude spectrum (for spectral flux computation).
+    prev_magnitude: Vec<f32>,
+    /// EMA-smoothed spectral flux (for adaptive thresholding).
+    flux_ema: f32,
 }
 
 impl StructuredFactorizer {
@@ -23,6 +27,8 @@ impl StructuredFactorizer {
         Self {
             num_bins: 0,
             sample_rate: 48000,
+            prev_magnitude: Vec::new(),
+            flux_ema: 0.0,
         }
     }
 }
@@ -87,10 +93,50 @@ impl CirrusModule for StructuredFactorizer {
                 &mut ctx.fields.spatial,
             );
         }
+
+        // ── Spectral flux transient detection ──
+        // Computes L² norm of frame-to-frame magnitude change.
+        // Uses adaptive threshold (EMA of flux) to flag transient frames.
+        let mag = &ctx.lattice.core.magnitude;
+        if !mag.is_empty() {
+            if self.prev_magnitude.len() == mag.len() {
+                // Compute spectral flux: sum of squared positive differences
+                let mut flux = 0.0f32;
+                let mut energy = 0.0f32;
+                for k in 0..mag.len() {
+                    let diff = mag[k] - self.prev_magnitude[k];
+                    if diff > 0.0 {
+                        flux += diff * diff; // only count increases (onsets, not offsets)
+                    }
+                    energy += mag[k] * mag[k];
+                }
+                // Normalize by total energy to get relative flux
+                let norm_flux = if energy > 1e-10 {
+                    (flux / energy).min(1.0)
+                } else {
+                    0.0
+                };
+                ctx.fields.spectral_flux = norm_flux;
+
+                // Adaptive threshold: transient when flux > 3× running average
+                let alpha = 0.05; // slow EMA (~20 frames)
+                self.flux_ema += alpha * (norm_flux - self.flux_ema);
+                ctx.fields.is_transient = norm_flux > self.flux_ema * 3.0 + 0.01;
+            }
+
+            // Store current magnitude for next frame comparison
+            if self.prev_magnitude.len() != mag.len() {
+                self.prev_magnitude = mag.clone();
+            } else {
+                self.prev_magnitude.copy_from_slice(mag);
+            }
+        }
     }
 
     fn reset(&mut self) {
         self.num_bins = 0;
+        self.prev_magnitude.clear();
+        self.flux_ema = 0.0;
     }
 }
 

@@ -24,6 +24,7 @@ class AsceProcessor extends AudioWorkletProcessor {
     this.hfReconstruction = 0.8;
     this.dynamics = 0.6;
     this.stylePreset = 0; // 0=Reference
+    this.synthesisMode = 0; // 0=LegacyAdditive, 1=FftOlaPilot
 
     this.port.onmessage = (e) => {
       const msg = e.data;
@@ -36,6 +37,7 @@ class AsceProcessor extends AudioWorkletProcessor {
         if (msg.hfReconstruction !== undefined) this.hfReconstruction = msg.hfReconstruction;
         if (msg.dynamics !== undefined) this.dynamics = msg.dynamics;
         if (msg.stylePreset !== undefined) this.stylePreset = msg.stylePreset;
+        if (msg.synthesisMode !== undefined) this.synthesisMode = msg.synthesisMode;
 
         if (this.wasmReady) {
           this._applyConfig();
@@ -55,6 +57,9 @@ class AsceProcessor extends AudioWorkletProcessor {
     }
     if (this.wasm.set_style) {
       this.wasm.set_style(this.stylePreset);
+    }
+    if (this.wasm.set_synthesis_mode) {
+      this.wasm.set_synthesis_mode(this.synthesisMode);
     }
   }
 

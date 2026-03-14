@@ -11,11 +11,18 @@ use crate::types::{MICRO_FFT_SIZE, CORE_FFT_SIZE, AIR_FFT_SIZE};
 /// - Micro (256): transient detail
 /// - Core (1024): main synthesis
 /// - Air (2048): high-frequency stability
+///
+/// Uses `StftEngine` for zero-alloc hot-path FFT. Window tables and
+/// FFT plans are pre-allocated in `init()`.
 pub struct TriLatticeAnalysis {
-    /// Scratch buffers for each lattice's FFT.
+    /// Scratch buffers for each lattice's FFT input.
     micro_scratch: Vec<f32>,
     core_scratch: Vec<f32>,
     air_scratch: Vec<f32>,
+    /// Zero-alloc STFT engines (pre-allocated window + complex buf + FFT plan).
+    micro_engine: Option<stft::StftEngine>,
+    core_engine: Option<stft::StftEngine>,
+    air_engine: Option<stft::StftEngine>,
     sample_rate: u32,
 }
 
@@ -25,6 +32,9 @@ impl TriLatticeAnalysis {
             micro_scratch: Vec::new(),
             core_scratch: Vec::new(),
             air_scratch: Vec::new(),
+            micro_engine: None,
+            core_engine: None,
+            air_engine: None,
             sample_rate: 48000,
         }
     }
@@ -40,44 +50,41 @@ impl CirrusModule for TriLatticeAnalysis {
         self.micro_scratch = vec![0.0; MICRO_FFT_SIZE];
         self.core_scratch = vec![0.0; CORE_FFT_SIZE];
         self.air_scratch = vec![0.0; AIR_FFT_SIZE];
+        self.micro_engine = Some(stft::StftEngine::new(MICRO_FFT_SIZE));
+        self.core_engine = Some(stft::StftEngine::new(CORE_FFT_SIZE));
+        self.air_engine = Some(stft::StftEngine::new(AIR_FFT_SIZE));
     }
 
     fn process(&mut self, samples: &mut [f32], ctx: &mut ProcessContext) {
-        // Analyze micro lattice
+        // Prepare micro scratch (zero-pad if needed)
         let micro_len = samples.len().min(MICRO_FFT_SIZE);
         self.micro_scratch[..micro_len].copy_from_slice(&samples[..micro_len]);
         for i in micro_len..MICRO_FFT_SIZE {
             self.micro_scratch[i] = 0.0;
         }
-        stft::analyze_lattice(
-            &self.micro_scratch[..MICRO_FFT_SIZE],
-            &mut ctx.lattice.micro,
-            self.sample_rate,
-        );
+        if let Some(engine) = &mut self.micro_engine {
+            engine.analyze(&self.micro_scratch[..MICRO_FFT_SIZE], &mut ctx.lattice.micro);
+        }
 
-        // Analyze core lattice
+        // Prepare core scratch
         let core_len = samples.len().min(CORE_FFT_SIZE);
         self.core_scratch[..core_len].copy_from_slice(&samples[..core_len]);
         for i in core_len..CORE_FFT_SIZE {
             self.core_scratch[i] = 0.0;
         }
-        stft::analyze_lattice(
-            &self.core_scratch[..CORE_FFT_SIZE],
-            &mut ctx.lattice.core,
-            self.sample_rate,
-        );
+        if let Some(engine) = &mut self.core_engine {
+            engine.analyze(&self.core_scratch[..CORE_FFT_SIZE], &mut ctx.lattice.core);
+        }
 
-        // Analyze air lattice
+        // Prepare air scratch
         let air_len = samples.len().min(AIR_FFT_SIZE);
         self.air_scratch[..air_len].copy_from_slice(&samples[..air_len]);
         for i in air_len..AIR_FFT_SIZE {
             self.air_scratch[i] = 0.0;
         }
-        stft::analyze_lattice(
-            &self.air_scratch[..AIR_FFT_SIZE],
-            &mut ctx.lattice.air,
-            self.sample_rate,
-        );
+        if let Some(engine) = &mut self.air_engine {
+            engine.analyze(&self.air_scratch[..AIR_FFT_SIZE], &mut ctx.lattice.air);
+        }
     }
 
     fn reset(&mut self) {
@@ -99,6 +106,9 @@ mod tests {
         assert_eq!(m2.micro_scratch.len(), MICRO_FFT_SIZE);
         assert_eq!(m2.core_scratch.len(), CORE_FFT_SIZE);
         assert_eq!(m2.air_scratch.len(), AIR_FFT_SIZE);
+        assert!(m2.micro_engine.is_some());
+        assert!(m2.core_engine.is_some());
+        assert!(m2.air_engine.is_some());
     }
 
     #[test]
@@ -138,5 +148,35 @@ mod tests {
         m2.micro_scratch[0] = 1.0;
         m2.reset();
         assert_eq!(m2.micro_scratch[0], 0.0);
+    }
+
+    #[test]
+    fn stft_engine_produces_same_result_as_legacy() {
+        // Verify that after switching M2 to StftEngine, results match
+        let mut m2 = TriLatticeAnalysis::new();
+        m2.init(2048, 48000);
+        let mut ctx = ProcessContext::new(48000, 2, EngineConfig::default());
+        ctx.lattice = crate::types::TriLattice::new();
+
+        let mut samples: Vec<f32> = (0..1024)
+            .map(|i| 0.7 * (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 48000.0).sin())
+            .collect();
+
+        m2.process(&mut samples, &mut ctx);
+
+        // Compare against legacy function
+        let mut legacy_lattice = crate::types::Lattice::new(CORE_FFT_SIZE);
+        let mut scratch = vec![0.0f32; CORE_FFT_SIZE];
+        let copy_len = samples.len().min(CORE_FFT_SIZE);
+        scratch[..copy_len].copy_from_slice(&samples[..copy_len]);
+        stft::analyze_lattice(&scratch, &mut legacy_lattice, 48000);
+
+        for i in 0..ctx.lattice.core.num_bins() {
+            assert!(
+                (ctx.lattice.core.magnitude[i] - legacy_lattice.magnitude[i]).abs() < 1e-6,
+                "Bin {} mismatch: engine={} legacy={}",
+                i, ctx.lattice.core.magnitude[i], legacy_lattice.magnitude[i]
+            );
+        }
     }
 }

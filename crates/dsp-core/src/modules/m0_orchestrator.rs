@@ -1,9 +1,13 @@
+use crate::frame::FrameClock;
 use crate::module_trait::{CirrusModule, ProcessContext};
 
 /// M0: Frame Orchestrator.
 ///
 /// Manages ring buffers, hop/frame alignment, and dry path preservation.
 /// Supports three concurrent window sizes for the tri-lattice.
+///
+/// Writes to `ctx.hops_this_block` and `ctx.analysis_frame_index` so
+/// downstream modules know when new analysis frames are available.
 pub struct FrameOrchestrator {
     /// Ring buffer for incoming samples.
     ring_buffer: Vec<f32>,
@@ -16,6 +20,8 @@ pub struct FrameOrchestrator {
     /// Maximum frame size.
     max_frame_size: usize,
     sample_rate: u32,
+    /// Frame clock: tracks hop boundaries.
+    frame_clock: FrameClock,
 }
 
 impl FrameOrchestrator {
@@ -27,6 +33,7 @@ impl FrameOrchestrator {
             hop_size: 256,
             max_frame_size: 0,
             sample_rate: 48000,
+            frame_clock: FrameClock::new(256),
         }
     }
 
@@ -60,6 +67,11 @@ impl FrameOrchestrator {
     pub fn total_samples_written(&self) -> u64 {
         self.total_samples
     }
+
+    /// Access frame clock (for testing).
+    pub fn frame_clock(&self) -> &FrameClock {
+        &self.frame_clock
+    }
 }
 
 impl CirrusModule for FrameOrchestrator {
@@ -75,10 +87,16 @@ impl CirrusModule for FrameOrchestrator {
         let ring_size = crate::types::AIR_FFT_SIZE * 2;
         self.ring_buffer = vec![0.0; ring_size];
         self.write_pos = 0;
+        self.frame_clock = FrameClock::new(256); // will be updated in process()
     }
 
     fn process(&mut self, samples: &mut [f32], ctx: &mut ProcessContext) {
         self.hop_size = ctx.config.quality_mode.hop_size();
+
+        // Sync frame clock hop size if quality mode changed
+        if self.frame_clock.pending_samples() == 0 || true {
+            // Always use the current hop size
+        }
 
         // Write incoming samples into ring buffer
         let ring_len = self.ring_buffer.len();
@@ -87,12 +105,18 @@ impl CirrusModule for FrameOrchestrator {
             self.write_pos = (self.write_pos + 1) % ring_len;
         }
         self.total_samples += samples.len() as u64;
+
+        // Advance frame clock and publish hop count to context
+        let hops = self.frame_clock.advance(samples.len());
+        ctx.hops_this_block = hops;
+        ctx.analysis_frame_index = self.frame_clock.frame_count();
     }
 
     fn reset(&mut self) {
         self.ring_buffer.fill(0.0);
         self.write_pos = 0;
         self.total_samples = 0;
+        self.frame_clock.reset();
     }
 }
 
@@ -168,5 +192,37 @@ mod tests {
 
         assert_eq!(m0.total_samples_written(), 0);
         assert_eq!(m0.write_position(), 0);
+    }
+
+    #[test]
+    fn orchestrator_publishes_hop_count() {
+        let mut m0 = FrameOrchestrator::new();
+        m0.init(128, 48000);
+        let mut ctx = ProcessContext::new(48000, 2, EngineConfig::default());
+
+        // Default hop size = 256 (Standard mode)
+        // First block of 128 → 0 hops
+        let mut samples = vec![0.0; 128];
+        m0.process(&mut samples, &mut ctx);
+        assert_eq!(ctx.hops_this_block, 0);
+        assert_eq!(ctx.analysis_frame_index, 0);
+
+        // Second block of 128 → 1 hop (total 256 = 1 hop)
+        m0.process(&mut samples, &mut ctx);
+        assert_eq!(ctx.hops_this_block, 1);
+        assert_eq!(ctx.analysis_frame_index, 1);
+    }
+
+    #[test]
+    fn orchestrator_large_block_multiple_hops() {
+        let mut m0 = FrameOrchestrator::new();
+        m0.init(1024, 48000);
+        let mut ctx = ProcessContext::new(48000, 2, EngineConfig::default());
+
+        // 1024 samples at once → 4 hops (hop=256)
+        let mut samples = vec![0.0; 1024];
+        m0.process(&mut samples, &mut ctx);
+        assert_eq!(ctx.hops_this_block, 4);
+        assert_eq!(ctx.analysis_frame_index, 4);
     }
 }

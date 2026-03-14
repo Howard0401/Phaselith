@@ -107,5 +107,6 @@ function updateConfig(cfg) {
     hfReconstruction: (cfg.hfReconstruction ?? 80) / 100,
     dynamics: (cfg.dynamics ?? 60) / 100,
     stylePreset: cfg.stylePreset ?? 0,
+    synthesisMode: cfg.synthesisMode ?? 0,
   });
 }

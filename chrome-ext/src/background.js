@@ -98,7 +98,7 @@ async function startCapture() {
 
     // Read saved config from storage (offscreen can't access chrome.storage)
     const config = await chrome.storage.local.get(
-      ['strength', 'hfReconstruction', 'dynamics', 'enabled', 'stylePreset']
+      ['strength', 'hfReconstruction', 'dynamics', 'enabled', 'stylePreset', 'synthesisMode']
     );
 
     chrome.runtime.sendMessage({
@@ -113,8 +113,8 @@ async function startCapture() {
 }
 
 async function ensureOffscreen() {
-  if (offscreenCreated) return;
-
+  // Always check hasDocument() — Chrome can kill offscreen docs under resource
+  // pressure, making the cached offscreenCreated flag stale.
   try {
     const existing = await chrome.offscreen.hasDocument();
     if (existing) {
@@ -122,9 +122,11 @@ async function ensureOffscreen() {
       return;
     }
   } catch (e) {
-    // hasDocument might not exist in older Chrome versions
+    // hasDocument might not exist in older Chrome versions — fall back to flag
+    if (offscreenCreated) return;
   }
 
+  offscreenCreated = false; // reset in case it was stale
   await chrome.offscreen.createDocument({
     url: 'offscreen.html',
     reasons: ['USER_MEDIA'],

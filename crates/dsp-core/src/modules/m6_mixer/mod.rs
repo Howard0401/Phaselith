@@ -1,4 +1,5 @@
 pub mod crossover;
+pub mod kweighting;
 pub mod masking;
 pub mod true_peak;
 
@@ -17,10 +18,14 @@ use crate::module_trait::{CirrusModule, ProcessContext};
 /// - Character floor: ensures effect even on high-quality sources
 pub struct PerceptualSafetyMixer {
     sample_rate: u32,
-    /// EMA-smoothed dry RMS² (slow follower, ~300ms time constant)
+    /// EMA-smoothed dry K-weighted MS (slow follower, ~300ms time constant)
     dry_rms_sq_ema: f32,
-    /// EMA-smoothed post-processing RMS² (same time constant)
+    /// EMA-smoothed post-processing K-weighted MS (same time constant)
     post_rms_sq_ema: f32,
+    /// K-weighting filter for dry signal measurement
+    kweight_dry: kweighting::KWeightingFilter,
+    /// K-weighting filter for post-processing measurement
+    kweight_post: kweighting::KWeightingFilter,
 }
 
 impl PerceptualSafetyMixer {
@@ -29,6 +34,23 @@ impl PerceptualSafetyMixer {
             sample_rate: 48000,
             dry_rms_sq_ema: 0.0,
             post_rms_sq_ema: 0.0,
+            kweight_dry: kweighting::KWeightingFilter::new(48000),
+            kweight_post: kweighting::KWeightingFilter::new(48000),
+        }
+    }
+
+    /// Update EMA-smoothed RMS² trackers. Called unconditionally (including
+    /// during bypass) so the smoother doesn't go stale.
+    fn update_ema(&mut self, dry_rms_sq: f32, post_rms_sq: f32, block_len: usize) {
+        let block_dur = block_len as f32 / self.sample_rate as f32;
+        let alpha = 1.0 - (-block_dur / 0.3_f32).exp(); // 300ms time constant
+
+        if self.dry_rms_sq_ema < 1e-20 {
+            self.dry_rms_sq_ema = dry_rms_sq;
+            self.post_rms_sq_ema = post_rms_sq;
+        } else {
+            self.dry_rms_sq_ema += alpha * (dry_rms_sq - self.dry_rms_sq_ema);
+            self.post_rms_sq_ema += alpha * (post_rms_sq - self.post_rms_sq_ema);
         }
     }
 }
@@ -40,6 +62,8 @@ impl CirrusModule for PerceptualSafetyMixer {
 
     fn init(&mut self, _max_frame_size: usize, sample_rate: u32) {
         self.sample_rate = sample_rate;
+        self.kweight_dry = kweighting::KWeightingFilter::new(sample_rate);
+        self.kweight_post = kweighting::KWeightingFilter::new(sample_rate);
     }
 
     fn process(&mut self, samples: &mut [f32], ctx: &mut ProcessContext) {
@@ -57,19 +81,25 @@ impl CirrusModule for PerceptualSafetyMixer {
         let character_floor = style.character_intensity() * 0.15;
         let mix_gain = restoration_gain.max(character_floor);
 
-        if mix_gain < 0.001 && style.warmth < 0.01 && style.smoothness < 0.01 {
-            return; // nothing to do
-        }
-
         let len = samples.len();
         let limit = 0.99f32;
 
-        // ── Global output level reference ──
-        // Measure dry RMS² for this block. Fed into EMA smoother at the end.
-        let dry_rms_sq_block = ctx.dry_buffer.iter()
-            .take(len)
-            .map(|s| s * s)
-            .sum::<f32>() / len.max(1) as f32;
+        // ── Global output level reference (K-weighted) ──
+        // Measure dry K-weighted MS for this block. Must happen BEFORE early return
+        // so the EMA stays warm during bypass periods — prevents audible
+        // compensation jumps when processing resumes after quiet/bypass sections.
+        // K-weighting (BS.1770) de-emphasizes low frequencies and boosts presence
+        // range, giving a loudness measurement that matches human perception.
+        let dry_rms_sq_block = self.kweight_dry.compute_weighted_ms(
+            &ctx.dry_buffer[..len.min(ctx.dry_buffer.len())]
+        );
+
+        if mix_gain < 0.001 && style.warmth < 0.01 && style.smoothness < 0.01 {
+            // Bypass: still update EMA so it doesn't go stale.
+            // During bypass, post == dry, so ratio stays ~1.0 — correct.
+            self.update_ema(dry_rms_sq_block, dry_rms_sq_block, len);
+            return;
+        }
 
         // ── Phase 1a: Mix freq-domain validated residual ──
         if has_residual && mix_gain > 0.001 {
@@ -108,6 +138,57 @@ impl CirrusModule for PerceptualSafetyMixer {
                         samples[i] = mixed;
                     }
                     samples[i] = samples[i].clamp(-limit, limit);
+                }
+            }
+        }
+
+        // ── Phase 1c: Tail preserve (ambience compensation) ──
+        // M5 self-reprojection inherently shrinks diffuse/stochastic content
+        // (reverb tails get low consistency_score → attenuated). This can make
+        // the output sound "too dry" compared to the original.
+        //
+        // Three gates prevent this from becoming a global undo knob:
+        // 1. Diffuse gate: only active when consistency_score is low (M5 rejected diffuse content)
+        // 2. Non-transient gate: skips transient frames (preserve attack clarity)
+        // 3. Envelope decay gate: only active when signal energy is decreasing (tail region)
+        //
+        // Without these gates, this would blend back direct sound changes,
+        // low-freq cleanup, and character modifications — destroying front image.
+        let amb = ctx.config.ambience_preserve;
+        if amb > 0.001 && has_residual {
+            // Gate 1: Diffuse gate — only compensate when M5 actually rejected diffuse content.
+            // consistency_score near 1.0 = structured content passed → no compensation needed.
+            // consistency_score near 0.0 = diffuse content shrunk → compensate.
+            let diffuse_amount = (1.0 - ctx.validated.consistency_score).max(0.0);
+            // Only activate when significant diffuse rejection occurred
+            let diffuse_gate = if diffuse_amount > 0.2 { diffuse_amount } else { 0.0 };
+
+            // Gate 2: Non-transient gate — skip transient frames to preserve attack clarity.
+            let transient_gate = if ctx.fields.is_transient { 0.0 } else { 1.0 };
+
+            // Gate 3: Envelope decay gate — only blend in tail/decay regions.
+            // Compare current block energy to dry energy; if post < dry, we're in decay.
+            let dry_energy: f32 = ctx.dry_buffer.iter().take(len)
+                .map(|s| s * s).sum::<f32>() / len.max(1) as f32;
+            let post_energy: f32 = samples.iter().take(len)
+                .map(|s| s * s).sum::<f32>() / len.max(1) as f32;
+            let decay_gate = if dry_energy > 1e-10 && post_energy < dry_energy * 0.95 {
+                1.0 // signal got quieter → likely in decay/tail region
+            } else {
+                0.0 // signal is steady or louder → not a tail
+            };
+
+            let combined_gate = diffuse_gate * transient_gate * decay_gate;
+
+            if combined_gate > 0.001 {
+                let effective_amb = amb * 0.5 * combined_gate; // extra 0.5× safety factor
+                let dry_len = len.min(ctx.dry_buffer.len());
+                for i in 0..dry_len {
+                    let dry = ctx.dry_buffer[i];
+                    let processed = samples[i];
+                    let diff = dry - processed;
+                    let tail_add = diff * effective_amb;
+                    samples[i] = (processed + tail_add).clamp(-limit, limit);
                 }
             }
         }
@@ -152,21 +233,8 @@ impl CirrusModule for PerceptualSafetyMixer {
         //
         // Conservative: only compensates level LOSS (ratio >= 1), never cuts.
         // Capped at +3 dB (~1.414x) to prevent runaway amplification.
-        let post_rms_sq_block = samples.iter().map(|s| s * s).sum::<f32>() / len.max(1) as f32;
-
-        // EMA coefficient: ~300ms at 48kHz with 128-sample blocks → ~113 blocks
-        // α = 1 - exp(-block_duration / time_constant)
-        let block_dur = len as f32 / self.sample_rate as f32;
-        let alpha = 1.0 - (-block_dur / 0.3_f32).exp(); // 300ms time constant
-
-        // Bootstrap: if EMA is uninitialized, seed with current block
-        if self.dry_rms_sq_ema < 1e-20 {
-            self.dry_rms_sq_ema = dry_rms_sq_block;
-            self.post_rms_sq_ema = post_rms_sq_block;
-        } else {
-            self.dry_rms_sq_ema += alpha * (dry_rms_sq_block - self.dry_rms_sq_ema);
-            self.post_rms_sq_ema += alpha * (post_rms_sq_block - self.post_rms_sq_ema);
-        }
+        let post_rms_sq_block = self.kweight_post.compute_weighted_ms(samples);
+        self.update_ema(dry_rms_sq_block, post_rms_sq_block, len);
 
         if self.dry_rms_sq_ema > 1e-12 && self.post_rms_sq_ema > 1e-12 {
             let ratio = (self.dry_rms_sq_ema / self.post_rms_sq_ema).sqrt();
@@ -190,6 +258,8 @@ impl CirrusModule for PerceptualSafetyMixer {
     fn reset(&mut self) {
         self.dry_rms_sq_ema = 0.0;
         self.post_rms_sq_ema = 0.0;
+        self.kweight_dry.reset();
+        self.kweight_post.reset();
     }
 }
 

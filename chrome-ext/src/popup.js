@@ -1,6 +1,7 @@
 // Popup UI logic — communicates with background service worker
 
 const enableToggle = document.getElementById('enableToggle');
+const fftPilotToggle = document.getElementById('fftPilotToggle');
 const strengthSlider = document.getElementById('strength');
 const hfSlider = document.getElementById('hfReconstruction');
 const dynSlider = document.getElementById('dynamics');
@@ -11,8 +12,9 @@ const styleBtns = styleGrid.querySelectorAll('.style-btn');
 let currentStylePreset = 0;
 
 // Load saved state
-chrome.storage.local.get(['enabled', 'strength', 'hfReconstruction', 'dynamics', 'stylePreset'], (data) => {
+chrome.storage.local.get(['enabled', 'strength', 'hfReconstruction', 'dynamics', 'stylePreset', 'synthesisMode'], (data) => {
   enableToggle.checked = data.enabled ?? false;
+  fftPilotToggle.checked = (data.synthesisMode ?? 0) === 1;
   strengthSlider.value = data.strength ?? 70;
   hfSlider.value = data.hfReconstruction ?? 80;
   dynSlider.value = data.dynamics ?? 60;
@@ -49,6 +51,7 @@ function saveAndNotify() {
     hfReconstruction: parseInt(hfSlider.value),
     dynamics: parseInt(dynSlider.value),
     stylePreset: currentStylePreset,
+    synthesisMode: fftPilotToggle.checked ? 1 : 0,
   };
   chrome.storage.local.set(state);
   chrome.runtime.sendMessage({ type: 'CONFIG_UPDATE', ...state });
@@ -63,6 +66,7 @@ enableToggle.addEventListener('change', async () => {
     hfReconstruction: parseInt(hfSlider.value),
     dynamics: parseInt(dynSlider.value),
     stylePreset: currentStylePreset,
+    synthesisMode: fftPilotToggle.checked ? 1 : 0,
   };
   await chrome.storage.local.set(state);
   updateUI();
@@ -79,6 +83,7 @@ enableToggle.addEventListener('change', async () => {
 strengthSlider.addEventListener('input', saveAndNotify);
 hfSlider.addEventListener('input', saveAndNotify);
 dynSlider.addEventListener('input', saveAndNotify);
+fftPilotToggle.addEventListener('change', saveAndNotify);
 
 // Style preset buttons
 styleBtns.forEach(btn => {

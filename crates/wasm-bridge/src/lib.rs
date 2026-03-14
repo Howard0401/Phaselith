@@ -11,7 +11,7 @@
 
 use core::cell::UnsafeCell;
 
-use asce_dsp_core::config::{EngineConfig, PhaseMode, QualityMode, StyleConfig, StylePreset};
+use asce_dsp_core::config::{EngineConfig, PhaseMode, QualityMode, StyleConfig, StylePreset, SynthesisMode};
 use asce_dsp_core::engine::CirrusEngineBuilder;
 use asce_dsp_core::types::CrossChannelContext;
 use asce_dsp_core::CirrusEngine;
@@ -265,5 +265,23 @@ pub extern "C" fn set_impact_gain(value: f32) {
 pub extern "C" fn set_body(value: f32) {
     let mut config = current_config();
     config.style.body = value.clamp(0.0, 1.0);
+    with_both_engines(|e| e.update_config(config));
+}
+
+/// Set synthesis mode: 0=LegacyAdditive, 1=FftOlaPilot, 2=FftOlaFull
+#[no_mangle]
+pub extern "C" fn set_synthesis_mode(mode: u32) {
+    let mut config = current_config();
+    config.synthesis_mode = SynthesisMode::from_u32(mode);
+    with_both_engines(|e| e.update_config(config));
+}
+
+/// Set ambience preserve (tail compensation): 0.0-1.0.
+/// Compensates dereverb side-effect of M5 reprojection.
+/// Recommended range: 0.0-0.15 for subtle compensation.
+#[no_mangle]
+pub extern "C" fn set_ambience_preserve(value: f32) {
+    let mut config = current_config();
+    config.ambience_preserve = value.clamp(0.0, 1.0);
     with_both_engines(|e| e.update_config(config));
 }

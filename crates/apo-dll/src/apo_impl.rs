@@ -72,6 +72,14 @@ impl AsceApo {
         // Load config from mmap, or use defaults
         let config = self.load_config();
 
+        // TODO(stereo): APO is currently a transitional mono-per-channel runtime.
+        // Engine is built with with_channels(self.channels) but process() de-interleaves
+        // and feeds mono slices per channel with reset() between them.
+        // This means ctx.channels is wrong for stereo, and M1/M3/M4 stereo-dependent
+        // logic (spatial analysis, side recovery) sees incorrect data.
+        // Phase D0+ should either: (a) use dual-engine with with_channels(1), or
+        // (b) implement true interleaved stereo processing.
+        // For now, browser (WASM) is the reference stereo runtime.
         let fft_size = config.quality_mode.core_fft_size();
         self.engine = Some(
             CirrusEngineBuilder::new(self.sample_rate, fft_size)
@@ -189,6 +197,8 @@ impl AsceApo {
                     _ => QualityMode::Standard,
                 },
                 style: StyleConfig::default(),
+                synthesis_mode: asce_dsp_core::config::SynthesisMode::default(),
+                ambience_preserve: 0.0,
             }
         } else {
             EngineConfig::default()
