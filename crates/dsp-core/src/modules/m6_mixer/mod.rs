@@ -94,7 +94,9 @@ impl CirrusModule for PerceptualSafetyMixer {
             &ctx.dry_buffer[..len.min(ctx.dry_buffer.len())]
         );
 
-        if mix_gain < 0.001 && style.warmth < 0.01 && style.smoothness < 0.01 {
+        if mix_gain < 0.001 && style.warmth < 0.01 && style.smoothness < 0.01
+            && ctx.config.ambience_preserve < 0.001
+        {
             // Bypass: still update EMA so it doesn't go stale.
             // During bypass, post == dry, so ratio stays ~1.0 — correct.
             self.update_ema(dry_rms_sq_block, dry_rms_sq_block, len);
@@ -142,53 +144,74 @@ impl CirrusModule for PerceptualSafetyMixer {
             }
         }
 
-        // ── Phase 1c: Tail preserve (ambience compensation) ──
+        // ── Phase 1c: Ambience preserve (diffuse tail compensation) ──
         // M5 self-reprojection inherently shrinks diffuse/stochastic content
         // (reverb tails get low consistency_score → attenuated). This can make
         // the output sound "too dry" compared to the original.
         //
-        // Three gates prevent this from becoming a global undo knob:
-        // 1. Diffuse gate: only active when consistency_score is low (M5 rejected diffuse content)
-        // 2. Non-transient gate: skips transient frames (preserve attack clarity)
-        // 3. Envelope decay gate: only active when signal energy is decreasing (tail region)
+        // Two-layer design: GATES control *when* to compensate, SOURCE controls *what* to put back.
         //
-        // Without these gates, this would blend back direct sound changes,
-        // low-freq cleanup, and character modifications — destroying front image.
+        // GATES (3 multiplicative):
+        // 1. Diffuse gate: only when consistency_score is low (M5 rejected diffuse content)
+        // 2. Non-transient gate: skip transient frames (preserve attack clarity)
+        // 3. Envelope decay gate: only during energy decay (tail region)
+        //
+        // SOURCE narrowing (the critical part):
+        // The blend-back source is NOT the full `dry - processed` diff.
+        // It's high-pass filtered (~500Hz) to only contain upper-mid/high content.
+        // This prevents blending back:
+        //   - Low-freq bloom (bass bloom would muddy the mix)
+        //   - Fundamental/harmonic structure changes (M5 corrections we want to keep)
+        //   - Direct sound character modifications
+        // What passes through:
+        //   - Reverb tail shimmer (1kHz-8kHz diffuse energy)
+        //   - Upper-mid ambience (500Hz+ stochastic content)
+        //   - Air/room tone in decay regions
         let amb = ctx.config.ambience_preserve;
         if amb > 0.001 && has_residual {
             // Gate 1: Diffuse gate — only compensate when M5 actually rejected diffuse content.
-            // consistency_score near 1.0 = structured content passed → no compensation needed.
-            // consistency_score near 0.0 = diffuse content shrunk → compensate.
             let diffuse_amount = (1.0 - ctx.validated.consistency_score).max(0.0);
-            // Only activate when significant diffuse rejection occurred
             let diffuse_gate = if diffuse_amount > 0.2 { diffuse_amount } else { 0.0 };
 
             // Gate 2: Non-transient gate — skip transient frames to preserve attack clarity.
             let transient_gate = if ctx.fields.is_transient { 0.0 } else { 1.0 };
 
             // Gate 3: Envelope decay gate — only blend in tail/decay regions.
-            // Compare current block energy to dry energy; if post < dry, we're in decay.
             let dry_energy: f32 = ctx.dry_buffer.iter().take(len)
                 .map(|s| s * s).sum::<f32>() / len.max(1) as f32;
             let post_energy: f32 = samples.iter().take(len)
                 .map(|s| s * s).sum::<f32>() / len.max(1) as f32;
             let decay_gate = if dry_energy > 1e-10 && post_energy < dry_energy * 0.95 {
-                1.0 // signal got quieter → likely in decay/tail region
+                1.0
             } else {
-                0.0 // signal is steady or louder → not a tail
+                0.0
             };
 
             let combined_gate = diffuse_gate * transient_gate * decay_gate;
 
             if combined_gate > 0.001 {
-                let effective_amb = amb * 0.5 * combined_gate; // extra 0.5× safety factor
+                let effective_amb = amb * 0.5 * combined_gate;
                 let dry_len = len.min(ctx.dry_buffer.len());
+
+                // ── Source narrowing: 1-pole high-pass on diff ──
+                // Cutoff ~500Hz removes low-freq content from blend-back source.
+                // α = 1 - π·fc/fs (first-order approximation)
+                // At 48kHz: α ≈ 0.967, at 44.1kHz: α ≈ 0.964
+                let hp_alpha = 1.0 - (std::f32::consts::PI * 500.0 / self.sample_rate as f32);
+                // Local state: reset per block since gate activation is intermittent.
+                // HP settles within ~3 samples at this cutoff — negligible for 256+ sample blocks.
+                let mut hp_prev_x = 0.0f32;
+                let mut hp_prev_y = 0.0f32;
+
                 for i in 0..dry_len {
-                    let dry = ctx.dry_buffer[i];
-                    let processed = samples[i];
-                    let diff = dry - processed;
-                    let tail_add = diff * effective_amb;
-                    samples[i] = (processed + tail_add).clamp(-limit, limit);
+                    let raw_diff = ctx.dry_buffer[i] - samples[i];
+
+                    // 1-pole HP: y[n] = α·(y[n-1] + x[n] - x[n-1])
+                    let hp_diff = hp_alpha * (hp_prev_y + raw_diff - hp_prev_x);
+                    hp_prev_x = raw_diff;
+                    hp_prev_y = hp_diff;
+
+                    samples[i] = (samples[i] + hp_diff * effective_amb).clamp(-limit, limit);
                 }
             }
         }
@@ -534,6 +557,126 @@ mod tests {
         assert!(
             post_rms <= pre_rms * 1.42,
             "Makeup gain should be capped: pre={pre_rms:.4}, post={post_rms:.4}"
+        );
+    }
+
+    /// Helper: run M6 with given dry/processed and ambience_preserve, return output.
+    /// Forces all 3 gates open (low consistency, non-transient, decaying energy).
+    /// Uses minimal warmth (0.02) to ensure both amb=0 and amb>0 runs go through
+    /// the full pipeline (prevents bypass early return).
+    fn run_m6_ambience_test(dry: &[f32], processed: &[f32], amb: f32) -> Vec<f32> {
+        let n = dry.len();
+        let mut m6 = PerceptualSafetyMixer::new();
+        m6.init(1024, 48000);
+        let mut config = EngineConfig::default();
+        config.ambience_preserve = amb;
+        // Minimal warmth prevents bypass early return so both runs follow same code path
+        config.style = StyleConfig::new(0.02, 0.0, 0.0, 0.0, 0.0, 0.0);
+
+        let mut ctx = setup_ctx_with_dry(dry, config);
+        ctx.validated = ValidatedResidual {
+            data: vec![0.0; n],
+            time_residual: vec![0.0; n],
+            acceptance_mask: vec![1.0; n],
+            consistency_score: 0.3, // low → diffuse gate opens
+            reprojection_error: 0.0,
+        };
+        ctx.fields.is_transient = false;
+
+        let mut samples = processed.to_vec();
+        m6.process(&mut samples, &mut ctx);
+        samples
+    }
+
+    #[test]
+    fn tail_preserve_hp_filter_attenuates_low_freq() {
+        // Direct test of the 1-pole HP filter used in tail preserve source narrowing.
+        // Verify that 100Hz content is heavily attenuated while 3kHz passes through.
+        let n = 512;
+        let hp_alpha: f32 = 1.0 - (std::f32::consts::PI * 500.0 / 48000.0);
+
+        // Apply HP to 100Hz sine
+        let input_lo: Vec<f32> = (0..n)
+            .map(|i| 0.5 * (2.0 * std::f32::consts::PI * 100.0 * i as f32 / 48000.0).sin())
+            .collect();
+        let mut hp_x = 0.0f32;
+        let mut hp_y = 0.0f32;
+        let mut output_lo = vec![0.0f32; n];
+        for i in 0..n {
+            let hp = hp_alpha * (hp_y + input_lo[i] - hp_x);
+            hp_x = input_lo[i];
+            hp_y = hp;
+            output_lo[i] = hp;
+        }
+
+        // Apply HP to 3kHz sine
+        let input_hi: Vec<f32> = (0..n)
+            .map(|i| 0.5 * (2.0 * std::f32::consts::PI * 3000.0 * i as f32 / 48000.0).sin())
+            .collect();
+        hp_x = 0.0;
+        hp_y = 0.0;
+        let mut output_hi = vec![0.0f32; n];
+        for i in 0..n {
+            let hp = hp_alpha * (hp_y + input_hi[i] - hp_x);
+            hp_x = input_hi[i];
+            hp_y = hp;
+            output_hi[i] = hp;
+        }
+
+        // Measure RMS after settling (skip first 50 samples)
+        let skip = 50;
+        let rms = |buf: &[f32]| -> f32 {
+            (buf[skip..].iter().map(|s| s * s).sum::<f32>() / (buf.len() - skip) as f32).sqrt()
+        };
+
+        let in_rms_lo = rms(&input_lo);
+        let out_rms_lo = rms(&output_lo);
+        let gain_lo = out_rms_lo / in_rms_lo;
+
+        let in_rms_hi = rms(&input_hi);
+        let out_rms_hi = rms(&output_hi);
+        let gain_hi = out_rms_hi / in_rms_hi;
+
+        // 100Hz should be attenuated (gain < 0.5)
+        assert!(gain_lo < 0.5, "100Hz should be attenuated by HP, gain={gain_lo:.4}");
+        // 3kHz should pass through (gain > 0.9)
+        assert!(gain_hi > 0.9, "3kHz should pass through HP, gain={gain_hi:.4}");
+        // Selectivity: high/low gain ratio > 2x
+        assert!(
+            gain_hi / gain_lo > 2.0,
+            "HP selectivity: 3kHz gain ({gain_hi:.4}) should be >2x 100Hz gain ({gain_lo:.4})"
+        );
+    }
+
+    #[test]
+    fn ambience_preserve_activates_with_gates_open() {
+        // Integration test: verify tail preserve actually modifies the output
+        // when all gates are open and ambience_preserve > 0.
+        // Uses broadband signal to avoid HP filter blocking.
+        let n = 512;
+
+        // Broadband: mix of frequencies above HP cutoff
+        let dry: Vec<f32> = (0..n)
+            .map(|i| {
+                let t = i as f32 / 48000.0;
+                0.3 * (2.0 * std::f32::consts::PI * 2000.0 * t).sin()
+                    + 0.2 * (2.0 * std::f32::consts::PI * 5000.0 * t).sin()
+            })
+            .collect();
+        let processed: Vec<f32> = dry.iter().map(|s| s * 0.7).collect();
+
+        let out_no_amb = run_m6_ambience_test(&dry, &processed, 0.0);
+        let out_with_amb = run_m6_ambience_test(&dry, &processed, 1.0);
+
+        // Should see a measurable difference when ambience_preserve is on
+        let delta: f32 = out_with_amb.iter().zip(out_no_amb.iter())
+            .skip(10)
+            .map(|(a, b)| (a - b).abs())
+            .sum::<f32>() / (n - 10) as f32;
+
+        assert!(
+            delta > 0.001,
+            "Ambience preserve should modify output with broadband signal, delta={delta:.6}"
         );
     }
 
