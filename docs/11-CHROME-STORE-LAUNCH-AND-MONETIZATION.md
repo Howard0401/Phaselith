@@ -152,7 +152,7 @@ Recommended copy:
 
 `CIRRUS is currently available during its Early Access period.`
 
-`In a future release, CIRRUS browser features will move to a Lite + Pro model.`
+`In a future release, CIRRUS browser features will move to a trial + free + paid unlock model.`
 
 `The current Early Access release is intended to gather real-world feedback before paid unlocking begins.`
 
@@ -165,17 +165,199 @@ Do not announce aggressive monetization on day one.
 Recommended sequence:
 
 1. launch as free Early Access
-2. state clearly that a future Lite + Pro structure is planned
+2. state clearly that a future trial + free + paid structure is planned
 3. only announce the specific browser price once the product feels stable
 
 Current intended product direction:
 
-1. `CIRRUS Browser Pro`
-   - target price: `USD 49`
+1. `CIRRUS Browser`
+   - launch / Early Access conversion price: `USD 49`
+   - normal personal price target: `USD 59`
+   - acceptable long-term ceiling if value perception stays strong: `USD 69`
 2. `CIRRUS Desktop`
    - target price: `USD 199`
+3. `Commercial licensing`
+   - separate contact-based pricing
+   - for closed-source embedding, redistribution, OEM, and team/commercial deployment
 
 Do not put both numbers in the initial public store copy unless you are ready to support them.
+
+## Recommended Monetization Structure
+
+The browser product should not jump directly from free Early Access to a hard paywall.
+
+Recommended structure:
+
+1. `Trial`
+   - `30 days`
+   - full browser experience
+   - all styles available
+   - full strength range available
+2. `Free`
+   - after trial ends
+   - `Reference` only
+   - `Strength` capped at `50%`
+   - intended to remain genuinely useful, not crippled
+3. `Paid personal unlock`
+   - one-time purchase
+   - unlocks all styles
+   - unlocks full strength range
+   - unlocks future browser updates for the paid browser product line
+4. `Desktop`
+   - separate one-time purchase
+   - positioned as the higher-tier system-level product
+
+This creates:
+
+1. low friction at install time
+2. a fair hearing window for a listening-first product
+3. a meaningful free mode after trial
+4. a clear reason to pay without making the free mode feel fake
+
+## Feature Split
+
+Recommended browser tier split:
+
+### Trial
+
+1. all browser styles available
+2. full `Strength` range
+3. full current browser controls
+4. no sound-quality limitation relative to the paid browser version
+
+### Free After Trial
+
+1. style locked to `Reference`
+2. `Strength` capped at `50%`
+3. existing basic browser playback improvement remains usable
+4. should continue to demonstrate the core CIRRUS value clearly
+
+### Paid Browser Unlock
+
+1. all style presets available
+2. full `Strength` range
+3. all current browser controls available
+4. official packaged build, updates, and personal-use license
+
+### Commercial License
+
+Commercial licensing should be presented as a separate path, not as a more expensive version of the personal unlock.
+
+It should cover:
+
+1. closed-source integration
+2. redistribution
+3. OEM or hardware bundling
+4. team deployment
+5. any use that does not fit the normal personal paid browser license
+
+## Commercial License Entry
+
+The commercial licensing entry must be visible in all official surfaces where serious users may look for purchase information.
+
+Recommended locations:
+
+1. project README
+2. official website or landing page
+3. extension upgrade screen
+4. Chrome Web Store description
+
+Recommended wording:
+
+`Need CIRRUS for a product, closed-source integration, redistribution, or commercial deployment?`
+
+`Contact CIRRUS for commercial licensing.`
+
+Keep the personal and commercial paths visually separate:
+
+1. `Buy Personal License`
+2. `Commercial Licensing`
+
+## Trial-To-Paid Conversion Design
+
+The key conversion rule is:
+
+`Do not let the trial ending feel like punishment.`
+
+Recommended conversion behavior:
+
+1. before trial ends, show advance notice inside the extension
+2. when trial ends, move the user into `Free` automatically
+3. explain clearly what remains available
+4. explain clearly what unlocks with payment
+5. make the paid action a one-click next step from inside the extension
+
+Recommended timeline:
+
+1. `7 days remaining`
+   - light notice only
+2. `3 days remaining`
+   - clearer reminder
+3. `1 day remaining`
+   - direct explanation of the upcoming free-mode limits
+4. `trial ended`
+   - confirm user now has `Reference + 50% Strength`
+   - offer paid unlock
+
+## Recommended Trial/Upgrade Copy
+
+### Trial Running
+
+`Early Access Trial`
+
+`You are currently hearing the full CIRRUS browser experience.`
+
+`After the trial, CIRRUS will remain available in Free mode with Reference style and up to 50% Strength.`
+
+### Trial Ending Soon
+
+`Your full CIRRUS trial ends in {X} days.`
+
+`After that, CIRRUS will continue in Free mode with Reference style and up to 50% Strength.`
+
+`Unlock the full browser version to keep all styles and full intensity.`
+
+### Trial Ended
+
+`Your full CIRRUS trial has ended.`
+
+`CIRRUS remains active in Free mode with Reference style and up to 50% Strength.`
+
+`Unlock the full browser version to restore all styles and the full Strength range.`
+
+### Upgrade CTA
+
+`Unlock Full CIRRUS`
+
+`Get all styles, full Strength, and the complete browser experience with a one-time purchase.`
+
+### Commercial CTA
+
+`Need CIRRUS for a product or commercial deployment?`
+
+`Contact us for commercial licensing.`
+
+## Pricing Positioning Guidance
+
+The browser price should not be defended as "cheap software."
+
+It should be framed as:
+
+1. a one-time purchase for a product that changes day-to-day listening
+2. materially cheaper than replacing audio hardware
+3. a premium listening tool, not a novelty effect
+
+Do not say:
+
+1. `It's just a plugin`
+2. `It's cheaper than coffee`
+3. `It's basically free`
+
+Better positioning:
+
+1. `A one-time unlock for the full browser listening experience`
+2. `Much less expensive than replacing hardware just to recover the same degree of improvement`
+3. `Built for listeners who can hear the difference immediately`
 
 ## Recommended User-Facing FAQ Copy
 
@@ -183,13 +365,13 @@ Do not put both numbers in the initial public store copy unless you are ready to
 
 `CIRRUS is currently available as an Early Access release.`
 
-`A future Lite + Pro model is planned, but paid unlocking has not started yet in this release phase.`
+`A future trial + free + paid unlock model is planned, but paid unlocking has not started yet in this release phase.`
 
 ### Will CIRRUS become paid later?
 
 `Yes.`
 
-`The browser product is planned to move to a Lite + Pro structure after the Early Access phase.`
+`The browser product is planned to move to a trial + free + paid unlock structure after the Early Access phase.`
 
 ### Why release it free first?
 
@@ -205,7 +387,7 @@ Use this in-product text for the Early Access phase:
 
 `CIRRUS is currently available for evaluation while we refine the product and gather listening feedback.`
 
-`Future releases will introduce Lite and Pro tiers.`
+`Future releases will introduce a full trial period, a usable Free mode, and a paid full unlock.`
 
 ## Later In-Product Upgrade Copy
 
@@ -215,7 +397,7 @@ Use this once paid unlocking is ready:
 
 `The Early Access phase has ended.`
 
-`Continue using CIRRUS Lite for essential playback improvement, or unlock CIRRUS Pro for the full browser experience.`
+`Continue using CIRRUS Free with Reference style and up to 50% Strength, or unlock the full browser experience.`
 
 ## Tone Rules
 
