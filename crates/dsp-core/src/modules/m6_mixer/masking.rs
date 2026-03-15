@@ -54,9 +54,8 @@ fn masking_threshold(freq: f32, spectrum: &[Complex<f32>], bin_to_freq: f32) -> 
 /// Absolute hearing threshold (Terhardt approximation).
 fn absolute_hearing_threshold(freq: f32) -> f32 {
     let f_khz = freq / 1000.0;
-    let threshold_db = 3.64 * f_khz.powf(-0.8)
-        - 6.5 * (-0.6 * (f_khz - 3.3).powi(2)).exp()
-        + 1e-3 * f_khz.powi(4);
+    let threshold_db =
+        3.64 * f_khz.powf(-0.8) - 6.5 * (-0.6 * (f_khz - 3.3).powi(2)).exp() + 1e-3 * f_khz.powi(4);
     db_to_linear(threshold_db - 96.0)
 }
 
@@ -92,6 +91,11 @@ mod tests {
         let freq = 1000.0;
         let bark = hz_to_bark(freq);
         let back = bark_to_hz(bark);
-        assert!((back - freq).abs() < 100.0, "Roundtrip should be close: {} vs {}", back, freq);
+        assert!(
+            (back - freq).abs() < 100.0,
+            "Roundtrip should be close: {} vs {}",
+            back,
+            freq
+        );
     }
 }

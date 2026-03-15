@@ -2,11 +2,7 @@
 ///
 /// Instead of modifying the signal directly, computes the difference
 /// between the clipped signal and the estimated original.
-pub fn compute_declip_residual(
-    samples: &[f32],
-    clipping_severity: f32,
-    residual: &mut [f32],
-) {
+pub fn compute_declip_residual(samples: &[f32], clipping_severity: f32, residual: &mut [f32]) {
     compute_declip_residual_scaled(samples, clipping_severity, 1.0, 0.5, residual);
 }
 
@@ -73,8 +69,8 @@ fn compute_region_residual_inner(
         0.0
     };
 
-    let estimated_peak =
-        threshold + (slope_before.abs() + slope_after.abs()) * 0.5 * (end - start) as f32 * peak_scale;
+    let estimated_peak = threshold
+        + (slope_before.abs() + slope_after.abs()) * 0.5 * (end - start) as f32 * peak_scale;
     let peak = estimated_peak.min(threshold * 1.5);
 
     let region_len = (end - start).max(1);
@@ -107,7 +103,10 @@ mod tests {
         compute_declip_residual(&samples, 0.5, &mut residual);
 
         let total: f32 = residual.iter().map(|r| r.abs()).sum();
-        assert!(total > 0.0, "Residual should be non-zero for clipped signal");
+        assert!(
+            total > 0.0,
+            "Residual should be non-zero for clipped signal"
+        );
     }
 
     #[test]
@@ -121,5 +120,27 @@ mod tests {
 
         let total: f32 = residual.iter().map(|r| r.abs()).sum();
         assert_eq!(total, 0.0, "Residual should be zero for clean signal");
+    }
+
+    #[test]
+    fn transient_scaling_changes_peak_aggressiveness() {
+        let mut samples: Vec<f32> = (0..128)
+            .map(|i| 1.5 * (2.0 * std::f32::consts::PI * i as f32 / 32.0).sin())
+            .collect();
+        for s in &mut samples {
+            *s = s.clamp(-0.99, 0.99);
+        }
+
+        let mut conservative = vec![0.0; 128];
+        let mut aggressive = vec![0.0; 128];
+        compute_declip_residual_scaled(&samples, 0.8, 1.0, 0.0, &mut conservative);
+        compute_declip_residual_scaled(&samples, 0.8, 1.0, 1.0, &mut aggressive);
+
+        let conservative_energy: f32 = conservative.iter().map(|r| r.abs()).sum();
+        let aggressive_energy: f32 = aggressive.iter().map(|r| r.abs()).sum();
+        assert!(
+            aggressive_energy > conservative_energy,
+            "Higher transient scaling should make declip more aggressive"
+        );
     }
 }

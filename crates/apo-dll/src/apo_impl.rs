@@ -157,20 +157,12 @@ impl AsceApo {
                 return;
             }
 
-            // Hot-reload config only on version change (atomic read, no lock)
-            let current_version = mmap.config().version.load(
-                std::sync::atomic::Ordering::Relaxed,
+            // Hot-reload config changes (atomic read, no lock)
+            self.maybe_update_config(
+                mmap.config()
+                    .version
+                    .load(std::sync::atomic::Ordering::Relaxed),
             );
-            if current_version != self.last_config_version {
-                self.last_config_version = current_version;
-                let config = self.load_config();
-                if let Some(ref mut e) = self.engine_l {
-                    e.update_config(config);
-                }
-                if let Some(ref mut e) = self.engine_r {
-                    e.update_config(config);
-                }
-            }
         }
 
         let ch = self.channels as usize;
@@ -273,6 +265,9 @@ impl AsceApo {
                 hf_reconstruction: sc.hf_reconstruction(),
                 dynamics: sc.dynamics_restoration(),
                 transient: sc.transient_repair(),
+                pre_echo_transient_scaling: 1.0,
+                declip_transient_scaling: 1.0,
+                delayed_transient_repair: false,
                 phase_mode: match sc.phase_mode.load(std::sync::atomic::Ordering::Relaxed) {
                     1 => PhaseMode::Minimum,
                     _ => PhaseMode::Linear,

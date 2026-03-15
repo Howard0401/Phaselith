@@ -12,9 +12,14 @@ pub fn compute_harmonic_extension(
     residual: &mut [f32],
 ) {
     compute_harmonic_extension_styled(
-        magnitude, _phase, harmonic_field,
-        cutoff_bin, bin_to_freq, strength,
-        0.5, 0.4, // default air_brightness & body
+        magnitude,
+        _phase,
+        harmonic_field,
+        cutoff_bin,
+        bin_to_freq,
+        strength,
+        0.5,
+        0.4, // default air_brightness & body
         residual,
     );
 }
@@ -38,7 +43,13 @@ pub fn compute_harmonic_extension_styled(
         // Even if no cutoff detected, still do body reinforcement
         if body > 0.01 && num_bins > 0 {
             apply_body_reinforcement(
-                magnitude, harmonic_field, bin_to_freq, body, strength, num_bins, residual,
+                magnitude,
+                harmonic_field,
+                bin_to_freq,
+                body,
+                strength,
+                num_bins,
+                residual,
             );
         }
         return;
@@ -83,7 +94,13 @@ pub fn compute_harmonic_extension_styled(
 
     // Body reinforcement in 180-500 Hz range
     apply_body_reinforcement(
-        magnitude, harmonic_field, bin_to_freq, body, strength, num_bins, residual,
+        magnitude,
+        harmonic_field,
+        bin_to_freq,
+        body,
+        strength,
+        num_bins,
+        residual,
     );
 }
 
@@ -115,11 +132,7 @@ fn apply_body_reinforcement(
 }
 
 /// Estimate decay rate (dB/octave) from harmonic peaks below cutoff.
-fn estimate_decay_rate(
-    magnitude: &[f32],
-    harmonic_field: &[f32],
-    cutoff_bin: usize,
-) -> f32 {
+fn estimate_decay_rate(magnitude: &[f32], harmonic_field: &[f32], cutoff_bin: usize) -> f32 {
     let mut high_energy = 0.0f32;
     let mut low_energy = 0.0f32;
     let quarter = cutoff_bin / 4;
@@ -177,8 +190,13 @@ mod tests {
 
         let mut residual = vec![0.0; num_bins];
         compute_harmonic_extension(
-            &magnitude, &phase, &harmonic_field,
-            cutoff_bin, bin_to_freq, 1.0, &mut residual,
+            &magnitude,
+            &phase,
+            &harmonic_field,
+            cutoff_bin,
+            bin_to_freq,
+            1.0,
+            &mut residual,
         );
 
         let above_energy: f32 = residual[cutoff_bin..].iter().sum();
@@ -195,7 +213,10 @@ mod tests {
             &vec![1.0; num_bins],
             &vec![0.0; num_bins],
             &vec![0.0; num_bins],
-            cutoff_bin, 46.875, 1.0, &mut residual,
+            cutoff_bin,
+            46.875,
+            1.0,
+            &mut residual,
         );
 
         let total: f32 = residual.iter().sum();
@@ -221,16 +242,24 @@ mod tests {
 
         let mut residual = vec![0.0; num_bins];
         compute_harmonic_extension_styled(
-            &magnitude, &phase, &harmonic_field,
+            &magnitude,
+            &phase,
+            &harmonic_field,
             num_bins, // no cutoff (lossless)
-            bin_to_freq, 1.0,
-            0.5, 0.6, // air_brightness, body
+            bin_to_freq,
+            1.0,
+            0.5,
+            0.6, // air_brightness, body
             &mut residual,
         );
 
         // Body reinforcement should add energy in 180-500 Hz
         let body_energy: f32 = residual[lo..hi].iter().sum();
-        assert!(body_energy > 0.0, "Body reinforcement should add low-mid energy, got {}", body_energy);
+        assert!(
+            body_energy > 0.0,
+            "Body reinforcement should add low-mid energy, got {}",
+            body_energy
+        );
     }
 
     #[test]
@@ -249,25 +278,39 @@ mod tests {
         // Dark: air_brightness = 0.0
         let mut residual_dark = vec![0.0; num_bins];
         compute_harmonic_extension_styled(
-            &magnitude, &phase, &harmonic_field,
-            cutoff_bin, bin_to_freq, 1.0,
-            0.0, 0.0,
+            &magnitude,
+            &phase,
+            &harmonic_field,
+            cutoff_bin,
+            bin_to_freq,
+            1.0,
+            0.0,
+            0.0,
             &mut residual_dark,
         );
 
         // Bright: air_brightness = 1.0
         let mut residual_bright = vec![0.0; num_bins];
         compute_harmonic_extension_styled(
-            &magnitude, &phase, &harmonic_field,
-            cutoff_bin, bin_to_freq, 1.0,
-            1.0, 0.0,
+            &magnitude,
+            &phase,
+            &harmonic_field,
+            cutoff_bin,
+            bin_to_freq,
+            1.0,
+            1.0,
+            0.0,
             &mut residual_bright,
         );
 
         let dark_energy: f32 = residual_dark[cutoff_bin..].iter().sum();
         let bright_energy: f32 = residual_bright[cutoff_bin..].iter().sum();
         // Brighter should have more HF energy (shallower decay)
-        assert!(bright_energy > dark_energy,
-            "Bright ({}) should exceed dark ({})", bright_energy, dark_energy);
+        assert!(
+            bright_energy > dark_energy,
+            "Bright ({}) should exceed dark ({})",
+            bright_energy,
+            dark_energy
+        );
     }
 }

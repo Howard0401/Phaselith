@@ -1,11 +1,7 @@
 /// Analyze spatial field: mid/side consistency score Q_spatial.
 ///
 /// Computes per-bin spatial consistency from interleaved stereo samples.
-pub fn analyze_spatial(
-    samples: &[f32],
-    core_magnitude: &[f32],
-    spatial_field: &mut [f32],
-) {
+pub fn analyze_spatial(samples: &[f32], core_magnitude: &[f32], spatial_field: &mut [f32]) {
     spatial_field.fill(0.0);
 
     if samples.len() < 2 || core_magnitude.is_empty() {

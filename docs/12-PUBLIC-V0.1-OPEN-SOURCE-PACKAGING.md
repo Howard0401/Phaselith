@@ -71,6 +71,9 @@ As of the current repo state, the following items should stay out of the first p
 4. `CIRRUS_Safe_Replan.md`
 5. `.claude/`
 
+For local distribution packaging, extension store copy such as `chrome-ext/STORE-LISTING.md`
+should also stay out of the shipped zip artifact.
+
 ## Required Pre-Public Checks
 
 Before making the repository public:

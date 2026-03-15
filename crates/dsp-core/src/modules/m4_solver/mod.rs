@@ -1,6 +1,6 @@
+pub mod air_cont;
 pub mod declip;
 pub mod harmonic_ext;
-pub mod air_cont;
 pub mod phase_relax;
 pub mod side_recovery;
 
@@ -74,7 +74,7 @@ impl CirrusModule for InverseResidualSolver {
                 samples,
                 ctx.damage.clipping.mean,
                 ctx.config.dynamics,
-                ctx.config.transient,
+                (ctx.config.transient * ctx.config.declip_transient_scaling).clamp(0.0, 1.0),
                 &mut ctx.time_candidate,
             );
         }

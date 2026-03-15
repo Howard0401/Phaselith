@@ -1,12 +1,10 @@
+const PRE_ECHO_TRANSIENT_THRESHOLD: f32 = 0.15;
+
 /// Detect transients by comparing micro and core lattice energy.
 ///
 /// Transients appear as energy bursts in the micro lattice (short window)
 /// that are smoothed out in the core lattice (longer window).
-pub fn detect_transients(
-    micro_energy: &[f32],
-    core_energy: &[f32],
-    transient_field: &mut [f32],
-) {
+pub fn detect_transients(micro_energy: &[f32], core_energy: &[f32], transient_field: &mut [f32]) {
     let len = transient_field.len();
     transient_field.fill(0.0);
 
@@ -36,6 +34,45 @@ pub fn detect_transients(
         } else if micro_e > 1e-10 {
             transient_field[k] = 1.0;
         }
+    }
+}
+
+/// Peak transient activity in the current transient field.
+///
+/// Used as a lightweight gate for time-domain pre-echo suppression so we only
+/// touch the waveform when the short-window analysis actually sees attack energy.
+pub fn peak_activity(transient_field: &[f32]) -> f32 {
+    transient_field
+        .iter()
+        .copied()
+        .fold(0.0f32, f32::max)
+        .clamp(0.0, 1.0)
+}
+
+/// Compute the effective pre-echo suppression strength for the current block.
+///
+/// Returns `Some(strength)` only when the current callback contains a hop-aligned
+/// transient event and the resulting strength is non-trivial.
+pub fn pre_echo_strength(
+    transient_amount: f32,
+    hops_this_block: usize,
+    is_transient: bool,
+    spectral_flux: f32,
+    transient_field: &[f32],
+) -> Option<f32> {
+    let transient_activity = peak_activity(transient_field)
+        .max(spectral_flux)
+        .clamp(0.0, 1.0);
+    let effective_strength = (transient_amount * transient_activity).clamp(0.0, 1.0);
+
+    if transient_amount > 0.01
+        && hops_this_block > 0
+        && (is_transient || transient_activity >= PRE_ECHO_TRANSIENT_THRESHOLD)
+        && effective_strength > 0.01
+    {
+        Some(effective_strength)
+    } else {
+        None
     }
 }
 
@@ -93,5 +130,32 @@ mod tests {
         assert!(block[0] < 0.2, "First sample should be suppressed");
         // Last samples should be preserved
         assert!(block[63] > 0.9, "Last sample should be preserved");
+    }
+
+    #[test]
+    fn peak_activity_reports_max_value() {
+        let transient_field = vec![0.0, 0.2, 0.8, 0.4];
+        assert!((peak_activity(&transient_field) - 0.8).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn pre_echo_strength_requires_hop_boundary() {
+        let transient_field = vec![0.7, 0.2];
+        let strength = pre_echo_strength(1.0, 0, true, 0.8, &transient_field);
+        assert!(strength.is_none());
+    }
+
+    #[test]
+    fn pre_echo_strength_uses_transient_activity() {
+        let transient_field = vec![0.0, 0.4, 0.2];
+        let strength = pre_echo_strength(0.5, 1, false, 0.1, &transient_field);
+        assert_eq!(strength, Some(0.2));
+    }
+
+    #[test]
+    fn pre_echo_strength_uses_spectral_flux_when_flagged() {
+        let transient_field = vec![0.0; 4];
+        let strength = pre_echo_strength(0.8, 1, true, 0.3, &transient_field);
+        assert!(matches!(strength, Some(v) if (v - 0.24).abs() < 1e-6));
     }
 }

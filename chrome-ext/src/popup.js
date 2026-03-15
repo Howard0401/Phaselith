@@ -17,7 +17,7 @@ const I18N = {
     strengthLabel: 'Strength',
     hfLabel: 'HF Reconstruction',
     dynamicsLabel: 'Dynamics',
-    footerVersion: 'v0.1.0',
+    footerVersion: 'v0.1.18',
   },
   'zh-TW': {
     statusActive: '\u5df2\u555f\u7528',
@@ -34,7 +34,7 @@ const I18N = {
     strengthLabel: '\u5f37\u5ea6',
     hfLabel: '\u9ad8\u983b\u91cd\u5efa',
     dynamicsLabel: '\u52d5\u614b',
-    footerVersion: 'v0.1.0',
+    footerVersion: 'v0.1.18',
   },
   'zh-CN': {
     statusActive: '\u5df2\u542f\u7528',
@@ -51,7 +51,7 @@ const I18N = {
     strengthLabel: '\u5f3a\u5ea6',
     hfLabel: '\u9ad8\u9891\u91cd\u5efa',
     dynamicsLabel: '\u52a8\u6001',
-    footerVersion: 'v0.1.0',
+    footerVersion: 'v0.1.18',
   },
 };
 
@@ -94,9 +94,19 @@ const styleGrid = document.getElementById('styleGrid');
 const styleBtns = styleGrid.querySelectorAll('.style-btn');
 
 let currentStylePreset = 0;
+let currentPlatformOs = 'unknown';
 
-// FFT Pilot Mode is always on — no UI toggle needed
-const SYNTHESIS_MODE = 1; // FftOlaPilot
+chrome.runtime.getPlatformInfo((info) => {
+  if (!chrome.runtime.lastError && info?.os) {
+    currentPlatformOs = info.os;
+  }
+});
+
+function getSynthesisMode() {
+  // Keep the original pilot path on Windows; use the safer legacy path on macOS
+  // while we investigate the browser-runtime artifact there.
+  return currentPlatformOs === 'mac' ? 0 : 1;
+}
 
 // ── Load saved state ──
 chrome.storage.local.get(['enabled', 'strength', 'hfReconstruction', 'dynamics', 'stylePreset', 'lang'], (data) => {
@@ -138,7 +148,7 @@ function buildState() {
     hfReconstruction: parseInt(hfSlider.value),
     dynamics: parseInt(dynSlider.value),
     stylePreset: currentStylePreset,
-    synthesisMode: SYNTHESIS_MODE,
+    synthesisMode: getSynthesisMode(),
   };
 }
 

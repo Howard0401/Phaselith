@@ -58,6 +58,16 @@ That can sound like the source "locks" in front of the listener even though the 
 2. strongest current stereo listening reference
 3. easiest place to validate tab playback behavior
 
+## Transient Repair Note
+
+Browser transient repair must follow analysis hop timing, not raw host callback timing.
+
+The browser runtime can run very small callback quanta, so any time-domain shaping that is stamped onto every callback block can become audible as runtime artifact instead of useful repair.
+
+The current browser path therefore relies on hop-aware transient gating in the core engine rather than per-callback pre-echo shaping.
+
+macOS Chrome now defaults to a browser-safe transient mode that applies delayed pre-echo shaping only to the enhancement delta, not the dry waveform. Conservative rollback modes still exist in the extension if live listening ever exposes new artifacts.
+
 ## Current Limitations
 
 1. not yet true stereo-native reconstruction
