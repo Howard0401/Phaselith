@@ -1,5 +1,5 @@
 {
-  "appName": { "message": "CIRRUS" },
+  "appName": { "message": "Phaselith" },
   "appDesc": { "message": "\u5373\u6642\u97f3\u8a0a\u4fee\u5fa9\u5f15\u64ce \u2014 \u9084\u539f\u58d3\u7e2e\u97f3\u8a0a\u4e2d\u907a\u5931\u7684\u8ae7\u6ce2\u3001\u7a7a\u6c23\u611f\u8207\u7d30\u7bc0\u3002" },
   "statusActive": { "message": "\u5df2\u555f\u7528" },
   "statusInactive": { "message": "\u672a\u555f\u7528" },

@@ -19,62 +19,70 @@ fn guid_to_string(guid: &GUID) -> String {
     )
 }
 
-/// Get the full path of this DLL module
+/// Get the full path of this DLL module.
+/// Uses the HMODULE captured in DllMain (not None, which would return the EXE path).
 fn get_module_path() -> Result<String, HRESULT> {
     unsafe {
+        let hmodule = crate::dll_hmodule();
         let mut buf = [0u16; 260];
         let len = windows::Win32::System::LibraryLoader::GetModuleFileNameW(
-            None,
+            hmodule,
             &mut buf,
         );
         if len == 0 {
             return Err(E_FAIL);
         }
-        Ok(String::from_utf16_lossy(&buf[..len as usize]))
+        let path = String::from_utf16_lossy(&buf[..len as usize]);
+        apo_log!("get_module_path: {}", path);
+        Ok(path)
     }
 }
 
 /// Register COM class + APO in registry
 pub fn register_server() -> HRESULT {
+    apo_log!("register_server: START");
+
     let dll_path = match get_module_path() {
         Ok(p) => p,
-        Err(hr) => return hr,
+        Err(hr) => {
+            apo_log!("register_server: get_module_path FAILED {:?}", hr);
+            return hr;
+        }
     };
 
-    let guid_str = guid_to_string(&CLSID_ASCE_APO);
+    let guid_str = guid_to_string(&CLSID_PHASELITH_APO);
+    apo_log!("register_server: CLSID={}, dll={}", guid_str, dll_path);
 
     // 1. Register COM InprocServer32
-    let com_key_path = format!("CLSID\\{guid_str}\\InprocServer32");
-    if let Err(_) = set_registry_value(
-        HKEY_CLASSES_ROOT,
-        &com_key_path,
-        "",
-        &dll_path,
-    ) {
-        return E_FAIL;
+    // IMPORTANT: Write to HKLM\SOFTWARE\Classes directly instead of HKEY_CLASSES_ROOT.
+    // HKCR writes can be silently virtualized (UAC/sandbox) and not persist.
+    let com_key_path = format!("SOFTWARE\\Classes\\CLSID\\{guid_str}\\InprocServer32");
+    match set_registry_value(HKEY_LOCAL_MACHINE, &com_key_path, "", &dll_path) {
+        Ok(()) => apo_log!("register_server: InprocServer32 OK (HKLM)"),
+        Err(()) => {
+            apo_log!("register_server: InprocServer32 FAILED (HKLM)");
+            return E_FAIL;
+        }
     }
-    let _ = set_registry_value(
-        HKEY_CLASSES_ROOT,
-        &com_key_path,
-        "ThreadingModel",
-        "Both",
-    );
+    match set_registry_value(HKEY_LOCAL_MACHINE, &com_key_path, "ThreadingModel", "Both") {
+        Ok(()) => apo_log!("register_server: ThreadingModel OK"),
+        Err(()) => apo_log!("register_server: ThreadingModel FAILED"),
+    }
 
     // Set friendly name on CLSID key
-    let clsid_path = format!("CLSID\\{guid_str}");
-    let _ = set_registry_value(
-        HKEY_CLASSES_ROOT,
-        &clsid_path,
-        "",
-        APO_FRIENDLY_NAME,
-    );
+    let clsid_path = format!("SOFTWARE\\Classes\\CLSID\\{guid_str}");
+    let _ = set_registry_value(HKEY_LOCAL_MACHINE, &clsid_path, "", APO_FRIENDLY_NAME);
 
     // 2. Register as Audio Processing Object
     let apo_key_path = format!(
         "SOFTWARE\\Classes\\AudioEngine\\AudioProcessingObjects\\{guid_str}"
     );
-    let _ = set_registry_value(HKEY_LOCAL_MACHINE, &apo_key_path, "FriendlyName", APO_FRIENDLY_NAME);
-    let _ = set_registry_value(HKEY_LOCAL_MACHINE, &apo_key_path, "Copyright", "ASCE Project");
+    apo_log!("register_server: writing APO key: {}", apo_key_path);
+    match set_registry_value(HKEY_LOCAL_MACHINE, &apo_key_path, "FriendlyName", APO_FRIENDLY_NAME) {
+        Ok(()) => apo_log!("register_server: APO FriendlyName OK"),
+        Err(()) => apo_log!("register_server: APO FriendlyName FAILED"),
+    }
+    let _ = set_registry_value(HKEY_LOCAL_MACHINE, &apo_key_path, "Copyright", "Phaselith Project");
     let _ = set_registry_dword(HKEY_LOCAL_MACHINE, &apo_key_path, "MajorVersion", 1);
     let _ = set_registry_dword(HKEY_LOCAL_MACHINE, &apo_key_path, "MinorVersion", 0);
     // APO_FLAG_DEFAULT (0x0E) = SFX + MFX
@@ -84,17 +92,29 @@ pub fn register_server() -> HRESULT {
     let _ = set_registry_dword(HKEY_LOCAL_MACHINE, &apo_key_path, "MinOutputConnections", 1);
     let _ = set_registry_dword(HKEY_LOCAL_MACHINE, &apo_key_path, "MaxOutputConnections", 1);
     let _ = set_registry_dword(HKEY_LOCAL_MACHINE, &apo_key_path, "MaxInstances", 0xFFFFFFFF);
+    let _ = set_registry_dword(HKEY_LOCAL_MACHINE, &apo_key_path, "NumAPOInterfaces", 1);
+    // IAudioProcessingObject IID
+    let _ = set_registry_value(
+        HKEY_LOCAL_MACHINE,
+        &apo_key_path,
+        "APOInterface0",
+        "{FD7F2B29-24D0-4B5C-B177-592C39F9CA10}",
+    );
 
+    apo_log!("register_server: DONE");
     S_OK
 }
 
 /// Unregister COM class + APO from registry
 pub fn unregister_server() -> HRESULT {
-    let guid_str = guid_to_string(&CLSID_ASCE_APO);
+    let guid_str = guid_to_string(&CLSID_PHASELITH_APO);
 
-    // Remove COM registration
-    let com_key_path = format!("CLSID\\{guid_str}");
-    let _ = delete_registry_tree(HKEY_CLASSES_ROOT, &com_key_path);
+    // Remove COM registration (HKLM path, matching register_server)
+    let com_key_path = format!("SOFTWARE\\Classes\\CLSID\\{guid_str}");
+    let _ = delete_registry_tree(HKEY_LOCAL_MACHINE, &com_key_path);
+    // Also try HKCR in case old registration exists there
+    let hkcr_path = format!("CLSID\\{guid_str}");
+    let _ = delete_registry_tree(HKEY_CLASSES_ROOT, &hkcr_path);
 
     // Remove APO registration
     let apo_key_path = format!(
@@ -126,6 +146,7 @@ fn set_registry_value(
             None,
         );
         if result != ERROR_SUCCESS {
+            apo_log!("RegCreateKeyExW FAILED: subkey={}, err={:?}", subkey, result);
             return Err(());
         }
 
@@ -135,13 +156,16 @@ fn set_registry_value(
             value_wide.as_ptr() as *const u8,
             value_wide.len() * 2,
         );
-        let _ = RegSetValueExW(
+        let set_result = RegSetValueExW(
             hkey,
             &name_h,
             0,
             REG_SZ,
             Some(value_bytes),
         );
+        if set_result != ERROR_SUCCESS {
+            apo_log!("RegSetValueExW FAILED: subkey={} name={} err={:?}", subkey, name, set_result);
+        }
         let _ = RegCloseKey(hkey);
         Ok(())
     }
@@ -197,10 +221,10 @@ fn delete_registry_tree(root: HKEY, subkey: &str) -> Result<(), ()> {
 // Endpoint binding: write APO CLSID to audio device FxProperties
 // ---------------------------------------------------------------------------
 
-/// PKEY_FX_StreamEffectClsid = {d04e05a6-594b-4fb6-a80d-01af5eed7d1d},5
-/// This tells the audio engine to load our APO as a stream-level effect (SFX).
+/// PKEY_FX_StreamEffectClsid (V2) = {d3993a3f-99c2-4402-b5ec-a92a0367664b},5
+/// Windows 10+ uses V2 keys; legacy {d04e05a6...},5 is ignored.
 const PKEY_FX_STREAM_EFFECT_CLSID_NAME: &str =
-    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},5";
+    "{d3993a3f-99c2-4402-b5ec-a92a0367664b},5";
 
 /// Base registry path for audio render endpoints
 const MMDEVICES_RENDER_PATH: &str =
@@ -210,7 +234,7 @@ const MMDEVICES_RENDER_PATH: &str =
 /// Called from Tauri app after DllRegisterServer succeeds.
 /// Writes PKEY_FX_StreamEffectClsid to each endpoint's FxProperties.
 pub fn bind_to_all_render_endpoints() -> std::result::Result<u32, String> {
-    let guid_str = guid_to_string(&CLSID_ASCE_APO);
+    let guid_str = guid_to_string(&CLSID_PHASELITH_APO);
     let mut bound_count = 0u32;
 
     unsafe {

@@ -1,5 +1,5 @@
 [package]
-name = "asce-apo"
+name = "phaselith-apo"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,7 +8,7 @@ license.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
-asce-dsp-core = { path = "../dsp-core" }
+phaselith-dsp-core = { path = "../dsp-core" }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
@@ -20,6 +20,7 @@ windows = { version = "0.58", features = [
     "Win32_System_Memory",
     "Win32_Security",
     "Win32_System_LibraryLoader",
+    "Win32_Storage_FileSystem",
     "implement",
 ] }
 windows-core = "0.58"

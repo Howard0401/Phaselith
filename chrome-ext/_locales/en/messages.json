@@ -1,5 +1,5 @@
 {
-  "appName": { "message": "CIRRUS" },
+  "appName": { "message": "Phaselith" },
   "appDesc": { "message": "Real-time audio restoration engine \u2014 recovers lost harmonics, air, and detail from compressed browser audio." },
   "statusActive": { "message": "Active" },
   "statusInactive": { "message": "Inactive" },

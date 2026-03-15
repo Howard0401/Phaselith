@@ -1,4 +1,4 @@
-// ASCE Tauri Control Panel
+// Phaselith Tauri Control Panel
 //
 // Provides system tray + GUI for controlling the APO DLL.
 // Communicates with APO via memory-mapped file IPC.
@@ -8,12 +8,14 @@
 mod ipc_bridge;
 mod commands;
 mod endpoint_bind;
+mod com_bind;
 
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             commands::get_status,
+            commands::get_ipc_state,
             commands::set_config,
             commands::install_apo,
             commands::uninstall_apo,

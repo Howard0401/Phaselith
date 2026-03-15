@@ -50,7 +50,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 async function loadWasmBinary() {
   if (wasmBinary) return wasmBinary;
-  const url = chrome.runtime.getURL('asce_wasm_bridge.wasm');
+  const url = chrome.runtime.getURL('phaselith_wasm_bridge.wasm');
   const response = await fetch(url);
   wasmBinary = await response.arrayBuffer();
   return wasmBinary;
@@ -83,7 +83,7 @@ async function startProcessing(streamId, config) {
     await audioCtx.audioWorklet.addModule(workletUrl);
 
     sourceNode = audioCtx.createMediaStreamSource(mediaStream);
-    workletNode = new AudioWorkletNode(audioCtx, 'asce-processor', {
+    workletNode = new AudioWorkletNode(audioCtx, 'phaselith-processor', {
       numberOfInputs: 1,
       numberOfOutputs: 1,
       outputChannelCount: [2],
@@ -93,19 +93,19 @@ async function startProcessing(streamId, config) {
     workletNode.port.onmessage = (e) => {
       const d = e.data;
       if (d.type === 'WASM_READY') {
-        console.log('CIRRUS: WASM engine ready');
+        console.log('Phaselith: WASM engine ready');
         relayDebugEvent({ type: d.type, debugVersion: currentDebugVersion, platformOs: currentPlatformOs });
         // Worklet caches and replays config on init — no need to resend here.
         // Sending startup config would overwrite newer CONFIG_UPDATE values
         // that arrived while WASM was loading.
       } else if (d.type === 'WORKLET_STATS') {
-        console.log('CIRRUS: WORKLET_STATS', d);
+        console.log('Phaselith: WORKLET_STATS', d);
         relayDebugEvent(d);
       } else if (d.type === 'WASM_ERROR') {
-        console.error('CIRRUS: WASM init error:', d.error);
+        console.error('Phaselith: WASM init error:', d.error);
         relayDebugEvent(d);
       } else if (d.type === 'RUNTIME_ERROR') {
-        console.error('CIRRUS: worklet runtime error:', d.error);
+        console.error('Phaselith: worklet runtime error:', d.error);
         relayDebugEvent(d);
       }
     };
@@ -135,7 +135,7 @@ async function startProcessing(streamId, config) {
     workletNode.port.postMessage({ type: 'WASM_BINARY', bytes: wasmBytes });
 
     console.log(
-      `CIRRUS: Audio processing started (tab ${capturedTabId}, sr=${audioCtx.sampleRate}, starts=${processingStarts}, sourceCh=${sourceNode.channelCount}, outCh=2)`
+      `Phaselith: Audio processing started (tab ${capturedTabId}, sr=${audioCtx.sampleRate}, starts=${processingStarts}, sourceCh=${sourceNode.channelCount}, outCh=2)`
     );
     relayDebugEvent({
       type: 'OFFSCREEN_START',
@@ -148,8 +148,8 @@ async function startProcessing(streamId, config) {
       outputChannelCount: 2,
     });
   } catch (err) {
-    console.error('CIRRUS: Failed to start processing:', err);
-    relayDebugEvent({ type: 'OFFSCREEN_ERROR', error: err?.message || String(err) });
+    console.error('Phaselith: Failed to start processing:', err?.name, err?.message, err);
+    relayDebugEvent({ type: 'OFFSCREEN_ERROR', error: `${err?.name}: ${err?.message}` || String(err) });
   }
 }
 

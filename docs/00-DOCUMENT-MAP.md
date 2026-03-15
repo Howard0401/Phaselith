@@ -30,3 +30,5 @@ This directory is organized by function and reading order.
    Public-release checklist, packaging rules, and what should or should not be included in the first open-source launch.
 13. [13-BROWSER-TRANSIENT-REPAIR-AND-MACOS-FIX.md](13-BROWSER-TRANSIENT-REPAIR-AND-MACOS-FIX.md)
    Root cause, delayed-transient repair design, split transient probes, and platform explanation for the browser transient artifact that was most audible on macOS Chrome.
+14. [14-M2-STFT-ENGINE-CRACKLING.md](14-M2-STFT-ENGINE-CRACKLING.md)
+   Root cause analysis of the M2 StftEngine crackling in Chrome AudioWorklet, workaround, and rules for future FFT path changes.

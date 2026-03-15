@@ -28,11 +28,11 @@ function normalizeMacTransientMode(mode) {
 
 chrome.runtime.getPlatformInfo((info) => {
   if (chrome.runtime.lastError) {
-    console.warn('CIRRUS: Failed to get platform info:', chrome.runtime.lastError.message);
+    console.warn('Phaselith: Failed to get platform info:', chrome.runtime.lastError.message);
     return;
   }
   platformOs = info?.os || 'unknown';
-  console.log(`CIRRUS: Platform detected (${platformOs}) [${DEBUG_VERSION}]`);
+  console.log(`Phaselith: Platform detected (${platformOs}) [${DEBUG_VERSION}]`);
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -47,7 +47,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // Forward config to offscreen
     chrome.runtime.sendMessage({ ...msg, platformOs }).catch(() => {});
   } else if (msg.type === 'DEBUG_EVENT') {
-    console.log('CIRRUS DEBUG:', JSON.stringify(msg.payload));
+    console.log('Phaselith DEBUG:', JSON.stringify(msg.payload));
   }
   // Never return true — avoids "message channel closed" errors
 });
@@ -66,7 +66,7 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
   lastGestureNoticeTabId = activeInfo.tabId;
 
   console.log(
-    `CIRRUS: Tab switched ${capturedTabId} → ${activeInfo.tabId}. ` +
+    `Phaselith: Tab switched ${capturedTabId} → ${activeInfo.tabId}. ` +
     'Chrome requires a fresh extension click to capture the new tab, so auto-follow is skipped.'
   );
 });
@@ -74,7 +74,7 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
 // Handle captured tab being closed
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (tabId === capturedTabId) {
-    console.log('CIRRUS: Captured tab closed, stopping');
+    console.log('Phaselith: Captured tab closed, stopping');
     capturedTabId = null;
     chrome.runtime.sendMessage({ type: 'OFFSCREEN_STOP' }).catch(() => {});
     // Don't set isEnabled=false — user can re-arm capture on another tab
@@ -122,7 +122,7 @@ async function startCapture() {
     if (!tab?.id) return;
 
     if (!await isCapturableTab(tab.id)) {
-      console.log('CIRRUS: Skipping uncapturable tab:', tab.url || '(no url)');
+      console.log('Phaselith: Skipping uncapturable tab:', tab.url || '(no url)');
       return;
     }
 
@@ -136,7 +136,7 @@ async function startCapture() {
       // If the user switched tabs after enabling the extension, Chrome will
       // reject a new capture until they click the extension again on that tab.
       console.log(
-        'CIRRUS: Cannot capture tab without a fresh user gesture. ' +
+        'Phaselith: Cannot capture tab without a fresh user gesture. ' +
         'Click the extension while focused on the target tab.',
         tab.id,
         captureErr?.message || captureErr
@@ -147,7 +147,7 @@ async function startCapture() {
     // Race guard: if another startCapture() was called while we awaited,
     // this capture is stale — discard it.
     if (thisGeneration !== captureGeneration) {
-      console.log(`CIRRUS: Discarding stale capture (gen ${thisGeneration}, current ${captureGeneration})`);
+      console.log(`Phaselith: Discarding stale capture (gen ${thisGeneration}, current ${captureGeneration})`);
       return;
     }
 
@@ -157,7 +157,7 @@ async function startCapture() {
 
     // Second race check after ensureOffscreen (also async)
     if (thisGeneration !== captureGeneration) {
-      console.log(`CIRRUS: Discarding stale capture after offscreen (gen ${thisGeneration})`);
+      console.log(`Phaselith: Discarding stale capture after offscreen (gen ${thisGeneration})`);
       return;
     }
 
@@ -182,7 +182,7 @@ async function startCapture() {
       debugVersion: DEBUG_VERSION,
     }).catch(() => {});
   } catch (err) {
-    console.error('CIRRUS: Failed to start capture:', err);
+    console.error('Phaselith: Failed to start capture:', err);
   }
 }
 
@@ -209,7 +209,7 @@ async function ensureOffscreen(forceRecreate = false) {
   await chrome.offscreen.createDocument({
     url: 'offscreen.html',
     reasons: ['USER_MEDIA'],
-    justification: 'CIRRUS audio processing requires AudioContext with WASM AudioWorklet',
+    justification: 'Phaselith audio processing requires AudioContext with WASM AudioWorklet',
   });
   offscreenCreated = true;
 }

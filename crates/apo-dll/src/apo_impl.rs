@@ -1,4 +1,4 @@
-// ASCE Audio Processing Object implementation.
+// Phaselith Audio Processing Object implementation.
 //
 // Implements the COM interfaces required by Windows Audio Engine:
 // - IAudioProcessingObject: initialization, format negotiation
@@ -10,20 +10,20 @@
 
 use crate::format_negotiate;
 use crate::mmap_ipc::MmapIpc;
-use asce_dsp_core::config::{EngineConfig, PhaseMode, QualityMode, StyleConfig, SynthesisMode};
-use asce_dsp_core::engine::{CirrusEngine, CirrusEngineBuilder};
-use asce_dsp_core::types::CrossChannelContext;
+use phaselith_dsp_core::config::{EngineConfig, PhaseMode, QualityMode, StyleConfig, SynthesisMode};
+use phaselith_dsp_core::engine::{PhaselithEngine, PhaselithEngineBuilder};
+use phaselith_dsp_core::types::CrossChannelContext;
 
-/// The ASCE APO instance.
+/// The Phaselith APO instance.
 /// Created by ClassFactory, one per audio stream.
 ///
 /// Dual-engine architecture (aligned with browser WASM bridge):
 /// - Two independent mono engines (L/R) with no state contamination
 /// - Symmetric one-frame-delayed cross-channel context
 /// - Each engine sees the same CrossChannelContext from the previous frame
-pub struct AsceApo {
-    engine_l: Option<CirrusEngine>,
-    engine_r: Option<CirrusEngine>,
+pub struct PhaselithApo {
+    engine_l: Option<PhaselithEngine>,
+    engine_r: Option<PhaselithEngine>,
     mmap: Option<MmapIpc>,
     sample_rate: u32,
     channels: u16,
@@ -44,7 +44,7 @@ pub struct AsceApo {
     last_config_version: u32,
 }
 
-impl AsceApo {
+impl PhaselithApo {
     pub fn new() -> Self {
         Self {
             engine_l: None,
@@ -77,8 +77,15 @@ impl AsceApo {
         self.sample_rate = sample_rate;
         self.channels = channels;
 
-        // Try to open mmap IPC (non-fatal if Tauri app isn't running yet)
-        self.mmap = MmapIpc::open_or_create().ok();
+        // Try to open mmap IPC (non-fatal — logs error but continues in bypass)
+        match MmapIpc::open_or_create() {
+            Ok(ipc) => self.mmap = Some(ipc),
+            Err(e) => {
+                // Log structured error but don't crash — APO continues without IPC
+                eprintln!("Phaselith APO: mmap IPC init failed: {e}");
+                self.mmap = None;
+            }
+        }
     }
 
     /// Check if format is supported
@@ -102,8 +109,9 @@ impl AsceApo {
 
         // Dual-engine: each engine processes one mono channel independently.
         // Aligned with browser WASM bridge architecture (with_channels(1)).
+        // Use fft_size (1024) as max_frame_size — same as Chrome WASM bridge.
         self.engine_l = Some(
-            CirrusEngineBuilder::new(self.sample_rate, fft_size)
+            PhaselithEngineBuilder::new(self.sample_rate, fft_size)
                 .with_config(config)
                 .with_channels(1)
                 .build_default(),
@@ -111,7 +119,7 @@ impl AsceApo {
 
         if self.channels >= 2 {
             self.engine_r = Some(
-                CirrusEngineBuilder::new(self.sample_rate, fft_size)
+                PhaselithEngineBuilder::new(self.sample_rate, fft_size)
                     .with_config(config)
                     .with_channels(1)
                     .build_default(),
@@ -150,20 +158,17 @@ impl AsceApo {
             return;
         }
 
-        // Check bypass via mmap
-        if let Some(ref mmap) = self.mmap {
-            if !mmap.config().is_enabled() {
-                output[..copy_len].copy_from_slice(&input[..copy_len]);
-                return;
-            }
-
-            // Hot-reload config changes (atomic read, no lock)
-            self.maybe_update_config(
-                mmap.config()
-                    .version
-                    .load(std::sync::atomic::Ordering::Relaxed),
-            );
-        }
+        // Read enabled state and version from mmap first (immutable borrow),
+        // then update config (mutable borrow). ALWAYS process through engines
+        // to keep internal state — OLA buffer, frame clock — in sync.
+        let (enabled, mmap_version) = if let Some(ref mmap) = self.mmap {
+            let ver = mmap.config().version.load(std::sync::atomic::Ordering::Relaxed);
+            let en = mmap.config().is_enabled();
+            (en, ver)
+        } else {
+            (false, 0)
+        };
+        self.maybe_update_config(mmap_version);
 
         let ch = self.channels as usize;
         if ch == 0 {
@@ -182,16 +187,22 @@ impl AsceApo {
         }
 
         if ch == 1 {
-            // Mono: use L engine only
+            // Mono: use L engine only — always process to keep state in sync
             if let Some(ref mut engine) = self.engine_l {
-                output[..frames].copy_from_slice(&input[..frames]);
-                engine.process(&mut output[..frames]);
+                self.channel_buf_l[..frames].copy_from_slice(&input[..frames]);
+                engine.process(&mut self.channel_buf_l[..frames]);
+                if enabled {
+                    output[..frames].copy_from_slice(&self.channel_buf_l[..frames]);
+                } else {
+                    output[..frames].copy_from_slice(&input[..frames]);
+                }
             } else {
                 output[..frames].copy_from_slice(&input[..frames]);
             }
         } else if ch >= 2 {
             // Stereo: dual-engine with symmetric cross-channel context.
-            // Aligned with WASM bridge process_block_ch() pattern.
+            // ALWAYS process through engines to keep OLA/frame clock in sync.
+            // Output dry signal when disabled.
 
             // Validate we have enough samples for stereo de-interleave
             if input.len() < frames * 2 || output.len() < frames * 2 {
@@ -229,10 +240,14 @@ impl AsceApo {
             );
             self.cross_channel_prev = Some(cc);
 
-            // Re-interleave output
-            for f in 0..frames {
-                output[f * 2] = self.channel_buf_l[f];
-                output[f * 2 + 1] = self.channel_buf_r[f];
+            // Re-interleave output: use wet (processed) when enabled, dry when disabled
+            if enabled {
+                for f in 0..frames {
+                    output[f * 2] = self.channel_buf_l[f];
+                    output[f * 2 + 1] = self.channel_buf_r[f];
+                }
+            } else {
+                output[..copy_len].copy_from_slice(&input[..copy_len]);
             }
         }
 
@@ -256,11 +271,30 @@ impl AsceApo {
         }
     }
 
+    /// Hot-reload config when mmap version changes (called from RT thread).
+    /// Only reads atomics — no alloc, no lock, no I/O.
+    fn maybe_update_config(&mut self, current_version: u32) {
+        if current_version == self.last_config_version {
+            return;
+        }
+        self.last_config_version = current_version;
+
+        let config = self.load_config();
+        if let Some(ref mut engine) = self.engine_l {
+            engine.update_config(config);
+        }
+        if let Some(ref mut engine) = self.engine_r {
+            engine.update_config(config);
+        }
+    }
+
     fn load_config(&self) -> EngineConfig {
         if let Some(ref mmap) = self.mmap {
             let sc = mmap.config();
             EngineConfig {
-                enabled: sc.is_enabled(),
+                // Always tell engine it's enabled — APO handles wet/dry switching
+                // externally. Engine must always process to keep OLA/frame clock in sync.
+                enabled: true,
                 strength: sc.compensation_strength(),
                 hf_reconstruction: sc.hf_reconstruction(),
                 dynamics: sc.dynamics_restoration(),

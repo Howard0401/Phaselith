@@ -2,16 +2,23 @@
 //
 // Tauri writes SharedConfig, reads SharedStatus.
 // Mirror of the APO DLL's mmap_ipc.rs structures.
+//
+// Uses FILE-BACKED mmap at C:\ProgramData\Phaselith\{shared_config,shared_status}.bin.
+// Both sides independently CreateFileW + CreateFileMappingW on the same file.
+// No Global\ namespace needed → works without SeCreateGlobalPrivilege.
+// No chicken-and-egg: either side can create the file first.
 
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
-use std::sync::OnceLock;
+use std::sync::Mutex;
 
 #[cfg(windows)]
-use windows::Win32::Foundation::{HANDLE, CloseHandle, INVALID_HANDLE_VALUE};
+use windows::Win32::Foundation::{HANDLE, CloseHandle, GENERIC_READ, GENERIC_WRITE};
+#[cfg(windows)]
+use windows::Win32::Storage::FileSystem::*;
 #[cfg(windows)]
 use windows::Win32::System::Memory::*;
 #[cfg(windows)]
-use windows::core::PCWSTR;
+use windows::core::HSTRING;
 
 #[repr(C)]
 pub struct SharedConfig {
@@ -35,11 +42,28 @@ pub struct SharedStatus {
     pub processing_load_u32: AtomicU32,
 }
 
+const SHARED_DIR: &str = r"C:\ProgramData\Phaselith";
+const CONFIG_FILE: &str = r"C:\ProgramData\Phaselith\shared_config.bin";
+const STATUS_FILE: &str = r"C:\ProgramData\Phaselith\shared_status.bin";
+
+// Error codes (Tauri side, T prefix):
+// IPC-T001: Failed to create shared directory
+// IPC-T002: Failed to CreateFileW (config)
+// IPC-T003: Failed to CreateFileMappingW (config)
+// IPC-T004: Failed to MapViewOfFile (config)
+// IPC-T005: Failed to CreateFileW (status)
+// IPC-T006: Failed to CreateFileMappingW (status)
+// IPC-T007: Failed to MapViewOfFile (status)
+
 struct Bridge {
     #[cfg(windows)]
-    _config_handle: HANDLE,
+    config_file_handle: HANDLE,
     #[cfg(windows)]
-    _status_handle: HANDLE,
+    config_mapping_handle: HANDLE,
+    #[cfg(windows)]
+    status_file_handle: HANDLE,
+    #[cfg(windows)]
+    status_mapping_handle: HANDLE,
     config_ptr: *mut SharedConfig,
     status_ptr: *mut SharedStatus,
 }
@@ -47,30 +71,77 @@ struct Bridge {
 unsafe impl Send for Bridge {}
 unsafe impl Sync for Bridge {}
 
-static BRIDGE: OnceLock<Bridge> = OnceLock::new();
+#[cfg(windows)]
+impl Drop for Bridge {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.config_ptr.is_null() {
+                let _ = UnmapViewOfFile(MEMORY_MAPPED_VIEW_ADDRESS {
+                    Value: self.config_ptr as *mut _,
+                });
+            }
+            if !self.status_ptr.is_null() {
+                let _ = UnmapViewOfFile(MEMORY_MAPPED_VIEW_ADDRESS {
+                    Value: self.status_ptr as *mut _,
+                });
+            }
+            if !self.config_mapping_handle.is_invalid() {
+                let _ = CloseHandle(self.config_mapping_handle);
+            }
+            if !self.config_file_handle.is_invalid() {
+                let _ = CloseHandle(self.config_file_handle);
+            }
+            if !self.status_mapping_handle.is_invalid() {
+                let _ = CloseHandle(self.status_mapping_handle);
+            }
+            if !self.status_file_handle.is_invalid() {
+                let _ = CloseHandle(self.status_file_handle);
+            }
+        }
+    }
+}
 
-const MMAP_CONFIG_NAME: &str = "Global\\ASCE_SharedConfig_v1";
-const MMAP_STATUS_NAME: &str = "Global\\ASCE_SharedStatus_v1";
+static BRIDGE: Mutex<Option<Bridge>> = Mutex::new(None);
 
 pub fn init() {
     #[cfg(windows)]
     {
-        let _ = BRIDGE.get_or_init(|| {
+        let mut guard = BRIDGE.lock().unwrap();
+        if guard.is_none() {
             match create_bridge() {
-                Ok(b) => b,
+                Ok(b) => {
+                    eprintln!("Phaselith IPC bridge: connected (file-backed mmap)");
+                    *guard = Some(b);
+                }
                 Err(e) => {
-                    eprintln!("ASCE IPC bridge init failed: {e}");
-                    // Create a dummy bridge with null pointers
-                    Bridge {
-                        _config_handle: HANDLE::default(),
-                        _status_handle: HANDLE::default(),
-                        config_ptr: std::ptr::null_mut(),
-                        status_ptr: std::ptr::null_mut(),
-                    }
+                    eprintln!("Phaselith IPC bridge init failed: {e}");
                 }
             }
-        });
+        }
     }
+}
+
+/// Reconnect IPC bridge — call after Install.
+/// With file-backed mmap this always succeeds (both sides open same file).
+pub fn reconnect() -> bool {
+    #[cfg(windows)]
+    {
+        let mut guard = BRIDGE.lock().unwrap();
+        *guard = None;
+        match create_bridge() {
+            Ok(b) => {
+                eprintln!("Phaselith IPC bridge: reconnected (file-backed mmap)");
+                *guard = Some(b);
+                true
+            }
+            Err(e) => {
+                eprintln!("Phaselith IPC bridge reconnect failed: {e}");
+                false
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    false
 }
 
 /// Write config values to shared memory (Tauri → APO)
@@ -84,7 +155,8 @@ pub fn write_config(
     quality_preset: u8,
     synthesis_mode: u8,
 ) {
-    if let Some(bridge) = BRIDGE.get() {
+    let guard = BRIDGE.lock().unwrap();
+    if let Some(bridge) = guard.as_ref() {
         if bridge.config_ptr.is_null() { return; }
         let config = unsafe { &*bridge.config_ptr };
         config.enabled.store(enabled, Ordering::Relaxed);
@@ -101,7 +173,8 @@ pub fn write_config(
 
 /// Read status from shared memory (APO → Tauri)
 pub fn read_status() -> Option<StatusSnapshot> {
-    let bridge = BRIDGE.get()?;
+    let guard = BRIDGE.lock().unwrap();
+    let bridge = guard.as_ref()?;
     if bridge.status_ptr.is_null() { return None; }
     let status = unsafe { &*bridge.status_ptr };
     Some(StatusSnapshot {
@@ -113,6 +186,12 @@ pub fn read_status() -> Option<StatusSnapshot> {
     })
 }
 
+/// Check if connected
+pub fn is_connected() -> bool {
+    let guard = BRIDGE.lock().unwrap();
+    guard.as_ref().map_or(false, |b| !b.config_ptr.is_null())
+}
+
 #[derive(serde::Serialize, Clone)]
 pub struct StatusSnapshot {
     pub frame_count: u64,
@@ -122,59 +201,91 @@ pub struct StatusSnapshot {
     pub processing_load: f32,
 }
 
+/// Open (or create) a file and map it into memory.
+/// Error codes are passed in for precise diagnostics.
 #[cfg(windows)]
-fn create_bridge() -> Result<Bridge, String> {
-    unsafe {
-        let config_name = to_wide(MMAP_CONFIG_NAME);
-        let status_name = to_wide(MMAP_STATUS_NAME);
+unsafe fn open_file_mmap(
+    path: &str,
+    size: u32,
+    code_file: &str,
+    code_mapping: &str,
+    code_view: &str,
+) -> Result<(HANDLE, HANDLE, *mut std::ffi::c_void), String> {
+    let file_handle = CreateFileW(
+        &HSTRING::from(path),
+        (GENERIC_READ | GENERIC_WRITE).0,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        None,
+        OPEN_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL,
+        None,
+    ).map_err(|e| format!("[{code_file}] CreateFileW({path}): {e}"))?;
 
-        let config_handle = CreateFileMappingW(
-            INVALID_HANDLE_VALUE,
-            None,
-            PAGE_READWRITE,
-            0,
-            std::mem::size_of::<SharedConfig>() as u32,
-            PCWSTR(config_name.as_ptr()),
-        ).map_err(|e| format!("Config mmap: {e}"))?;
+    let mapping_handle = CreateFileMappingW(
+        file_handle,
+        None,
+        PAGE_READWRITE,
+        0,
+        size,
+        None,
+    ).map_err(|e| {
+        let _ = CloseHandle(file_handle);
+        format!("[{code_mapping}] CreateFileMappingW({path}): {e}")
+    })?;
 
-        let config_view = MapViewOfFile(
-            config_handle, FILE_MAP_ALL_ACCESS, 0, 0,
-            std::mem::size_of::<SharedConfig>(),
-        );
-        if config_view.Value.is_null() {
-            let _ = CloseHandle(config_handle);
-            return Err("Config MapViewOfFile failed".into());
-        }
-
-        let status_handle = CreateFileMappingW(
-            INVALID_HANDLE_VALUE,
-            None,
-            PAGE_READWRITE,
-            0,
-            std::mem::size_of::<SharedStatus>() as u32,
-            PCWSTR(status_name.as_ptr()),
-        ).map_err(|e| format!("Status mmap: {e}"))?;
-
-        let status_view = MapViewOfFile(
-            status_handle, FILE_MAP_ALL_ACCESS, 0, 0,
-            std::mem::size_of::<SharedStatus>(),
-        );
-        if status_view.Value.is_null() {
-            let _ = CloseHandle(config_handle);
-            let _ = CloseHandle(status_handle);
-            return Err("Status MapViewOfFile failed".into());
-        }
-
-        Ok(Bridge {
-            _config_handle: config_handle,
-            _status_handle: status_handle,
-            config_ptr: config_view.Value as *mut SharedConfig,
-            status_ptr: status_view.Value as *mut SharedStatus,
-        })
+    let view = MapViewOfFile(
+        mapping_handle,
+        FILE_MAP_ALL_ACCESS,
+        0,
+        0,
+        size as usize,
+    );
+    if view.Value.is_null() {
+        let _ = CloseHandle(mapping_handle);
+        let _ = CloseHandle(file_handle);
+        return Err(format!("[{code_view}] MapViewOfFile({path}) returned null"));
     }
+
+    Ok((file_handle, mapping_handle, view.Value))
 }
 
+/// Create file-backed mmap bridge.
 #[cfg(windows)]
-fn to_wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(std::iter::once(0)).collect()
+fn create_bridge() -> Result<Bridge, String> {
+    // Ensure directory exists
+    std::fs::create_dir_all(SHARED_DIR)
+        .map_err(|e| format!("[IPC-T001] create_dir_all({SHARED_DIR}): {e}"))?;
+
+    unsafe {
+        let (cfg_file, cfg_map, cfg_ptr) = open_file_mmap(
+            CONFIG_FILE,
+            std::mem::size_of::<SharedConfig>() as u32,
+            "IPC-T002", "IPC-T003", "IPC-T004",
+        )?;
+
+        let (sts_file, sts_map, sts_ptr) = match open_file_mmap(
+            STATUS_FILE,
+            std::mem::size_of::<SharedStatus>() as u32,
+            "IPC-T005", "IPC-T006", "IPC-T007",
+        ) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = UnmapViewOfFile(MEMORY_MAPPED_VIEW_ADDRESS {
+                    Value: cfg_ptr as *mut _,
+                });
+                let _ = CloseHandle(cfg_map);
+                let _ = CloseHandle(cfg_file);
+                return Err(e);
+            }
+        };
+
+        Ok(Bridge {
+            config_file_handle: cfg_file,
+            config_mapping_handle: cfg_map,
+            status_file_handle: sts_file,
+            status_mapping_handle: sts_map,
+            config_ptr: cfg_ptr as *mut SharedConfig,
+            status_ptr: sts_ptr as *mut SharedStatus,
+        })
+    }
 }

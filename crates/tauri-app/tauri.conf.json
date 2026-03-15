@@ -1,18 +1,18 @@
 {
-  "$schema": "https://raw.githubusercontent.com/nicegui-org/nicegui/main/tauri/schema.json",
-  "productName": "ASCE Control Panel",
+  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-cli/schema.json",
+  "productName": "Phaselith Control Panel",
   "version": "0.1.0",
-  "identifier": "com.asce.controlpanel",
+  "identifier": "com.phaselith.controlpanel",
   "build": {
     "frontendDist": "frontend/dist",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "",
-    "beforeBuildCommand": "cd frontend && npm run build"
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
   },
   "app": {
     "windows": [
       {
-        "title": "ASCE Audio Enhancement",
+        "title": "Phaselith Audio Enhancement",
         "width": 420,
         "height": 600,
         "resizable": true,

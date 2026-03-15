@@ -1,22 +1,22 @@
 <p align="center">
-  <img src="chrome-ext/icons/cirrus-logo.svg" width="128" alt="CIRRUS Logo">
+  <img src="chrome-ext/icons/phaselith-logo.svg" width="128" alt="Phaselith Logo">
 </p>
 
-<h1 align="center">CIRRUS</h1>
+<h1 align="center">Phaselith</h1>
 
 <p align="center">
   <strong>English</strong> | <strong><a href="README.zh-TW.md">繁體中文</a></strong> | <strong><a href="README.zh-CN.md">简体中文</a></strong>
 </p>
 
-CIRRUS = Constrained Inverse Restoration with Real-time Uncertainty and Reprojection Solver
+Phaselith is a real-time perceptual audio restoration and presentation engine powered by the CIRRUS Algorithm (Constrained Inverse Restoration with Real-time Uncertainty and Reprojection Solver).
 
-CIRRUS is a real-time perceptual audio restoration and presentation engine aimed at making damaged, lossy, spatially collapsed, or harsh playback sound more focused, more intelligible, and more physically "placed" in front of the listener.
+Phaselith makes damaged, lossy, spatially collapsed, or harsh playback sound more focused, more intelligible, and more physically "placed" in front of the listener.
 
-This repository contains the current CIRRUS core, a browser runtime, a Windows APO runtime, and the control-plane code needed to turn the DSP into a real product rather than a lab demo.
+This repository contains the Phaselith core, a browser runtime, a Windows APO runtime, and the control-plane code needed to turn the DSP into a real product rather than a lab demo.
 
 ## Project Purpose
 
-CIRRUS exists to answer a simple question:
+Phaselith exists to answer a simple question:
 
 How far can software push everyday playback toward premium-system presentation without turning into a gimmick, a fixed EQ curve, or a one-trick spatial effect?
 
@@ -28,11 +28,11 @@ The project focuses on five goals:
 4. Work on ordinary playback chains, including browsers, laptop speakers, headphones, and system-wide desktop audio.
 5. Stay explainable, testable, and shippable as an engineering system.
 
-## CIRRUS Is Not Just EQ
+## Phaselith Is Not Just EQ
 
 EQ applies a fixed or semi-fixed tonal curve.
 
-CIRRUS instead:
+The CIRRUS Algorithm instead:
 
 1. Estimates what kind of damage or collapse is present.
 2. Decomposes the signal into harmonic, air, transient, spatial, and phase-related structure.
@@ -40,11 +40,11 @@ CIRRUS instead:
 4. Self-validates those residuals through a reprojection step instead of blindly adding them back.
 5. Mixes the result through a safety layer that protects peaks, low-band stability, and long-term listenability.
 
-That is why CIRRUS can sound like it reduces muddiness, restores front focus, or improves image lock even when it is not acting like a conventional EQ.
+That is why Phaselith can sound like it reduces muddiness, restores front focus, or improves image lock even when it is not acting like a conventional EQ.
 
 ## Core Algorithm
 
-The current engine is organized as M0-M7:
+The CIRRUS Algorithm engine is organized as M0-M7:
 
 1. `M0 Orchestrator`
    Buffers host callbacks, manages frame and hop timing, and provides aligned analysis windows.
@@ -91,7 +91,7 @@ Roadmap and limitations live in [docs/08-ROADMAP-AND-LIMITATIONS.md](docs/08-ROA
 - `chrome-ext/`
   Browser extension runtime and AudioWorklet host.
 - `crates/dsp-core/`
-  CIRRUS algorithm core.
+  CIRRUS Algorithm core.
 - `crates/wasm-bridge/`
   WASM bridge used by the browser runtime.
 - `crates/apo-dll/`
@@ -100,8 +100,6 @@ Roadmap and limitations live in [docs/08-ROADMAP-AND-LIMITATIONS.md](docs/08-ROA
   Desktop control panel and APO management UI.
 - `docs/`
   Numbered architecture, algorithm, runtime, validation, and licensing documentation.
-
-Note: crate names still use the historical `asce-*` prefix internally. The product and architecture identity documented here is `CIRRUS`.
 
 ## Documentation Map
 
@@ -118,7 +116,7 @@ Start with these files:
 
 ## Status
 
-> **Early Preview** — CIRRUS is under active development. The core algorithm is stable and producing strong listening results, but APIs, configuration options, and runtime architecture may change without notice.
+> **Early Preview** — Phaselith is under active development. The CIRRUS Algorithm core is stable and producing strong listening results, but APIs, configuration options, and runtime architecture may change without notice.
 
 Today, the browser runtime is the cleanest listening reference in this repository.
 
@@ -139,8 +137,8 @@ This repository is licensed under the GNU Affero General Public License v3.0 or 
 - See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution terms and contributor licensing rules.
 - See [docs/10-DEFENSIVE-PUBLICATION.md](docs/10-DEFENSIVE-PUBLICATION.md) for the defensive-publication-style technical disclosure.
 
-Commercial licensing is available for teams that want to use, embed, or redistribute CIRRUS without AGPL obligations.
+Commercial licensing is available for teams that want to use, embed, or redistribute Phaselith without AGPL obligations.
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=Howard0401/CIRRUS&type=Date)](https://star-history.com/#Howard0401/CIRRUS&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=Howard0401/Phaselith&type=Date)](https://star-history.com/#Howard0401/Phaselith&Date)

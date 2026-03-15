@@ -1,15 +1,15 @@
-// COM interface implementation for ASCE APO.
+// COM interface implementation for Phaselith APO.
 //
-// Wraps AsceApo (pure Rust DSP logic) with proper COM vtables so that
+// Wraps PhaselithApo (pure Rust DSP logic) with proper COM vtables so that
 // audiodg.exe can load and call us through the standard APO protocol.
 //
 // Implements:
 // - IAudioProcessingObject: init, format negotiation, registration properties
 // - IAudioProcessingObjectRT: APOProcess (real-time audio, zero-alloc hot path)
 // - IAudioProcessingObjectConfiguration: lock/unlock for processing
-// - IAudioSystemEffects: marker interface (no methods)
+// - IAudioSystemEffects2: effects list reporting (required by Windows 10+)
 
-use crate::apo_impl::AsceApo;
+use crate::apo_impl::PhaselithApo;
 use crate::format_negotiate;
 use crate::guids::*;
 
@@ -18,13 +18,13 @@ use std::cell::{Cell, RefCell};
 use windows::core::*;
 use windows::Win32::Foundation::*;
 use windows::Win32::Media::Audio::Apo::*;
-use windows::Win32::System::Com::CoTaskMemAlloc;
+use windows::Win32::System::Com::{CoTaskMemAlloc, CoTaskMemFree};
 
 // KSDATAFORMAT_SUBTYPE_IEEE_FLOAT
 const KSDATAFORMAT_SUBTYPE_IEEE_FLOAT: GUID =
     GUID::from_u128(0x00000003_0000_0010_8000_00aa00389b71);
 
-/// COM wrapper around AsceApo.
+/// COM wrapper around PhaselithApo.
 ///
 /// Provides COM vtable for the four required APO interfaces.
 /// Uses RefCell for interior mutability (COM methods take &self).
@@ -34,25 +34,30 @@ const KSDATAFORMAT_SUBTYPE_IEEE_FLOAT: GUID =
     IAudioProcessingObjectRT,
     IAudioProcessingObjectConfiguration,
     IAudioSystemEffects,
+    IAudioSystemEffects2,
+    IAudioSystemEffects3,
 )]
-pub struct AsceApoCom {
-    inner: RefCell<AsceApo>,
+pub struct PhaselithApoCom {
+    inner: RefCell<PhaselithApo>,
     sample_rate: Cell<u32>,
     channels: Cell<u16>,
     frame_size: Cell<usize>,
     initialized: Cell<bool>,
     locked: Cell<bool>,
+    process_call_count: Cell<u64>,
 }
 
-impl AsceApoCom {
+impl PhaselithApoCom {
     pub fn new() -> Self {
+        apo_log!("PhaselithApoCom::new() creating instance");
         Self {
-            inner: RefCell::new(AsceApo::new()),
+            inner: RefCell::new(PhaselithApo::new()),
             sample_rate: Cell::new(48000),
             channels: Cell::new(2),
             frame_size: Cell::new(480),
             initialized: Cell::new(false),
             locked: Cell::new(false),
+            process_call_count: Cell::new(0),
         }
     }
 }
@@ -72,7 +77,7 @@ unsafe fn extract_format(media_type: &IAudioMediaType) -> Result<(u32, u16, u16,
 // ---------------------------------------------------------------------------
 // IAudioProcessingObject
 // ---------------------------------------------------------------------------
-impl IAudioProcessingObject_Impl for AsceApoCom_Impl {
+impl IAudioProcessingObject_Impl for PhaselithApoCom_Impl {
     fn Reset(&self) -> Result<()> {
         if self.locked.get() {
             return Err(APOERR_ALREADY_INITIALIZED.into());
@@ -97,7 +102,7 @@ impl IAudioProcessingObject_Impl for AsceApoCom_Impl {
             std::ptr::write_bytes(ptr, 0, 1);
 
             let props = &mut *ptr;
-            props.clsid = CLSID_ASCE_APO;
+            props.clsid = CLSID_PHASELITH_APO;
             props.Flags = APO_FLAG(0x0E); // APO_FLAG_DEFAULT = SFX + MFX
             // Copy friendly name
             let name_wide: Vec<u16> = APO_FRIENDLY_NAME
@@ -107,7 +112,7 @@ impl IAudioProcessingObject_Impl for AsceApoCom_Impl {
             let copy_len = name_wide.len().min(256);
             props.szFriendlyName[..copy_len].copy_from_slice(&name_wide[..copy_len]);
             // Copyright
-            let copyright = "ASCE Project";
+            let copyright = "Phaselith Project";
             let cr_wide: Vec<u16> = copyright
                 .encode_utf16()
                 .chain(std::iter::once(0))
@@ -115,8 +120,8 @@ impl IAudioProcessingObject_Impl for AsceApoCom_Impl {
             let cr_len = cr_wide.len().min(256);
             props.szCopyrightInfo[..cr_len].copy_from_slice(&cr_wide[..cr_len]);
 
-            props.u32MajorVersion = 0;
-            props.u32MinorVersion = 1;
+            props.u32MajorVersion = 1;
+            props.u32MinorVersion = 0;
             props.u32MinInputConnections = 1;
             props.u32MaxInputConnections = 1;
             props.u32MinOutputConnections = 1;
@@ -130,15 +135,17 @@ impl IAudioProcessingObject_Impl for AsceApoCom_Impl {
     }
 
     fn Initialize(&self, _cbdatasize: u32, _pbydata: *const u8) -> Result<()> {
-        // APO initialization is called by audiodg before any processing.
-        // We defer engine creation to LockForProcess where we know the format.
-        // Wrap in catch_unwind to avoid killing audiodg on mmap/init failures.
+        apo_log!("IAudioProcessingObject::Initialize(sr={}, ch={})", self.sample_rate.get(), self.channels.get());
         let sr = self.sample_rate.get();
         let ch = self.channels.get();
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             self.inner.borrow_mut().initialize(sr, ch);
         }));
+        if result.is_err() {
+            apo_log!("Initialize: caught panic in inner.initialize!");
+        }
         self.initialized.set(true);
+        apo_log!("Initialize: done OK");
         Ok(())
     }
 
@@ -149,9 +156,10 @@ impl IAudioProcessingObject_Impl for AsceApoCom_Impl {
     ) -> Result<IAudioMediaType> {
         let requested = prequestedinputformat.ok_or_else(|| Error::from(E_POINTER))?;
         let (sample_rate, channels, bits, is_float) = unsafe { extract_format(requested)? };
+        let supported = format_negotiate::is_format_supported(sample_rate, bits, channels, is_float);
+        apo_log!("IsInputFormatSupported: sr={} ch={} bits={} float={} -> {}", sample_rate, channels, bits, is_float, supported);
 
-        if format_negotiate::is_format_supported(sample_rate, bits, channels, is_float) {
-            // Format is supported — return the same media type
+        if supported {
             Ok(requested.clone())
         } else {
             Err(APOERR_FORMAT_NOT_SUPPORTED.into())
@@ -181,7 +189,7 @@ impl IAudioProcessingObject_Impl for AsceApoCom_Impl {
 // ---------------------------------------------------------------------------
 // IAudioProcessingObjectConfiguration
 // ---------------------------------------------------------------------------
-impl IAudioProcessingObjectConfiguration_Impl for AsceApoCom_Impl {
+impl IAudioProcessingObjectConfiguration_Impl for PhaselithApoCom_Impl {
     fn LockForProcess(
         &self,
         _u32numinputconnections: u32,
@@ -189,46 +197,62 @@ impl IAudioProcessingObjectConfiguration_Impl for AsceApoCom_Impl {
         _u32numoutputconnections: u32,
         _ppoutputconnections: *const *const APO_CONNECTION_DESCRIPTOR,
     ) -> Result<()> {
+        apo_log!("LockForProcess called");
         if self.locked.get() {
+            apo_log!("LockForProcess: already locked!");
             return Err(APOERR_ALREADY_INITIALIZED.into());
         }
 
-        // Read format from input connection descriptor
-        if !ppinputconnections.is_null() {
-            let desc = unsafe { &**ppinputconnections };
-            let frame_count = desc.u32MaxFrameCount as usize;
+        // Read format from input connection descriptor (with safety guard)
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if _u32numinputconnections > 0 && !ppinputconnections.is_null() {
+                let desc_ptr = unsafe { *ppinputconnections };
+                if !desc_ptr.is_null() {
+                    let desc = unsafe { &*desc_ptr };
+                    let frame_count = desc.u32MaxFrameCount as usize;
+                    apo_log!("LockForProcess: descriptor frame_count={}", frame_count);
 
-            // Try to read the format from the media type
-            if let Some(ref media_type) = *desc.pFormat {
-                let mut fmt = UNCOMPRESSEDAUDIOFORMAT::default();
-                if unsafe { media_type.GetUncompressedAudioFormat(&mut fmt) }.is_ok() {
-                    self.sample_rate.set(fmt.fFramesPerSecond as u32);
-                    self.channels.set(fmt.dwSamplesPerFrame as u16);
+                    // Try to read the format from the media type
+                    if let Some(ref media_type) = *desc.pFormat {
+                        let mut fmt = UNCOMPRESSEDAUDIOFORMAT::default();
+                        if unsafe { media_type.GetUncompressedAudioFormat(&mut fmt) }.is_ok() {
+                            let sr = fmt.fFramesPerSecond as u32;
+                            let ch = fmt.dwSamplesPerFrame as u16;
+                            apo_log!("LockForProcess: format sr={} ch={}", sr, ch);
+                            self.sample_rate.set(sr);
+                            self.channels.set(ch);
+                        }
+                    }
+
+                    self.frame_size.set(frame_count);
                 }
             }
+        }));
 
-            self.frame_size.set(frame_count);
-        }
-
-        // Initialize engine with discovered format, then lock.
-        // Wrap in catch_unwind: if DSP engine creation panics, fall back to
-        // pure bypass mode rather than killing audiodg.exe.
         let sr = self.sample_rate.get();
         let ch = self.channels.get();
         let fs = self.frame_size.get();
+        apo_log!("LockForProcess: sr={} ch={} fs={}", sr, ch, fs);
 
+        apo_log!("LockForProcess: about to init engine...");
         let init_ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            apo_log!("LockForProcess: inside catch_unwind, calling initialize...");
             let mut inner = self.inner.borrow_mut();
             inner.initialize(sr, ch);
+            apo_log!("LockForProcess: initialize done, calling lock_for_process...");
             inner.lock_for_process(fs);
+            apo_log!("LockForProcess: lock_for_process done");
         }));
 
         if init_ok.is_err() {
-            // Engine init failed — enter bypass mode (passthrough audio)
+            apo_log!("LockForProcess: PANIC caught! entering bypass mode");
             self.inner.borrow_mut().set_bypass_mode();
+        } else {
+            apo_log!("LockForProcess: engine init succeeded");
         }
 
         self.locked.set(true);
+        apo_log!("LockForProcess: done OK");
         Ok(())
     }
 
@@ -242,7 +266,7 @@ impl IAudioProcessingObjectConfiguration_Impl for AsceApoCom_Impl {
 // ---------------------------------------------------------------------------
 // IAudioProcessingObjectRT (real-time thread — zero alloc!)
 // ---------------------------------------------------------------------------
-impl IAudioProcessingObjectRT_Impl for AsceApoCom_Impl {
+impl IAudioProcessingObjectRT_Impl for PhaselithApoCom_Impl {
     fn APOProcess(
         &self,
         _u32numinputconnections: u32,
@@ -250,6 +274,11 @@ impl IAudioProcessingObjectRT_Impl for AsceApoCom_Impl {
         _u32numoutputconnections: u32,
         ppoutputconnections: *mut *mut APO_CONNECTION_PROPERTY,
     ) {
+        let count = self.process_call_count.get();
+        self.process_call_count.set(count + 1);
+        if count == 0 {
+            apo_log!("APOProcess: first call! ch={} locked={}", self.channels.get(), self.locked.get());
+        }
         // catch_unwind: a panic here would kill audiodg.exe
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             if ppinputconnections.is_null() || ppoutputconnections.is_null() {
@@ -313,4 +342,85 @@ impl IAudioProcessingObjectRT_Impl for AsceApoCom_Impl {
 // ---------------------------------------------------------------------------
 // IAudioSystemEffects — marker interface, no methods to implement
 // ---------------------------------------------------------------------------
-impl IAudioSystemEffects_Impl for AsceApoCom_Impl {}
+impl IAudioSystemEffects_Impl for PhaselithApoCom_Impl {}
+
+// ---------------------------------------------------------------------------
+// IAudioSystemEffects2 — reports effect list to Windows (required Win10+)
+// ---------------------------------------------------------------------------
+
+// AUDIO_EFFECT_TYPE GUIDs — we report as a "generic" stream effect
+// AUDIO_EFFECT_TYPE_ACOUSTIC_ECHO_CANCELLATION etc. are defined in audiomediatype.h
+// For a custom effect, we use our own APO CLSID as the effect type.
+impl IAudioSystemEffects2_Impl for PhaselithApoCom_Impl {
+    fn GetEffectsList(
+        &self,
+        ppeffectsids: *mut *mut GUID,
+        pceffects: *mut u32,
+        _event: HANDLE,
+    ) -> Result<()> {
+        apo_log!("IAudioSystemEffects2::GetEffectsList called");
+
+        if ppeffectsids.is_null() || pceffects.is_null() {
+            return Err(E_POINTER.into());
+        }
+
+        unsafe {
+            let size = std::mem::size_of::<GUID>();
+            let ptr = CoTaskMemAlloc(size) as *mut GUID;
+            if ptr.is_null() {
+                return Err(E_OUTOFMEMORY.into());
+            }
+            *ptr = CLSID_PHASELITH_APO;
+            *ppeffectsids = ptr;
+            *pceffects = 1;
+        }
+
+        apo_log!("GetEffectsList: reported 1 effect");
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// IAudioSystemEffects3 — required by Windows 11 (build 22000+)
+// ---------------------------------------------------------------------------
+impl IAudioSystemEffects3_Impl for PhaselithApoCom_Impl {
+    fn GetControllableSystemEffectsList(
+        &self,
+        effects: *mut *mut AUDIO_SYSTEMEFFECT,
+        numeffects: *mut u32,
+        _event: HANDLE,
+    ) -> Result<()> {
+        apo_log!("IAudioSystemEffects3::GetControllableSystemEffectsList called");
+
+        if effects.is_null() || numeffects.is_null() {
+            return Err(E_POINTER.into());
+        }
+
+        unsafe {
+            // Report one effect
+            let size = std::mem::size_of::<AUDIO_SYSTEMEFFECT>();
+            let ptr = CoTaskMemAlloc(size) as *mut AUDIO_SYSTEMEFFECT;
+            if ptr.is_null() {
+                return Err(E_OUTOFMEMORY.into());
+            }
+            (*ptr).id = CLSID_PHASELITH_APO;
+            (*ptr).canSetState = TRUE;
+            (*ptr).state = AUDIO_SYSTEMEFFECT_STATE_ON;
+            *effects = ptr;
+            *numeffects = 1;
+        }
+
+        apo_log!("GetControllableSystemEffectsList: reported 1 effect (ON)");
+        Ok(())
+    }
+
+    fn SetAudioSystemEffectState(
+        &self,
+        effectid: &GUID,
+        state: AUDIO_SYSTEMEFFECT_STATE,
+    ) -> Result<()> {
+        apo_log!("SetAudioSystemEffectState: id={:?} state={:?}", effectid, state);
+        // We only have one effect, always accept state changes
+        Ok(())
+    }
+}

@@ -1,8 +1,8 @@
 <template>
   <div class="app">
     <header>
-      <h1>ASCE</h1>
-      <span class="subtitle">Adaptive Spectral Compensation Engine</span>
+      <h1>Phaselith</h1>
+      <span class="subtitle">CIRRUS Algorithm Audio Enhancement</span>
     </header>
 
     <section class="status-bar" :class="{ active: status }">
@@ -78,7 +78,7 @@
       <button class="btn uninstall" @click="uninstallApo">Uninstall APO</button>
     </section>
 
-    <footer>ASCE v0.1.0</footer>
+    <footer>Phaselith v0.1.0</footer>
   </div>
 </template>
 

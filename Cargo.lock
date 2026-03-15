@@ -48,51 +48,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
+name = "apo-test-host"
+version = "0.1.0"
+dependencies = [
+ "windows 0.58.0",
+ "windows-core 0.58.0",
+]
+
+[[package]]
 name = "approx"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cab112f0a86d568ea0e627cc1d6be74a1e9cd55214684db5561995f6dad897c6"
 dependencies = [
  "num-traits",
-]
-
-[[package]]
-name = "asce-apo"
-version = "0.1.0"
-dependencies = [
- "asce-dsp-core",
- "windows 0.58.0",
- "windows-core 0.58.0",
-]
-
-[[package]]
-name = "asce-dsp-core"
-version = "0.1.0"
-dependencies = [
- "approx",
- "asce-dsp-core",
- "num-complex",
- "rustfft",
-]
-
-[[package]]
-name = "asce-tauri"
-version = "0.1.0"
-dependencies = [
- "asce-dsp-core",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-shell",
- "windows 0.58.0",
-]
-
-[[package]]
-name = "asce-wasm-bridge"
-version = "0.1.0"
-dependencies = [
- "asce-dsp-core",
 ]
 
 [[package]]
@@ -2235,6 +2204,45 @@ name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
+
+[[package]]
+name = "phaselith-apo"
+version = "0.1.0"
+dependencies = [
+ "phaselith-dsp-core",
+ "windows 0.58.0",
+ "windows-core 0.58.0",
+]
+
+[[package]]
+name = "phaselith-dsp-core"
+version = "0.1.0"
+dependencies = [
+ "approx",
+ "num-complex",
+ "phaselith-dsp-core",
+ "rustfft",
+]
+
+[[package]]
+name = "phaselith-tauri"
+version = "0.1.0"
+dependencies = [
+ "phaselith-dsp-core",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-shell",
+ "windows 0.58.0",
+]
+
+[[package]]
+name = "phaselith-wasm-bridge"
+version = "0.1.0"
+dependencies = [
+ "phaselith-dsp-core",
+]
 
 [[package]]
 name = "phf"

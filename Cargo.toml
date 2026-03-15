@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/dsp-core",
     "crates/apo-dll",
+    "crates/apo-test-host",
     "crates/wasm-bridge",
     "crates/tauri-app",
 ]

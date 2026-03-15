@@ -1,11 +1,11 @@
 [package]
-name = "asce-tauri"
+name = "phaselith-tauri"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-asce-dsp-core = { path = "../dsp-core" }
+phaselith-dsp-core = { path = "../dsp-core" }
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-shell = "2"
 serde = { version = "1", features = ["derive"] }
@@ -14,11 +14,16 @@ serde_json = "1"
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
     "Win32_Foundation",
+    "Win32_Media_Audio",
     "Win32_Security",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
     "Win32_System_Memory",
     "Win32_System_Registry",
     "Win32_System_Services",
+    "Win32_Storage_FileSystem",
     "Win32_UI_Shell",
+    "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_WindowsAndMessaging",
 ] }
 
@@ -26,5 +31,5 @@ windows = { version = "0.58", features = [
 tauri-build = { version = "2", features = [] }
 
 [[bin]]
-name = "asce-tauri"
+name = "phaselith-tauri"
 path = "src/main.rs"

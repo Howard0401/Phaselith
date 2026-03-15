@@ -20,7 +20,7 @@ fi
 bash "$SCRIPT_DIR/build-extension.sh"
 
 VERSION="$(node -p "require('$EXT_DIR/manifest.json').version")"
-ZIP_NAME="cirrus-extension-v${VERSION}.zip"
+ZIP_NAME="phaselith-extension-v${VERSION}.zip"
 ZIP_PATH="$DIST_DIR/$ZIP_NAME"
 
 TMP_DIR="$(mktemp -d)"

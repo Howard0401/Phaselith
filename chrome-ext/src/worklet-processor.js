@@ -9,7 +9,7 @@
 // Uses process_block_ch(channel, len) so L/R use separate engine instances
 // with independent state (frame counters, smoothers, reprojection history).
 
-class AsceProcessor extends AudioWorkletProcessor {
+class PhaselithProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
     this.wasmReady = false;
@@ -230,9 +230,9 @@ class AsceProcessor extends AudioWorkletProcessor {
 
       this.wasmReady = true;
       this.port.postMessage({ type: 'WASM_READY' });
-      console.log('CIRRUS WorkletProcessor: WASM loaded');
+      console.log('Phaselith WorkletProcessor: WASM loaded');
     } catch (err) {
-      console.error('CIRRUS WorkletProcessor: Failed to init WASM:', err);
+      console.error('Phaselith WorkletProcessor: Failed to init WASM:', err);
       this.port.postMessage({ type: 'WASM_ERROR', error: err.message });
     }
   }
@@ -258,7 +258,7 @@ class AsceProcessor extends AudioWorkletProcessor {
       if (blockSize > this.maxWasmBlockFrames && !this.blockSizeWarningLogged) {
         this.blockSizeWarningLogged = true;
         console.warn(
-          `CIRRUS WorkletProcessor: render quantum ${blockSize} exceeds WASM bridge block size ${this.maxWasmBlockFrames}, chunking audio`
+          `Phaselith WorkletProcessor: render quantum ${blockSize} exceeds WASM bridge block size ${this.maxWasmBlockFrames}, chunking audio`
         );
       }
 
@@ -391,7 +391,7 @@ class AsceProcessor extends AudioWorkletProcessor {
     } catch (err) {
       if (!this.runtimeErrorLogged) {
         this.runtimeErrorLogged = true;
-        console.error('CIRRUS WorkletProcessor: runtime fallback to pass-through:', err);
+        console.error('Phaselith WorkletProcessor: runtime fallback to pass-through:', err);
         this.port.postMessage({
           type: 'RUNTIME_ERROR',
           error: err?.message || String(err),
@@ -405,4 +405,4 @@ class AsceProcessor extends AudioWorkletProcessor {
   }
 }
 
-registerProcessor('asce-processor', AsceProcessor);
+registerProcessor('phaselith-processor', PhaselithProcessor);
