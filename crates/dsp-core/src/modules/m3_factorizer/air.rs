@@ -23,10 +23,8 @@ pub fn extract_air_field(
         return;
     }
 
-    let avg_mag: f32 = air_magnitude[band_start..band_end]
-        .iter()
-        .sum::<f32>()
-        / (band_end - band_start) as f32;
+    let avg_mag: f32 =
+        air_magnitude[band_start..band_end].iter().sum::<f32>() / (band_end - band_start) as f32;
 
     if avg_mag < 1e-10 {
         return;

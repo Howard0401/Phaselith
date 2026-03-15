@@ -83,12 +83,7 @@ fn ridge_score(magnitude: &[f32], f0: f32, bin_to_freq: f32) -> f32 {
 }
 
 /// Fill the harmonic field with energy at harmonic locations.
-fn fill_harmonic_field(
-    magnitude: &[f32],
-    f0: f32,
-    bin_to_freq: f32,
-    harmonic_field: &mut [f32],
-) {
+fn fill_harmonic_field(magnitude: &[f32], f0: f32, bin_to_freq: f32, harmonic_field: &mut [f32]) {
     let max_harmonic = 32;
     let tolerance = 2;
 
@@ -155,7 +150,11 @@ mod tests {
             "Should be near 440 Hz, got {}",
             detected_f0
         );
-        assert!(score > 0.3, "Ridge score should be significant, got {}", score);
+        assert!(
+            score > 0.3,
+            "Ridge score should be significant, got {}",
+            score
+        );
     }
 
     #[test]
@@ -174,6 +173,10 @@ mod tests {
         let bin_to_freq = 48000.0 / 1024.0;
         let magnitude = make_harmonic_spectrum(440.0, bin_to_freq, 513);
         let score = ridge_score(&magnitude, 440.0, bin_to_freq);
-        assert!(score > 0.3, "Harmonic signal should have high ridge score, got {}", score);
+        assert!(
+            score > 0.3,
+            "Harmonic signal should have high ridge score, got {}",
+            score
+        );
     }
 }

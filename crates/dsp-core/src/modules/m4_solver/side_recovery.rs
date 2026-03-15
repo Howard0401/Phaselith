@@ -128,10 +128,20 @@ mod tests {
         };
 
         compute_side_residual_stereo_biased(
-            &spatial_field, &mono_ctx, 0.8, 1.0, 0.3, &mut residual_mono,
+            &spatial_field,
+            &mono_ctx,
+            0.8,
+            1.0,
+            0.3,
+            &mut residual_mono,
         );
         compute_side_residual_stereo_biased(
-            &spatial_field, &stereo_ctx, 0.8, 1.0, 0.3, &mut residual_stereo,
+            &spatial_field,
+            &stereo_ctx,
+            0.8,
+            1.0,
+            0.3,
+            &mut residual_stereo,
         );
 
         let mono_total: f32 = residual_mono.iter().sum();
@@ -139,7 +149,8 @@ mod tests {
         assert!(
             mono_total > stereo_total,
             "Mono-like signal should get more recovery: mono={}, stereo={}",
-            mono_total, stereo_total
+            mono_total,
+            stereo_total
         );
     }
 
@@ -151,8 +162,15 @@ mod tests {
             .map(|i| (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 48000.0).sin())
             .collect();
         let ctx = CrossChannelContext::from_lr(&signal, &signal);
-        assert!(ctx.correlation > 0.99, "Mono signal should have correlation ~1, got {}", ctx.correlation);
-        assert!(ctx.stereo_width < 0.001, "Mono signal should have near-zero width");
+        assert!(
+            ctx.correlation > 0.99,
+            "Mono signal should have correlation ~1, got {}",
+            ctx.correlation
+        );
+        assert!(
+            ctx.stereo_width < 0.001,
+            "Mono signal should have near-zero width"
+        );
     }
 
     #[test]
@@ -163,7 +181,11 @@ mod tests {
         // variance ≈ 0, denom ≈ 0, but L ≈ R → should be correlation = 1.0
         let signal = vec![0.5; 128];
         let ctx = CrossChannelContext::from_lr(&signal, &signal);
-        assert_eq!(ctx.correlation, 1.0, "Degenerate mono (constant L=R) should have correlation 1.0, got {}", ctx.correlation);
+        assert_eq!(
+            ctx.correlation, 1.0,
+            "Degenerate mono (constant L=R) should have correlation 1.0, got {}",
+            ctx.correlation
+        );
     }
 
     #[test]
@@ -173,7 +195,11 @@ mod tests {
         // Both channels silent → L=R=0 → should be correlation 1.0
         let signal = vec![0.0; 128];
         let ctx = CrossChannelContext::from_lr(&signal, &signal);
-        assert_eq!(ctx.correlation, 1.0, "Degenerate silence (L=R=0) should have correlation 1.0, got {}", ctx.correlation);
+        assert_eq!(
+            ctx.correlation, 1.0,
+            "Degenerate silence (L=R=0) should have correlation 1.0, got {}",
+            ctx.correlation
+        );
     }
 
     #[test]
@@ -187,6 +213,10 @@ mod tests {
             .map(|i| (2.0 * std::f32::consts::PI * 660.0 * i as f32 / 48000.0).sin())
             .collect();
         let ctx = CrossChannelContext::from_lr(&left, &right);
-        assert!(ctx.correlation < 0.9, "Different signals should have low correlation, got {}", ctx.correlation);
+        assert!(
+            ctx.correlation < 0.9,
+            "Different signals should have low correlation, got {}",
+            ctx.correlation
+        );
     }
 }

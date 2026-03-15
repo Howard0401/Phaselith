@@ -2,14 +2,38 @@
 // Manages tab capture and offscreen document lifecycle.
 // Reads saved config from chrome.storage and sends to offscreen with stream.
 //
-// Tab-follow behavior: when enabled, automatically re-captures audio
-// when the user switches to a different tab. This ensures the processing
-// chain always follows the active tab without manual re-toggle.
+// Capture lifecycle is user-gesture bound: the extension can capture the
+// currently focused tab when the user invokes it, but Chrome requires a
+// fresh click before capturing a different tab.
 
 let offscreenCreated = false;
 let capturedTabId = null; // Currently captured tab
 let isEnabled = false;    // Whether the extension is active
 let captureGeneration = 0; // Monotonic counter to discard stale captures
+let lastGestureNoticeTabId = null; // Avoid spamming the same tab-switch notice
+let platformOs = 'unknown';
+const DEBUG_VERSION = 'mac-transient-safe-1';
+const DEFAULT_MAC_TRANSIENT_MODE = 'transient-safe';
+
+function normalizeMacTransientMode(mode) {
+  switch (mode) {
+    case 'hop-probe':
+      return 'transient-safe';
+    case 'declip-probe':
+      return 'declip-safe';
+    default:
+      return mode;
+  }
+}
+
+chrome.runtime.getPlatformInfo((info) => {
+  if (chrome.runtime.lastError) {
+    console.warn('CIRRUS: Failed to get platform info:', chrome.runtime.lastError.message);
+    return;
+  }
+  platformOs = info?.os || 'unknown';
+  console.log(`CIRRUS: Platform detected (${platformOs}) [${DEBUG_VERSION}]`);
+});
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'START_CAPTURE') {
@@ -21,21 +45,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     chrome.runtime.sendMessage({ type: 'OFFSCREEN_STOP' }).catch(() => {});
   } else if (msg.type === 'CONFIG_UPDATE') {
     // Forward config to offscreen
-    chrome.runtime.sendMessage(msg).catch(() => {});
+    chrome.runtime.sendMessage({ ...msg, platformOs }).catch(() => {});
+  } else if (msg.type === 'DEBUG_EVENT') {
+    console.log('CIRRUS DEBUG:', JSON.stringify(msg.payload));
   }
   // Never return true — avoids "message channel closed" errors
 });
 
-// Auto-follow active tab: when user switches tabs while enabled,
-// re-capture the new tab's audio automatically.
+// Chrome's tabCapture permission model requires a fresh user invocation
+// for a newly active tab. We therefore keep the current capture running
+// and ask the user to re-invoke the extension on the new tab instead of
+// attempting an automatic re-capture that Chrome will reject.
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
   if (!isEnabled) return;
   if (activeInfo.tabId === capturedTabId) return; // same tab, no-op
 
   if (!await isCapturableTab(activeInfo.tabId)) return;
 
-  console.log(`CIRRUS: Tab switched ${capturedTabId} → ${activeInfo.tabId}, re-capturing`);
-  startCapture();
+  if (lastGestureNoticeTabId === activeInfo.tabId) return;
+  lastGestureNoticeTabId = activeInfo.tabId;
+
+  console.log(
+    `CIRRUS: Tab switched ${capturedTabId} → ${activeInfo.tabId}. ` +
+    'Chrome requires a fresh extension click to capture the new tab, so auto-follow is skipped.'
+  );
 });
 
 // Handle captured tab being closed
@@ -44,7 +77,8 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     console.log('CIRRUS: Captured tab closed, stopping');
     capturedTabId = null;
     chrome.runtime.sendMessage({ type: 'OFFSCREEN_STOP' }).catch(() => {});
-    // Don't set isEnabled=false — if user opens a new tab it will auto-capture
+    // Don't set isEnabled=false — user can re-arm capture on another tab
+    // with a fresh extension click.
   }
 });
 
@@ -98,9 +132,15 @@ async function startCapture() {
         targetTabId: tab.id,
       });
     } catch (captureErr) {
-      // activeTab not granted for this tab (e.g. auto-follow without user click)
-      // This is normal — silently skip rather than logging an error
-      console.log('CIRRUS: Cannot capture tab (activeTab not granted):', tab.id);
+      // tabCapture follows the same user-invocation model as activeTab.
+      // If the user switched tabs after enabling the extension, Chrome will
+      // reject a new capture until they click the extension again on that tab.
+      console.log(
+        'CIRRUS: Cannot capture tab without a fresh user gesture. ' +
+        'Click the extension while focused on the target tab.',
+        tab.id,
+        captureErr?.message || captureErr
+      );
       return;
     }
 
@@ -113,7 +153,7 @@ async function startCapture() {
 
     capturedTabId = tab.id;
 
-    await ensureOffscreen();
+    await ensureOffscreen(platformOs === 'mac');
 
     // Second race check after ensureOffscreen (also async)
     if (thisGeneration !== captureGeneration) {
@@ -123,25 +163,39 @@ async function startCapture() {
 
     // Read saved config from storage (offscreen can't access chrome.storage)
     const config = await chrome.storage.local.get(
-      ['strength', 'hfReconstruction', 'dynamics', 'enabled', 'stylePreset', 'synthesisMode']
+      ['strength', 'hfReconstruction', 'dynamics', 'enabled', 'stylePreset', 'synthesisMode', 'macTransientMode']
     );
+    config.macTransientMode = normalizeMacTransientMode(config.macTransientMode);
+    if (platformOs === 'mac' && (!config.macTransientMode || config.macTransientMode === 'declip-safe')) {
+      config.macTransientMode = DEFAULT_MAC_TRANSIENT_MODE;
+      await chrome.storage.local.set({ macTransientMode: config.macTransientMode });
+    } else if (!config.macTransientMode) {
+      config.macTransientMode = DEFAULT_MAC_TRANSIENT_MODE;
+    }
 
     chrome.runtime.sendMessage({
       type: 'OFFSCREEN_START',
       streamId,
       tabId: tab.id,
       config,
+      platformOs,
+      debugVersion: DEBUG_VERSION,
     }).catch(() => {});
   } catch (err) {
     console.error('CIRRUS: Failed to start capture:', err);
   }
 }
 
-async function ensureOffscreen() {
+async function ensureOffscreen(forceRecreate = false) {
   // Always check hasDocument() — Chrome can kill offscreen docs under resource
   // pressure, making the cached offscreenCreated flag stale.
   try {
-    const existing = await chrome.offscreen.hasDocument();
+    let existing = await chrome.offscreen.hasDocument();
+    if (existing && forceRecreate) {
+      await chrome.offscreen.closeDocument();
+      offscreenCreated = false;
+      existing = await chrome.offscreen.hasDocument();
+    }
     if (existing) {
       offscreenCreated = true;
       return;

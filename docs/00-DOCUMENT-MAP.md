@@ -28,3 +28,5 @@ This directory is organized by function and reading order.
    Chrome Web Store launch copy, Early Access messaging, and future Lite + Pro monetization plan.
 12. [12-PUBLIC-V0.1-OPEN-SOURCE-PACKAGING.md](12-PUBLIC-V0.1-OPEN-SOURCE-PACKAGING.md)
    Public-release checklist, packaging rules, and what should or should not be included in the first open-source launch.
+13. [13-BROWSER-TRANSIENT-REPAIR-AND-MACOS-FIX.md](13-BROWSER-TRANSIENT-REPAIR-AND-MACOS-FIX.md)
+   Root cause, delayed-transient repair design, split transient probes, and platform explanation for the browser transient artifact that was most audible on macOS Chrome.

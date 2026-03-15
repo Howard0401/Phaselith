@@ -4,11 +4,7 @@ use crate::modules::m2_lattice::energy::unwrap_phase;
 ///
 /// Ensures phase coherence above cutoff by extrapolating group delay
 /// from below the cutoff. The residual represents the phase correction needed.
-pub fn compute_phase_residual(
-    phase: &[f32],
-    cutoff_bin: usize,
-    residual: &mut [f32],
-) {
+pub fn compute_phase_residual(phase: &[f32], cutoff_bin: usize, residual: &mut [f32]) {
     let num_bins = phase.len().min(residual.len());
     if cutoff_bin < 3 || cutoff_bin >= num_bins {
         return;

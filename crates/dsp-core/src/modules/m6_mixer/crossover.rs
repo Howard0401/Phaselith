@@ -36,7 +36,11 @@ mod tests {
     #[test]
     fn crossover_half_at_center() {
         let gain = crossover_gain(100, 100, 10);
-        assert!((gain - 0.5).abs() < 0.01, "Should be ~0.5 at center, got {}", gain);
+        assert!(
+            (gain - 0.5).abs() < 0.01,
+            "Should be ~0.5 at center, got {}",
+            gain
+        );
     }
 
     #[test]

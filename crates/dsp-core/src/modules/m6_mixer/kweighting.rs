@@ -21,7 +21,15 @@ struct Biquad {
 
 impl Biquad {
     fn new(b0: f32, b1: f32, b2: f32, a1: f32, a2: f32) -> Self {
-        Self { b0, b1, b2, a1, a2, z1: 0.0, z2: 0.0 }
+        Self {
+            b0,
+            b1,
+            b2,
+            a1,
+            a2,
+            z1: 0.0,
+            z2: 0.0,
+        }
     }
 
     #[inline]
@@ -67,13 +75,7 @@ impl KWeightingFilter {
                     0.7125954280732254,
                 ),
                 // Stage 2: RLB high-pass @ 44100 Hz
-                Biquad::new(
-                    1.0,
-                    -2.0,
-                    1.0,
-                    -1.9891696736297957,
-                    0.9891990357870394,
-                ),
+                Biquad::new(1.0, -2.0, 1.0, -1.9891696736297957, 0.9891990357870394),
             ),
             _ => (
                 // Stage 1: pre-filter (shelving) @ 48000 Hz
@@ -85,16 +87,13 @@ impl KWeightingFilter {
                     0.73248077421585,
                 ),
                 // Stage 2: RLB high-pass @ 48000 Hz
-                Biquad::new(
-                    1.0,
-                    -2.0,
-                    1.0,
-                    -1.99004745483398,
-                    0.99007225036621,
-                ),
+                Biquad::new(1.0, -2.0, 1.0, -1.99004745483398, 0.99007225036621),
             ),
         };
-        Self { stage1: s1, stage2: s2 }
+        Self {
+            stage1: s1,
+            stage2: s2,
+        }
     }
 
     /// Compute K-weighted mean square (not RMS — caller takes sqrt if needed).

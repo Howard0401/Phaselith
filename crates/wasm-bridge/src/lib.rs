@@ -11,7 +11,9 @@
 
 use core::cell::UnsafeCell;
 
-use asce_dsp_core::config::{EngineConfig, PhaseMode, QualityMode, StyleConfig, StylePreset, SynthesisMode};
+use asce_dsp_core::config::{
+    EngineConfig, PhaseMode, QualityMode, StyleConfig, StylePreset, SynthesisMode,
+};
 use asce_dsp_core::engine::CirrusEngineBuilder;
 use asce_dsp_core::types::CrossChannelContext;
 use asce_dsp_core::CirrusEngine;
@@ -202,6 +204,27 @@ pub extern "C" fn set_dynamics(value: f32) {
 pub extern "C" fn set_transient(value: f32) {
     let mut config = current_config();
     config.transient = value.clamp(0.0, 1.0);
+    with_both_engines(|e| e.update_config(config));
+}
+
+#[no_mangle]
+pub extern "C" fn set_pre_echo_transient_scaling(value: f32) {
+    let mut config = current_config();
+    config.pre_echo_transient_scaling = value.clamp(0.0, 1.0);
+    with_both_engines(|e| e.update_config(config));
+}
+
+#[no_mangle]
+pub extern "C" fn set_declip_transient_scaling(value: f32) {
+    let mut config = current_config();
+    config.declip_transient_scaling = value.clamp(0.0, 1.0);
+    with_both_engines(|e| e.update_config(config));
+}
+
+#[no_mangle]
+pub extern "C" fn set_delayed_transient_repair(enabled: u32) {
+    let mut config = current_config();
+    config.delayed_transient_repair = enabled != 0;
     with_both_engines(|e| e.update_config(config));
 }
 

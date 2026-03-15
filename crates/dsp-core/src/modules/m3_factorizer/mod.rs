@@ -1,7 +1,7 @@
-pub mod harmonic;
-pub mod transient;
 pub mod air;
+pub mod harmonic;
 pub mod spatial;
+pub mod transient;
 
 use crate::module_trait::{CirrusModule, ProcessContext};
 use crate::types::StructuredFields;
@@ -58,8 +58,11 @@ impl CirrusModule for StructuredFactorizer {
         let bin_to_freq = ctx.sample_rate as f32 / ctx.lattice.core.fft_size as f32;
 
         // Harmonic ridge detection
-        let (f0, ridge_score) =
-            harmonic::detect_ridges(&ctx.lattice.core.magnitude, bin_to_freq, &mut ctx.fields.harmonic);
+        let (f0, ridge_score) = harmonic::detect_ridges(
+            &ctx.lattice.core.magnitude,
+            bin_to_freq,
+            &mut ctx.fields.harmonic,
+        );
         ctx.fields.fundamental_freq = f0;
         ctx.fields.ridge_score = ridge_score;
 
@@ -69,11 +72,6 @@ impl CirrusModule for StructuredFactorizer {
             &ctx.lattice.core.energy,
             &mut ctx.fields.transient,
         );
-
-        // Pre-echo suppression scaled by config.transient
-        if ctx.config.transient > 0.01 {
-            transient::suppress_pre_echo(samples, ctx.config.transient);
-        }
 
         // Air field: high-frequency envelope from air lattice
         let air_bin_to_freq = ctx.sample_rate as f32 / ctx.lattice.air.fft_size as f32;
@@ -131,6 +129,20 @@ impl CirrusModule for StructuredFactorizer {
                 self.prev_magnitude.copy_from_slice(mag);
             }
         }
+
+        if !ctx.config.delayed_transient_repair {
+            let pre_echo_amount =
+                (ctx.config.transient * ctx.config.pre_echo_transient_scaling).clamp(0.0, 1.0);
+            if let Some(strength) = transient::pre_echo_strength(
+                pre_echo_amount,
+                ctx.hops_this_block,
+                ctx.fields.is_transient,
+                ctx.fields.spectral_flux,
+                &ctx.fields.transient,
+            ) {
+                transient::suppress_pre_echo(samples, strength);
+            }
+        }
     }
 
     fn reset(&mut self) {
@@ -144,8 +156,8 @@ impl CirrusModule for StructuredFactorizer {
 mod tests {
     use super::*;
     use crate::config::EngineConfig;
-    use crate::types::TriLattice;
     use crate::modules::m2_lattice::stft;
+    use crate::types::TriLattice;
 
     #[test]
     fn factorizer_initializes() {
@@ -175,5 +187,74 @@ mod tests {
 
         // Should have allocated fields
         assert!(!ctx.fields.harmonic.is_empty());
+    }
+
+    #[test]
+    fn factorizer_skips_pre_echo_without_hop_boundary() {
+        let mut m3 = StructuredFactorizer::new();
+        m3.init(128, 48000);
+        let mut config = EngineConfig::default();
+        config.transient = 1.0;
+        let mut ctx = ProcessContext::new(48000, 1, config);
+        ctx.lattice = TriLattice::new();
+        ctx.hops_this_block = 0;
+        ctx.lattice.micro.energy.fill(4.0);
+        ctx.lattice.core.energy.fill(1.0);
+
+        let original = vec![1.0f32; 128];
+        let mut samples = original.clone();
+        m3.process(&mut samples, &mut ctx);
+
+        assert_eq!(
+            samples, original,
+            "No hop boundary should skip pre-echo shaping"
+        );
+    }
+
+    #[test]
+    fn factorizer_skips_pre_echo_without_transient_activity() {
+        let mut m3 = StructuredFactorizer::new();
+        m3.init(128, 48000);
+        let mut config = EngineConfig::default();
+        config.transient = 1.0;
+        let mut ctx = ProcessContext::new(48000, 1, config);
+        ctx.lattice = TriLattice::new();
+        ctx.hops_this_block = 1;
+        ctx.lattice.micro.energy.fill(1.0);
+        ctx.lattice.core.energy.fill(1.0);
+
+        let original = vec![1.0f32; 128];
+        let mut samples = original.clone();
+        m3.process(&mut samples, &mut ctx);
+
+        assert_eq!(
+            samples, original,
+            "Steady-state blocks should remain untouched"
+        );
+    }
+
+    #[test]
+    fn factorizer_applies_pre_echo_only_for_transient_hops() {
+        let mut m3 = StructuredFactorizer::new();
+        m3.init(128, 48000);
+        let mut config = EngineConfig::default();
+        config.transient = 1.0;
+        let mut ctx = ProcessContext::new(48000, 1, config);
+        ctx.lattice = TriLattice::new();
+        ctx.hops_this_block = 1;
+        ctx.lattice.micro.energy.fill(4.0);
+        ctx.lattice.core.energy.fill(1.0);
+
+        let mut samples = vec![1.0f32; 128];
+        m3.process(&mut samples, &mut ctx);
+
+        assert!(
+            samples[0] < 0.8,
+            "Transient hop should attenuate early samples"
+        );
+        assert!(
+            samples[127] > 0.9,
+            "Transient hop should preserve later samples"
+        );
     }
 }

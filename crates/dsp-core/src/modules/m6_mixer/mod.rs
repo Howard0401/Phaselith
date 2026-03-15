@@ -4,6 +4,7 @@ pub mod masking;
 pub mod true_peak;
 
 use crate::module_trait::{CirrusModule, ProcessContext};
+use crate::modules::m3_factorizer::transient;
 
 /// M6: Perceptual Safety Mixer.
 ///
@@ -26,6 +27,12 @@ pub struct PerceptualSafetyMixer {
     kweight_dry: kweighting::KWeightingFilter,
     /// K-weighting filter for post-processing measurement
     kweight_post: kweighting::KWeightingFilter,
+    /// Hop-delayed dry buffer used by browser-safe transient repair.
+    delayed_transient_dry_buffer: Vec<f32>,
+    /// Hop-delayed enhancement delta buffer. Pre-echo suppression only shapes
+    /// this enhancement layer so the dry signal remains phase- and timing-stable.
+    delayed_transient_delta_buffer: Vec<f32>,
+    delayed_transient_len: usize,
 }
 
 impl PerceptualSafetyMixer {
@@ -36,6 +43,9 @@ impl PerceptualSafetyMixer {
             post_rms_sq_ema: 0.0,
             kweight_dry: kweighting::KWeightingFilter::new(48000),
             kweight_post: kweighting::KWeightingFilter::new(48000),
+            delayed_transient_dry_buffer: Vec::new(),
+            delayed_transient_delta_buffer: Vec::new(),
+            delayed_transient_len: 0,
         }
     }
 
@@ -53,6 +63,70 @@ impl PerceptualSafetyMixer {
             self.post_rms_sq_ema += alpha * (post_rms_sq - self.post_rms_sq_ema);
         }
     }
+
+    fn apply_delayed_transient_repair(&mut self, samples: &mut [f32], ctx: &ProcessContext) {
+        let pre_echo_amount =
+            (ctx.config.transient * ctx.config.pre_echo_transient_scaling).clamp(0.0, 1.0);
+        if !ctx.config.delayed_transient_repair || pre_echo_amount <= 0.01 {
+            self.delayed_transient_len = 0;
+            return;
+        }
+
+        let len = samples.len();
+        if len == 0 {
+            return;
+        }
+
+        let hop_delay = ctx
+            .frame_params
+            .hop_size
+            .min(
+                self.delayed_transient_delta_buffer
+                    .len()
+                    .saturating_sub(len),
+            )
+            .max(len);
+        let append_start = self.delayed_transient_len;
+        let append_end = append_start + len;
+        self.delayed_transient_dry_buffer[append_start..append_end]
+            .copy_from_slice(&ctx.dry_buffer[..len]);
+        for i in 0..len {
+            self.delayed_transient_delta_buffer[append_start + i] = samples[i] - ctx.dry_buffer[i];
+        }
+        self.delayed_transient_len = append_end;
+
+        if let Some(strength) = transient::pre_echo_strength(
+            pre_echo_amount,
+            ctx.hops_this_block,
+            ctx.fields.is_transient,
+            ctx.fields.spectral_flux,
+            &ctx.fields.transient,
+        ) {
+            let repair_start = self.delayed_transient_len.saturating_sub(hop_delay);
+            transient::suppress_pre_echo(
+                &mut self.delayed_transient_delta_buffer[repair_start..self.delayed_transient_len],
+                strength,
+            );
+        }
+
+        let ready = self.delayed_transient_len.saturating_sub(hop_delay);
+        let emit = ready.min(len);
+
+        if emit > 0 {
+            for i in 0..emit {
+                samples[i] =
+                    self.delayed_transient_dry_buffer[i] + self.delayed_transient_delta_buffer[i];
+            }
+            self.delayed_transient_dry_buffer
+                .copy_within(emit..self.delayed_transient_len, 0);
+            self.delayed_transient_delta_buffer
+                .copy_within(emit..self.delayed_transient_len, 0);
+            self.delayed_transient_len -= emit;
+        }
+        if emit < len {
+            samples[emit..].fill(0.0);
+        }
+    }
 }
 
 impl CirrusModule for PerceptualSafetyMixer {
@@ -64,12 +138,16 @@ impl CirrusModule for PerceptualSafetyMixer {
         self.sample_rate = sample_rate;
         self.kweight_dry = kweighting::KWeightingFilter::new(sample_rate);
         self.kweight_post = kweighting::KWeightingFilter::new(sample_rate);
+        let max_hop = crate::config::QualityMode::Ultra.hop_size();
+        self.delayed_transient_dry_buffer = vec![0.0; _max_frame_size + max_hop];
+        self.delayed_transient_delta_buffer = vec![0.0; _max_frame_size + max_hop];
+        self.delayed_transient_len = 0;
     }
 
     fn process(&mut self, samples: &mut [f32], ctx: &mut ProcessContext) {
         let style = ctx.config.style;
-        let has_residual = !ctx.validated.data.is_empty()
-            && ctx.validated.consistency_score >= 0.01;
+        let has_residual =
+            !ctx.validated.data.is_empty() && ctx.validated.consistency_score >= 0.01;
 
         // ── Restoration gain (damage-driven) ──
         let confidence = ctx.damage.overall_confidence;
@@ -90,12 +168,15 @@ impl CirrusModule for PerceptualSafetyMixer {
         // compensation jumps when processing resumes after quiet/bypass sections.
         // K-weighting (BS.1770) de-emphasizes low frequencies and boosts presence
         // range, giving a loudness measurement that matches human perception.
-        let dry_rms_sq_block = self.kweight_dry.compute_weighted_ms(
-            &ctx.dry_buffer[..len.min(ctx.dry_buffer.len())]
-        );
+        let dry_rms_sq_block = self
+            .kweight_dry
+            .compute_weighted_ms(&ctx.dry_buffer[..len.min(ctx.dry_buffer.len())]);
 
-        if mix_gain < 0.001 && style.warmth < 0.01 && style.smoothness < 0.01
+        if mix_gain < 0.001
+            && style.warmth < 0.01
+            && style.smoothness < 0.01
             && ctx.config.ambience_preserve < 0.001
+            && !ctx.config.delayed_transient_repair
         {
             // Bypass: still update EMA so it doesn't go stale.
             // During bypass, post == dry, so ratio stays ~1.0 — correct.
@@ -171,16 +252,20 @@ impl CirrusModule for PerceptualSafetyMixer {
         if amb > 0.001 && has_residual {
             // Gate 1: Diffuse gate — only compensate when M5 actually rejected diffuse content.
             let diffuse_amount = (1.0 - ctx.validated.consistency_score).max(0.0);
-            let diffuse_gate = if diffuse_amount > 0.2 { diffuse_amount } else { 0.0 };
+            let diffuse_gate = if diffuse_amount > 0.2 {
+                diffuse_amount
+            } else {
+                0.0
+            };
 
             // Gate 2: Non-transient gate — skip transient frames to preserve attack clarity.
             let transient_gate = if ctx.fields.is_transient { 0.0 } else { 1.0 };
 
             // Gate 3: Envelope decay gate — only blend in tail/decay regions.
-            let dry_energy: f32 = ctx.dry_buffer.iter().take(len)
-                .map(|s| s * s).sum::<f32>() / len.max(1) as f32;
-            let post_energy: f32 = samples.iter().take(len)
-                .map(|s| s * s).sum::<f32>() / len.max(1) as f32;
+            let dry_energy: f32 =
+                ctx.dry_buffer.iter().take(len).map(|s| s * s).sum::<f32>() / len.max(1) as f32;
+            let post_energy: f32 =
+                samples.iter().take(len).map(|s| s * s).sum::<f32>() / len.max(1) as f32;
             let decay_gate = if dry_energy > 1e-10 && post_energy < dry_energy * 0.95 {
                 1.0
             } else {
@@ -276,6 +361,8 @@ impl CirrusModule for PerceptualSafetyMixer {
                 }
             }
         }
+
+        self.apply_delayed_transient_repair(samples, ctx);
     }
 
     fn reset(&mut self) {
@@ -283,6 +370,9 @@ impl CirrusModule for PerceptualSafetyMixer {
         self.post_rms_sq_ema = 0.0;
         self.kweight_dry.reset();
         self.kweight_post.reset();
+        self.delayed_transient_dry_buffer.fill(0.0);
+        self.delayed_transient_delta_buffer.fill(0.0);
+        self.delayed_transient_len = 0;
     }
 }
 
@@ -326,7 +416,11 @@ mod tests {
         m6.process(&mut samples, &mut ctx);
 
         // Should have added some residual
-        assert!(samples[0] > 0.5, "Should have added residual, got {}", samples[0]);
+        assert!(
+            samples[0] > 0.5,
+            "Should have added residual, got {}",
+            samples[0]
+        );
     }
 
     #[test]
@@ -370,7 +464,9 @@ mod tests {
 
         // Output should differ due to saturation (check BEFORE level compensation)
         // Level compensation might bring it back close, but signal shape should differ
-        let diff: f32 = samples.iter().zip(original.iter())
+        let diff: f32 = samples
+            .iter()
+            .zip(original.iter())
             .map(|(a, b)| (a - b).abs())
             .sum();
         assert!(diff > 0.0, "Warmth should modify the signal");
@@ -394,10 +490,16 @@ mod tests {
         let mut samples = original.clone();
         m6.process(&mut samples, &mut ctx);
 
-        let diff: f32 = samples.iter().zip(original.iter())
+        let diff: f32 = samples
+            .iter()
+            .zip(original.iter())
             .map(|(a, b)| (a - b).abs())
             .sum();
-        assert!(diff > 0.0, "Character floor should ensure effect, diff={}", diff);
+        assert!(
+            diff > 0.0,
+            "Character floor should ensure effect, diff={}",
+            diff
+        );
     }
 
     #[test]
@@ -517,7 +619,11 @@ mod tests {
         m6.process(&mut samples, &mut ctx);
 
         for &s in &samples {
-            assert!(s.abs() <= 0.99, "Level compensation must not exceed true peak, got {}", s);
+            assert!(
+                s.abs() <= 0.99,
+                "Level compensation must not exceed true peak, got {}",
+                s
+            );
         }
     }
 
@@ -638,9 +744,15 @@ mod tests {
         let gain_hi = out_rms_hi / in_rms_hi;
 
         // 100Hz should be attenuated (gain < 0.5)
-        assert!(gain_lo < 0.5, "100Hz should be attenuated by HP, gain={gain_lo:.4}");
+        assert!(
+            gain_lo < 0.5,
+            "100Hz should be attenuated by HP, gain={gain_lo:.4}"
+        );
         // 3kHz should pass through (gain > 0.9)
-        assert!(gain_hi > 0.9, "3kHz should pass through HP, gain={gain_hi:.4}");
+        assert!(
+            gain_hi > 0.9,
+            "3kHz should pass through HP, gain={gain_hi:.4}"
+        );
         // Selectivity: high/low gain ratio > 2x
         assert!(
             gain_hi / gain_lo > 2.0,
@@ -669,10 +781,13 @@ mod tests {
         let out_with_amb = run_m6_ambience_test(&dry, &processed, 1.0);
 
         // Should see a measurable difference when ambience_preserve is on
-        let delta: f32 = out_with_amb.iter().zip(out_no_amb.iter())
+        let delta: f32 = out_with_amb
+            .iter()
+            .zip(out_no_amb.iter())
             .skip(10)
             .map(|(a, b)| (a - b).abs())
-            .sum::<f32>() / (n - 10) as f32;
+            .sum::<f32>()
+            / (n - 10) as f32;
 
         assert!(
             delta > 0.001,
@@ -711,5 +826,93 @@ mod tests {
             post_rms >= dry_rms * 0.85,
             "Global compensation should prevent level loss: dry={dry_rms:.4}, post={post_rms:.4}"
         );
+    }
+
+    #[test]
+    fn delayed_transient_repair_shapes_previous_hop() {
+        let mut m6 = PerceptualSafetyMixer::new();
+        m6.init(128, 48000);
+
+        let mut config = EngineConfig::default();
+        config.transient = 1.0;
+        config.strength = 1.0;
+        config.delayed_transient_repair = true;
+        config.style = StyleConfig::new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+
+        let enhancement = ValidatedResidual {
+            data: vec![0.5; 128],
+            time_residual: vec![0.0; 128],
+            acceptance_mask: vec![1.0; 128],
+            consistency_score: 1.0,
+            reprojection_error: 0.0,
+        };
+
+        let first_block = vec![0.2f32; 128];
+        let mut first_ctx = setup_ctx_with_dry(&first_block, config);
+        first_ctx.validated = enhancement.clone();
+        first_ctx.damage.overall_confidence = 1.0;
+        let mut first_samples = first_block.clone();
+        m6.process(&mut first_samples, &mut first_ctx);
+        assert!(first_samples.iter().all(|s| s.abs() < 1e-10));
+
+        let second_block = vec![0.2f32; 128];
+        let mut second_ctx = setup_ctx_with_dry(&second_block, config);
+        second_ctx.validated = enhancement.clone();
+        second_ctx.damage.overall_confidence = 1.0;
+        second_ctx.hops_this_block = 1;
+        second_ctx.fields.is_transient = true;
+        second_ctx.fields.spectral_flux = 0.8;
+
+        let mut second_samples = second_block.clone();
+        m6.process(&mut second_samples, &mut second_ctx);
+        assert!(second_samples.iter().all(|s| s.abs() < 1e-10));
+
+        let third_block = vec![0.2f32; 128];
+        let mut third_ctx = setup_ctx_with_dry(&third_block, config);
+        third_ctx.validated = enhancement.clone();
+        third_ctx.damage.overall_confidence = 1.0;
+        let mut third_samples = third_block.clone();
+        m6.process(&mut third_samples, &mut third_ctx);
+
+        assert!(
+            third_samples[0] > 0.19 && third_samples[0] < 0.7,
+            "First delayed block should preserve dry content while suppressing the enhancement start"
+        );
+
+        let fourth_block = vec![0.2f32; 128];
+        let mut fourth_ctx = setup_ctx_with_dry(&fourth_block, config);
+        fourth_ctx.validated = enhancement;
+        fourth_ctx.damage.overall_confidence = 1.0;
+        let mut fourth_samples = fourth_block.clone();
+        m6.process(&mut fourth_samples, &mut fourth_ctx);
+
+        assert!(
+            fourth_samples[127] > 0.65,
+            "Second delayed block should recover the preserved enhancement tail of the previous hop"
+        );
+    }
+
+    #[test]
+    fn delayed_transient_repair_bypasses_when_pre_echo_scaling_is_zero() {
+        let mut m6 = PerceptualSafetyMixer::new();
+        m6.init(128, 48000);
+
+        let mut config = EngineConfig::default();
+        config.transient = 1.0;
+        config.pre_echo_transient_scaling = 0.0;
+        config.delayed_transient_repair = true;
+        config.style = StyleConfig::new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+
+        let original = vec![0.25f32; 128];
+        let mut ctx = setup_ctx_with_dry(&original, config);
+        ctx.hops_this_block = 1;
+        ctx.fields.is_transient = true;
+        ctx.fields.spectral_flux = 0.8;
+
+        let mut samples = original.clone();
+        m6.apply_delayed_transient_repair(&mut samples, &ctx);
+
+        assert_eq!(samples, original);
+        assert_eq!(m6.delayed_transient_len, 0);
     }
 }

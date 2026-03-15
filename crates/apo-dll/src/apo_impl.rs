@@ -121,9 +121,11 @@ impl AsceApo {
             }
 
             // Hot-reload config changes (atomic read, no lock)
-            self.maybe_update_config(mmap.config().version.load(
-                std::sync::atomic::Ordering::Relaxed,
-            ));
+            self.maybe_update_config(
+                mmap.config()
+                    .version
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            );
         }
 
         if let Some(ref mut engine) = self.engine {
@@ -187,6 +189,9 @@ impl AsceApo {
                 hf_reconstruction: sc.hf_reconstruction(),
                 dynamics: sc.dynamics_restoration(),
                 transient: sc.transient_repair(),
+                pre_echo_transient_scaling: 1.0,
+                declip_transient_scaling: 1.0,
+                delayed_transient_repair: false,
                 phase_mode: match sc.phase_mode.load(std::sync::atomic::Ordering::Relaxed) {
                     1 => PhaseMode::Minimum,
                     _ => PhaseMode::Linear,

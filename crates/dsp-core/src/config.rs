@@ -54,6 +54,17 @@ pub struct EngineConfig {
     pub dynamics: f32,
     /// Transient repair intensity.
     pub transient: f32,
+    /// Scales how strongly the transient control affects pre-echo suppression.
+    /// 1.0 keeps the original coupling, 0.0 disables the pre-echo path while
+    /// leaving other transient-driven stages untouched.
+    pub pre_echo_transient_scaling: f32,
+    /// Scales how strongly the transient control affects declip peak estimation.
+    /// 1.0 keeps the original coupling, 0.0 forces the conservative declip path.
+    pub declip_transient_scaling: f32,
+    /// When true, pre-echo suppression is applied on a one-block delayed
+    /// output path instead of mutating the current host callback block.
+    /// Used by browser runtimes that need frame-aligned transient shaping.
+    pub delayed_transient_repair: bool,
     /// Phase correction mode.
     pub phase_mode: PhaseMode,
     /// Quality mode (affects CPU/GPU budget).
@@ -78,6 +89,9 @@ impl Default for EngineConfig {
             hf_reconstruction: 0.8,
             dynamics: 0.6,
             transient: 0.5,
+            pre_echo_transient_scaling: 1.0,
+            declip_transient_scaling: 1.0,
+            delayed_transient_repair: false,
             phase_mode: PhaseMode::Linear,
             quality_mode: QualityMode::Standard,
             enabled: true,
@@ -134,12 +148,12 @@ impl StyleConfig {
         match preset {
             //                  warmth  air_br  smooth  spatial impact  body
             StylePreset::Reference => Self::new(0.15, 0.50, 0.40, 0.30, 0.15, 0.40),
-            StylePreset::Grand     => Self::new(0.25, 0.80, 0.50, 0.45, 0.18, 0.35),
-            StylePreset::Smooth    => Self::new(0.20, 0.30, 0.75, 0.25, 0.12, 0.50),
-            StylePreset::Vocal     => Self::new(0.18, 0.40, 0.45, 0.20, 0.20, 0.55),
-            StylePreset::Punch     => Self::new(0.20, 0.45, 0.35, 0.30, 0.35, 0.60),
-            StylePreset::Air       => Self::new(0.10, 0.90, 0.35, 0.40, 0.10, 0.30),
-            StylePreset::Night     => Self::new(0.30, 0.20, 0.80, 0.20, 0.10, 0.55),
+            StylePreset::Grand => Self::new(0.25, 0.80, 0.50, 0.45, 0.18, 0.35),
+            StylePreset::Smooth => Self::new(0.20, 0.30, 0.75, 0.25, 0.12, 0.50),
+            StylePreset::Vocal => Self::new(0.18, 0.40, 0.45, 0.20, 0.20, 0.55),
+            StylePreset::Punch => Self::new(0.20, 0.45, 0.35, 0.30, 0.35, 0.60),
+            StylePreset::Air => Self::new(0.10, 0.90, 0.35, 0.40, 0.10, 0.30),
+            StylePreset::Night => Self::new(0.30, 0.20, 0.80, 0.20, 0.10, 0.55),
         }
     }
 
@@ -152,14 +166,26 @@ impl StyleConfig {
         impact_gain: f32,
         body: f32,
     ) -> Self {
-        Self { warmth, air_brightness, smoothness, spatial_spread, impact_gain, body }
+        Self {
+            warmth,
+            air_brightness,
+            smoothness,
+            spatial_spread,
+            impact_gain,
+            body,
+        }
     }
 
     /// Overall character intensity (average of all axes).
     /// Used to compute the character floor in M6.
     pub fn character_intensity(&self) -> f32 {
-        (self.warmth + self.air_brightness + self.smoothness
-            + self.spatial_spread + self.impact_gain + self.body) / 6.0
+        (self.warmth
+            + self.air_brightness
+            + self.smoothness
+            + self.spatial_spread
+            + self.impact_gain
+            + self.body)
+            / 6.0
     }
 }
 
@@ -211,7 +237,9 @@ impl QualityMode {
 
 impl QualityMode {
     /// Legacy FFT size method (used by old StageContext).
-    pub fn fft_size(&self) -> usize { self.core_fft_size() }
+    pub fn fft_size(&self) -> usize {
+        self.core_fft_size()
+    }
 }
 
 pub type DspConfig = EngineConfig;
