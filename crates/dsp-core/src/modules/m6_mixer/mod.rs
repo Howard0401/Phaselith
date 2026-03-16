@@ -33,6 +33,18 @@ pub struct PerceptualSafetyMixer {
     /// this enhancement layer so the dry signal remains phase- and timing-stable.
     delayed_transient_delta_buffer: Vec<f32>,
     delayed_transient_len: usize,
+    /// 2-pole cascaded LP states for HF de-emphasis shelf on freq-domain residual.
+    /// Two stages give -12 dB/octave rolloff (vs -6 dB/octave with 1-pole),
+    /// providing much steeper HF attenuation to suppress spectral splatter
+    /// from M3's pre-echo tanh window.
+    hf_deemph_lp1_freq: f32,
+    hf_deemph_lp2_freq: f32,
+    /// 2-pole cascaded LP states for time-domain residual.
+    hf_deemph_lp1_time: f32,
+    hf_deemph_lp2_time: f32,
+    /// 2-pole cascaded LP states for transient repair delta.
+    hf_deemph_lp1_delta: f32,
+    hf_deemph_lp2_delta: f32,
 }
 
 impl PerceptualSafetyMixer {
@@ -46,6 +58,12 @@ impl PerceptualSafetyMixer {
             delayed_transient_dry_buffer: Vec::new(),
             delayed_transient_delta_buffer: Vec::new(),
             delayed_transient_len: 0,
+            hf_deemph_lp1_freq: 0.0,
+            hf_deemph_lp2_freq: 0.0,
+            hf_deemph_lp1_time: 0.0,
+            hf_deemph_lp2_time: 0.0,
+            hf_deemph_lp1_delta: 0.0,
+            hf_deemph_lp2_delta: 0.0,
         }
     }
 
@@ -113,9 +131,22 @@ impl PerceptualSafetyMixer {
         let emit = ready.min(len);
 
         if emit > 0 {
+            // HF de-emphasis shelf on transient delta — prevents sibilance
+            // from sharp pre-echo suppression gain transitions.
+            let deemph_alpha = 1.0
+                - (-2.0 * std::f32::consts::PI * 4000.0 / self.sample_rate as f32).exp();
+            let shelf_amount = pre_echo_amount * 0.85;
+
             for i in 0..emit {
-                samples[i] =
-                    self.delayed_transient_dry_buffer[i] + self.delayed_transient_delta_buffer[i];
+                let raw_delta = self.delayed_transient_delta_buffer[i];
+                // 2-pole cascade shelf on transient delta
+                self.hf_deemph_lp1_delta +=
+                    deemph_alpha * (raw_delta - self.hf_deemph_lp1_delta);
+                self.hf_deemph_lp2_delta +=
+                    deemph_alpha * (self.hf_deemph_lp1_delta - self.hf_deemph_lp2_delta);
+                let hp = raw_delta - self.hf_deemph_lp2_delta;
+                let filtered_delta = raw_delta - shelf_amount * hp;
+                samples[i] = self.delayed_transient_dry_buffer[i] + filtered_delta;
             }
             self.delayed_transient_dry_buffer
                 .copy_within(emit..self.delayed_transient_len, 0);
@@ -185,11 +216,32 @@ impl PhaselithModule for PerceptualSafetyMixer {
         }
 
         // ── Phase 1a: Mix freq-domain validated residual ──
+        // HF de-emphasis: 1-pole LP shelf at ~4 kHz on the restoration residual.
+        // Prevents sibilance/harshness at high Compensation Strength.
+        // The shelf splits the residual into LP + HP components and attenuates
+        // the HP portion.  Shelf depth scales linearly with strength so the
+        // roll-off is proportional.  Below 4 kHz the residual passes mostly
+        // unmodified; above 4 kHz it's progressively attenuated (up to 85%
+        // at strength=1.0, giving ~-5 dB at 8 kHz, ~-12 dB at 16 kHz).
         if has_residual && mix_gain > 0.001 {
+            let deemph_alpha = 1.0
+                - (-2.0 * std::f32::consts::PI * 4000.0 / self.sample_rate as f32).exp();
+            let shelf_amount = strength * 0.85;
+
             let res_len = len.min(ctx.validated.data.len());
             for i in 0..res_len {
                 let dry = samples[i];
-                let residual = ctx.validated.data[i] * mix_gain;
+                let raw_res = ctx.validated.data[i] * mix_gain;
+
+                // 2-pole cascade: two 1-pole LP stages → -12 dB/octave rolloff.
+                // HP = raw - LP2 captures more HF energy than single-pole.
+                self.hf_deemph_lp1_freq +=
+                    deemph_alpha * (raw_res - self.hf_deemph_lp1_freq);
+                self.hf_deemph_lp2_freq +=
+                    deemph_alpha * (self.hf_deemph_lp1_freq - self.hf_deemph_lp2_freq);
+                let hp = raw_res - self.hf_deemph_lp2_freq;
+                let residual = raw_res - shelf_amount * hp;
+
                 let mixed = dry + residual;
 
                 if mixed.abs() > limit {
@@ -207,11 +259,25 @@ impl PhaselithModule for PerceptualSafetyMixer {
         // time_mix_gain is independent of freq-domain consistency_score and overall_confidence.
         // Declip already has internal scaling (clipping_severity * dynamics * transient),
         // so we only scale by strength and clipping posterior.
+        // Same HF de-emphasis shelf applied to prevent time-domain sibilance.
         let time_mix_gain = strength * ctx.damage.clipping.mean.clamp(0.0, 1.0);
         if time_mix_gain > 0.001 && !ctx.validated.time_residual.is_empty() {
+            let deemph_alpha = 1.0
+                - (-2.0 * std::f32::consts::PI * 4000.0 / self.sample_rate as f32).exp();
+            let shelf_amount = strength * 0.85;
+
             let time_len = len.min(ctx.validated.time_residual.len());
             for i in 0..time_len {
-                let time_res = ctx.validated.time_residual[i] * time_mix_gain;
+                let raw_time_res = ctx.validated.time_residual[i] * time_mix_gain;
+
+                // 2-pole cascade shelf on time residual
+                self.hf_deemph_lp1_time +=
+                    deemph_alpha * (raw_time_res - self.hf_deemph_lp1_time);
+                self.hf_deemph_lp2_time +=
+                    deemph_alpha * (self.hf_deemph_lp1_time - self.hf_deemph_lp2_time);
+                let hp = raw_time_res - self.hf_deemph_lp2_time;
+                let time_res = raw_time_res - shelf_amount * hp;
+
                 if time_res.abs() > 0.0001 {
                     let mixed = samples[i] + time_res;
                     if mixed.abs() > limit {
@@ -373,6 +439,12 @@ impl PhaselithModule for PerceptualSafetyMixer {
         self.delayed_transient_dry_buffer.fill(0.0);
         self.delayed_transient_delta_buffer.fill(0.0);
         self.delayed_transient_len = 0;
+        self.hf_deemph_lp1_freq = 0.0;
+        self.hf_deemph_lp2_freq = 0.0;
+        self.hf_deemph_lp1_time = 0.0;
+        self.hf_deemph_lp2_time = 0.0;
+        self.hf_deemph_lp1_delta = 0.0;
+        self.hf_deemph_lp2_delta = 0.0;
     }
 }
 
@@ -914,5 +986,162 @@ mod tests {
 
         assert_eq!(samples, original);
         assert_eq!(m6.delayed_transient_len, 0);
+    }
+
+    // ── HF de-emphasis shelf tests ──
+
+    /// Helper: measure RMS of a frequency band in the M6 output residual.
+    /// Feeds a pure-tone residual at `freq_hz` through M6 Phase 1a and returns
+    /// the ratio of output residual RMS to input residual RMS.
+    fn measure_residual_hf_gain(freq_hz: f32, strength: f32, sample_rate: u32) -> f32 {
+        let n = 1024;
+        let mut m6 = PerceptualSafetyMixer::new();
+        m6.init(n, sample_rate);
+
+        let mut config = EngineConfig::default();
+        config.strength = strength;
+        config.style = StyleConfig::new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+
+        // Silent dry signal — all output change comes from residual
+        let dry = vec![0.0f32; n];
+        let mut ctx = setup_ctx_with_dry(&dry, config);
+
+        // Pure-tone residual
+        let residual: Vec<f32> = (0..n)
+            .map(|i| 0.3 * (2.0 * std::f32::consts::PI * freq_hz * i as f32 / sample_rate as f32).sin())
+            .collect();
+        ctx.validated = ValidatedResidual {
+            data: residual.clone(),
+            time_residual: vec![0.0; n],
+            acceptance_mask: vec![1.0; n],
+            consistency_score: 1.0,
+            reprojection_error: 0.0,
+        };
+        ctx.damage.overall_confidence = 1.0;
+
+        let mut samples = dry.clone();
+        m6.process(&mut samples, &mut ctx);
+
+        // Measure RMS after settling (skip first 64 samples for LP transient)
+        let skip = 64;
+        let input_rms = (residual[skip..].iter().map(|s| s * s).sum::<f32>()
+            / (n - skip) as f32)
+            .sqrt();
+        let output_rms = (samples[skip..].iter().map(|s| s * s).sum::<f32>()
+            / (n - skip) as f32)
+            .sqrt();
+
+        if input_rms < 1e-10 {
+            1.0
+        } else {
+            output_rms / input_rms
+        }
+    }
+
+    #[test]
+    fn hf_deemph_low_freq_passes_through() {
+        // 500 Hz residual should pass through with minimal attenuation
+        // regardless of strength, because 500 Hz is well below the shelf crossover.
+        let gain = measure_residual_hf_gain(500.0, 1.0, 48000);
+        assert!(
+            gain > 0.85,
+            "500 Hz should pass through shelf at strength=1.0, gain={gain:.4}"
+        );
+    }
+
+    #[test]
+    fn hf_deemph_mid_freq_mostly_passes() {
+        // 2 kHz residual should mostly pass through (slight shelf transition)
+        let gain = measure_residual_hf_gain(2000.0, 1.0, 48000);
+        assert!(
+            gain > 0.70,
+            "2 kHz should mostly pass shelf at strength=1.0, gain={gain:.4}"
+        );
+    }
+
+    #[test]
+    fn hf_deemph_sibilance_range_attenuated() {
+        // 8 kHz (sibilance range) should be significantly attenuated at high strength.
+        // Compare HF/LF ratio to isolate shelf effect from mix_gain scaling.
+        let gain_8k_s1 = measure_residual_hf_gain(8000.0, 1.0, 48000);
+        let gain_500_s1 = measure_residual_hf_gain(500.0, 1.0, 48000);
+        let ratio_hi_strength = gain_8k_s1 / gain_500_s1.max(1e-10);
+
+        let gain_8k_s03 = measure_residual_hf_gain(8000.0, 0.3, 48000);
+        let gain_500_s03 = measure_residual_hf_gain(500.0, 0.3, 48000);
+        let ratio_lo_strength = gain_8k_s03 / gain_500_s03.max(1e-10);
+
+        assert!(
+            ratio_hi_strength < 0.65,
+            "8kHz/500Hz ratio should be < 0.65 at strength=1.0, got {ratio_hi_strength:.4}"
+        );
+        assert!(
+            ratio_lo_strength > ratio_hi_strength,
+            "Low strength should have higher HF/LF ratio: lo={ratio_lo_strength:.4}, hi={ratio_hi_strength:.4}"
+        );
+    }
+
+    #[test]
+    fn hf_deemph_extreme_hf_heavily_attenuated() {
+        // 16 kHz should be heavily attenuated at high strength
+        let gain = measure_residual_hf_gain(16000.0, 1.0, 48000);
+        assert!(
+            gain < 0.45,
+            "16 kHz should be heavily attenuated at strength=1.0, gain={gain:.4}"
+        );
+    }
+
+    #[test]
+    fn hf_deemph_zero_strength_no_effect() {
+        // At strength=0, shelf_amount should be 0 → no attenuation
+        // But mix_gain = max(strength*confidence*consistency, character_floor)
+        // At strength=0, mix_gain = character_floor ≈ 0.015
+        // So residual is mixed at very low level, not directly comparable.
+        // Instead verify that the shelf itself doesn't apply: gain ratio
+        // between 500 Hz and 16 kHz should be close to 1 at low strength.
+        let gain_lo = measure_residual_hf_gain(500.0, 0.1, 48000);
+        let gain_hi = measure_residual_hf_gain(16000.0, 0.1, 48000);
+        let ratio = gain_hi / gain_lo.max(1e-10);
+        assert!(
+            ratio > 0.80,
+            "At low strength, HF/LF ratio should be near 1, got {ratio:.4}"
+        );
+    }
+
+    #[test]
+    fn hf_deemph_selectivity_ratio() {
+        // At high strength, the 8kHz/500Hz gain ratio should show
+        // meaningful selectivity (HF attenuated, LF preserved).
+        let gain_500 = measure_residual_hf_gain(500.0, 1.0, 48000);
+        let gain_8k = measure_residual_hf_gain(8000.0, 1.0, 48000);
+        let selectivity = gain_500 / gain_8k.max(1e-10);
+        assert!(
+            selectivity > 1.5,
+            "Shelf selectivity (500/8k) should be > 1.5x, got {selectivity:.4}"
+        );
+    }
+
+    #[test]
+    fn hf_deemph_strength_sweep() {
+        // Verify monotonic: higher strength → relatively more HF attenuation.
+        // We measure the HF/LF ratio at each strength to isolate the shelf
+        // effect from the overall mix_gain scaling.
+        let strengths = [0.3, 0.5, 0.7, 1.0];
+        let mut prev_ratio = 2.0f32; // start high
+        for &s in &strengths {
+            let gain_lf = measure_residual_hf_gain(500.0, s, 48000);
+            let gain_hf = measure_residual_hf_gain(10000.0, s, 48000);
+            let ratio = gain_hf / gain_lf.max(1e-10);
+            assert!(
+                ratio <= prev_ratio + 0.05, // allow small float tolerance
+                "HF/LF ratio should decrease with strength: s={s}, ratio={ratio:.4}, prev={prev_ratio:.4}"
+            );
+            prev_ratio = ratio;
+        }
+        // At max strength, HF should be significantly lower than LF
+        assert!(
+            prev_ratio < 0.65,
+            "At strength=1.0, 10kHz/500Hz ratio should be < 0.65, got {prev_ratio:.4}"
+        );
     }
 }

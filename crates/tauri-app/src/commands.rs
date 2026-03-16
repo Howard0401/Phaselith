@@ -64,8 +64,11 @@ pub fn set_config(config: ConfigPayload) {
 
 #[tauri::command]
 pub fn get_config() -> ConfigResponse {
-    // Return defaults for now; in future read from storage/mmap
-    ConfigResponse {
+    // Read current config from mmap if available.
+    // If mmap is not connected yet (APO not installed), return defaults.
+    // This ensures that on Tauri restart, we read back whatever the user
+    // last set — not hardcoded defaults that would overwrite their toggle state.
+    ipc_bridge::read_config().unwrap_or(ConfigResponse {
         enabled: true,
         strength: 0.7,
         hf_reconstruction: 0.8,
@@ -74,7 +77,7 @@ pub fn get_config() -> ConfigResponse {
         phase_mode: 0,
         quality_preset: 1,
         synthesis_mode: 1, // FftOlaPilot (default)
-    }
+    })
 }
 
 #[tauri::command]

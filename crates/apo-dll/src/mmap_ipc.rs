@@ -65,6 +65,10 @@ pub struct SharedStatus {
     pub current_quality_tier: AtomicU8,
     pub current_clipping_u32: AtomicU32,     // f32 bits
     pub processing_load_u32: AtomicU32,      // f32 bits (percent)
+    /// RMS difference between wet (processed) and dry (input) signal in dB.
+    /// When algorithm is active and modifying audio, this will be > -60 dB.
+    /// When passthrough or algorithm has no effect, this will be -inf or < -80 dB.
+    pub wet_dry_diff_db_u32: AtomicU32,      // f32 bits (dB)
 }
 
 impl SharedStatus {
@@ -79,6 +83,10 @@ impl SharedStatus {
 
     pub fn set_processing_load(&self, percent: f32) {
         self.processing_load_u32.store(percent.to_bits(), Ordering::Relaxed);
+    }
+
+    pub fn set_wet_dry_diff_db(&self, db: f32) {
+        self.wet_dry_diff_db_u32.store(db.to_bits(), Ordering::Relaxed);
     }
 
     pub fn increment_frames(&self) {

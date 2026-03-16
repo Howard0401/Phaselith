@@ -221,10 +221,11 @@ fn delete_registry_tree(root: HKEY, subkey: &str) -> Result<(), ()> {
 // Endpoint binding: write APO CLSID to audio device FxProperties
 // ---------------------------------------------------------------------------
 
-/// PKEY_FX_StreamEffectClsid (V2) = {d3993a3f-99c2-4402-b5ec-a92a0367664b},5
-/// Windows 10+ uses V2 keys; legacy {d04e05a6...},5 is ignored.
+/// PKEY_CompositeFX_StreamEffectClsid = {d04e05a6-594b-4fb6-a80d-01af5eed7d1d},13
+/// This is the correct key for writing APO CLSIDs.
+/// NOTE: {d3993a3f...},5 is PKEY_SFX_ProcessingModes (mode GUIDs, NOT CLSIDs!)
 const PKEY_FX_STREAM_EFFECT_CLSID_NAME: &str =
-    "{d3993a3f-99c2-4402-b5ec-a92a0367664b},5";
+    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},13";
 
 /// Base registry path for audio render endpoints
 const MMDEVICES_RENDER_PATH: &str =

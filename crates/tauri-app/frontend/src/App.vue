@@ -13,6 +13,9 @@
       <div v-if="status" class="status-info">
         <span>{{ status.cutoff_freq > 0 ? Math.round(status.cutoff_freq) + ' Hz' : 'Lossless' }}</span>
         <span>{{ status.processing_load.toFixed(1) }}%</span>
+        <span :class="{ 'algo-active': status.wet_dry_diff_db > -60 }">
+          {{ status.wet_dry_diff_db > -60 ? 'DSP: ' + status.wet_dry_diff_db.toFixed(1) + ' dB' : 'DSP: off' }}
+        </span>
       </div>
     </section>
 
@@ -124,9 +127,17 @@ onMounted(async () => {
     console.warn('Failed to load config:', e);
   }
 
-  // Sync UI config to mmap immediately on startup so APO reads correct values.
-  // Without this, mmap may have stale data (e.g. enabled=false from a previous session).
-  await applyConfig();
+  // Only sync config to mmap if IPC is connected.
+  // This avoids overwriting user's last toggle state with hardcoded defaults
+  // when mmap isn't available (APO not installed → get_config returns defaults).
+  try {
+    const ipcState = await invoke('get_ipc_state');
+    if (ipcState.connected) {
+      await applyConfig();
+    }
+  } catch {
+    // IPC not ready — skip initial sync, user will sync manually via UI
+  }
 
   pollTimer = setInterval(pollStatus, 200);
 });
@@ -232,6 +243,7 @@ header h1 {
 }
 .dot.active { background: #4ade80; box-shadow: 0 0 8px #4ade8066; }
 .status-info { font-size: 12px; color: #888; display: flex; gap: 12px; }
+.algo-active { color: #4ade80; font-weight: 600; }
 
 .controls {
   background: #1a1a2e;

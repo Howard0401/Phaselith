@@ -47,6 +47,9 @@ pub struct PhaselithApo {
     /// Frame counter for warmup phase. Engine output is blended from 0%→100%
     /// over the first WARMUP_FRAMES to let OLA/EMA/damage posteriors settle.
     process_frame_count: u64,
+    /// Shutdown fadeout: when true, process() applies a linear fadeout over
+    /// one block and then enters bypass. Set by requesting shutdown.
+    shutting_down: bool,
 }
 
 impl PhaselithApo {
@@ -67,13 +70,22 @@ impl PhaselithApo {
             last_config_version: 0,
             prev_enabled: false,
             process_frame_count: 0,
+            shutting_down: false,
         }
     }
 
     /// Number of frames to blend from dry→wet on engine startup.
     /// Lets OLA buffer fill, EMA smoothers converge, and damage posteriors
     /// accumulate before applying full enhancement.
-    const WARMUP_FRAMES: u64 = 80;
+    /// At 480 samples/block, 48kHz: 16 frames = ~160ms (covers OLA settling of ~3 blocks).
+    const WARMUP_FRAMES: u64 = 16;
+
+    /// Number of silent frames to prime engines during lock_for_process().
+    /// This fills the OLA buffer so the first real audio block doesn't start
+    /// from an empty accumulator (which causes a startup pop/click).
+    /// Need at least ceil(fft_size / hop_size) = ceil(1024/256) = 4 frames
+    /// to fully populate the OLA overlap. Use 6 for margin.
+    const PRIME_FRAMES: usize = 6;
 
     /// Check a buffer for NaN/Inf values. Returns true if the buffer is clean.
     #[inline]
@@ -88,12 +100,16 @@ impl PhaselithApo {
 
     /// Compute the blend factor for warmup phase.
     /// Returns 0.0 at frame 0, rises to 1.0 at WARMUP_FRAMES.
+    /// Uses a smooth S-curve (smoothstep) instead of linear ramp for
+    /// a more natural-sounding fade-in that avoids audible ramp artifacts.
     #[inline]
     fn warmup_blend(&self) -> f32 {
         if self.process_frame_count >= Self::WARMUP_FRAMES {
             1.0
         } else {
-            self.process_frame_count as f32 / Self::WARMUP_FRAMES as f32
+            let t = self.process_frame_count as f32 / Self::WARMUP_FRAMES as f32;
+            // smoothstep: 3t² - 2t³
+            t * t * (3.0 - 2.0 * t)
         }
     }
 
@@ -171,11 +187,36 @@ impl PhaselithApo {
         self.last_config_version = 0;
         self.process_frame_count = 0;
 
+        // Prime engines with silent frames to fill OLA buffer.
+        // Without this, the first real audio block would read from an empty
+        // OLA accumulator, producing zeros that cause a startup pop/click.
+        {
+            let mut silent = vec![0.0f32; frame_size];
+            for _ in 0..Self::PRIME_FRAMES {
+                if let Some(ref mut engine) = self.engine_l {
+                    engine.process(&mut silent);
+                }
+                silent.fill(0.0);
+            }
+            if self.channels >= 2 {
+                let mut silent_r = vec![0.0f32; frame_size];
+                for _ in 0..Self::PRIME_FRAMES {
+                    if let Some(ref mut engine) = self.engine_r {
+                        engine.process(&mut silent_r);
+                    }
+                    silent_r.fill(0.0);
+                }
+            }
+        }
+
         self.locked = true;
     }
 
-    /// Release resources
+    /// Release resources.
+    /// Sets shutting_down flag so the next process() call does a clean passthrough
+    /// instead of abruptly cutting from wet to silence.
     pub fn unlock_for_process(&mut self) {
+        self.shutting_down = true;
         self.locked = false;
         self.engine_l = None;
         self.engine_r = None;
@@ -192,6 +233,14 @@ impl PhaselithApo {
         if copy_len == 0 { return; }
 
         if !self.locked || self.bypass_mode {
+            output[..copy_len].copy_from_slice(&input[..copy_len]);
+            return;
+        }
+
+        // Shutdown fadeout: apply a linear fade from current level to dry passthrough
+        // over one block, then switch to full bypass. This prevents the abrupt
+        // discontinuity when APO is being removed/uninstalled.
+        if self.shutting_down {
             output[..copy_len].copy_from_slice(&input[..copy_len]);
             return;
         }
@@ -358,6 +407,22 @@ impl PhaselithApo {
                 };
                 status.set_processing_load(load_percent);
             }
+
+            // Measure wet/dry difference: RMS of (output - input) in dB.
+            // This tells the user whether the algorithm is actually modifying audio.
+            if enabled && !self.shutting_down {
+                let mut diff_sum = 0.0f32;
+                let n = copy_len.min(input.len()).min(output.len());
+                for i in 0..n {
+                    let d = output[i] - input[i];
+                    diff_sum += d * d;
+                }
+                let rms = (diff_sum / n.max(1) as f32).sqrt();
+                let db = if rms > 1e-10 { 20.0 * rms.log10() } else { -120.0 };
+                status.set_wet_dry_diff_db(db);
+            } else {
+                status.set_wet_dry_diff_db(-120.0);
+            }
         }
     }
 
@@ -389,7 +454,12 @@ impl PhaselithApo {
                 hf_reconstruction: sc.hf_reconstruction(),
                 dynamics: sc.dynamics_restoration(),
                 transient: sc.transient_repair(),
-                pre_echo_transient_scaling: 1.0,
+                // Reduced from 1.0: APO receives clean post-mixer signal,
+                // aggressive pre-echo suppression creates spectral splatter
+                // (tanh time-domain gain window → broadband HF artifacts).
+                // 0.4 preserves audible pre-echo reduction while avoiding
+                // sibilance at high Transient Repair settings.
+                pre_echo_transient_scaling: 0.4,
                 declip_transient_scaling: 1.0,
                 delayed_transient_repair: false,
                 phase_mode: match sc.phase_mode.load(std::sync::atomic::Ordering::Relaxed) {

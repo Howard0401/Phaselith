@@ -40,6 +40,7 @@ pub struct SharedStatus {
     pub current_quality_tier: AtomicU8,
     pub current_clipping_u32: AtomicU32,
     pub processing_load_u32: AtomicU32,
+    pub wet_dry_diff_db_u32: AtomicU32,
 }
 
 const SHARED_DIR: &str = r"C:\ProgramData\Phaselith";
@@ -171,6 +172,25 @@ pub fn write_config(
     }
 }
 
+/// Read config from shared memory (for restoring state on Tauri restart).
+/// Returns None if mmap is not connected.
+pub fn read_config() -> Option<crate::commands::ConfigResponse> {
+    let guard = BRIDGE.lock().unwrap();
+    let bridge = guard.as_ref()?;
+    if bridge.config_ptr.is_null() { return None; }
+    let config = unsafe { &*bridge.config_ptr };
+    Some(crate::commands::ConfigResponse {
+        enabled: config.enabled.load(Ordering::Relaxed),
+        strength: config.compensation_strength_u32.load(Ordering::Relaxed) as f32 / 10000.0,
+        hf_reconstruction: config.hf_reconstruction_u32.load(Ordering::Relaxed) as f32 / 10000.0,
+        dynamics: config.dynamics_restoration_u32.load(Ordering::Relaxed) as f32 / 10000.0,
+        transient: config.transient_repair_u32.load(Ordering::Relaxed) as f32 / 10000.0,
+        phase_mode: config.phase_mode.load(Ordering::Relaxed),
+        quality_preset: config.quality_preset.load(Ordering::Relaxed),
+        synthesis_mode: config.synthesis_mode.load(Ordering::Relaxed),
+    })
+}
+
 /// Read status from shared memory (APO → Tauri)
 pub fn read_status() -> Option<StatusSnapshot> {
     let guard = BRIDGE.lock().unwrap();
@@ -183,6 +203,7 @@ pub fn read_status() -> Option<StatusSnapshot> {
         quality_tier: status.current_quality_tier.load(Ordering::Relaxed),
         clipping: f32::from_bits(status.current_clipping_u32.load(Ordering::Relaxed)),
         processing_load: f32::from_bits(status.processing_load_u32.load(Ordering::Relaxed)),
+        wet_dry_diff_db: f32::from_bits(status.wet_dry_diff_db_u32.load(Ordering::Relaxed)),
     })
 }
 
@@ -199,6 +220,7 @@ pub struct StatusSnapshot {
     pub quality_tier: u8,
     pub clipping: f32,
     pub processing_load: f32,
+    pub wet_dry_diff_db: f32,
 }
 
 /// Open (or create) a file and map it into memory.
