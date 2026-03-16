@@ -9,7 +9,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 # Enable native-rt for zero-alloc hot path on Windows RT thread
-phaselith-dsp-core = { path = "../dsp-core", features = ["native-rt"] }
+phaselith-dsp-core = { path = "../dsp-core", features = ["native-rt", "headroom-log"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [

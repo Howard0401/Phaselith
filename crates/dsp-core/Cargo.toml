@@ -13,6 +13,8 @@ test-helpers = []
 # per-call heap allocation in process(). Do NOT enable for WASM —
 # the legacy per-call path works fine with dlmalloc.
 native-rt = []
+# Diagnostic: write headroom-exceed events to C:\ProgramData\Phaselith\headroom.log
+headroom-log = ["std"]
 
 [dependencies]
 num-complex = { version = "0.4", default-features = false }

@@ -210,6 +210,24 @@ impl PhaselithApo {
         }
 
         self.locked = true;
+
+        // Debug: use apo_log! (which we KNOW works) to confirm this code path runs
+        apo_log!("HEADROOM_TEST: lock_for_process reached end, frame_size={}", frame_size);
+
+        // Also try file write via debug_log's same pattern
+        {
+            use std::io::Write;
+            let _ = std::fs::create_dir_all("C:\\ProgramData\\Phaselith");
+            match std::fs::OpenOptions::new().create(true).append(true).open("C:\\ProgramData\\Phaselith\\headroom_test.txt") {
+                Ok(mut f) => {
+                    let _ = writeln!(f, "lock_for_process OK, frame_size={}", frame_size);
+                    apo_log!("HEADROOM_TEST: file write succeeded");
+                }
+                Err(e) => {
+                    apo_log!("HEADROOM_TEST: file write FAILED: {:?}", e);
+                }
+            }
+        }
     }
 
     /// Release resources.

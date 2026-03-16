@@ -22,6 +22,21 @@ pub fn apply_true_peak_guard(samples: &mut [f32], limit: f32) {
     }
 }
 
+/// Per-sample soft saturation clamp.
+/// Linear below knee (85% of limit), tanh curve above.
+#[inline]
+pub fn soft_clamp(x: f32, limit: f32) -> f32 {
+    let knee = limit * 0.85;
+    let abs_x = x.abs();
+    if abs_x <= knee {
+        x
+    } else {
+        let excess = (abs_x - knee) / (limit - knee);
+        let compressed = knee + (limit - knee) * excess.tanh();
+        x.signum() * compressed
+    }
+}
+
 /// Check if any sample exceeds the true peak limit.
 pub fn exceeds_true_peak(samples: &[f32], limit: f32) -> bool {
     samples.iter().any(|s| s.abs() > limit)

@@ -45,6 +45,154 @@ pub struct PerceptualSafetyMixer {
     /// 2-pole cascaded LP states for transient repair delta.
     hf_deemph_lp1_delta: f32,
     hf_deemph_lp2_delta: f32,
+    /// Headroom diagnostic log
+    #[cfg(feature = "headroom-log")]
+    headroom_log: HeadroomLog,
+}
+
+/// Buffered headroom-exceed logger. Accumulates per-block stats and flushes
+/// to `C:\ProgramData\Phaselith\headroom.log` every ~1 second.
+#[cfg(feature = "headroom-log")]
+pub struct HeadroomLog {
+    entries: Vec<HeadroomEntry>,
+    block_count: u64,
+    flush_counter: u32,
+    // Per-block peak tracking
+    block_peak_pre_tpg: f32,
+    block_peak_post_tpg: f32,
+    tpg_triggered: bool,
+    block_peak_dry: f32,
+    block_peak_residual: f32,
+}
+
+#[cfg(feature = "headroom-log")]
+#[derive(Clone)]
+struct HeadroomEntry {
+    block: u64,
+    phase: &'static str,
+    sample_idx: usize,
+    dry: f32,
+    residual: f32,
+    headroom: f32,
+    scaled_residual: f32,
+}
+
+#[cfg(feature = "headroom-log")]
+impl HeadroomLog {
+    fn new() -> Self {
+        // Write init marker immediately so we know the feature compiled in
+        {
+            use std::io::Write;
+            let dir = std::path::Path::new(r"C:\ProgramData\Phaselith");
+            let _ = std::fs::create_dir_all(dir);
+            let path = dir.join("headroom.log");
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+                let _ = writeln!(f, "=== HeadroomLog init ===");
+            }
+        }
+        Self {
+            entries: Vec::with_capacity(256),
+            block_count: 0,
+            flush_counter: 0,
+            block_peak_pre_tpg: 0.0,
+            block_peak_post_tpg: 0.0,
+            tpg_triggered: false,
+            block_peak_dry: 0.0,
+            block_peak_residual: 0.0,
+        }
+    }
+
+    fn track_dry_residual(&mut self, dry: f32, residual: f32) {
+        let d = dry.abs();
+        let r = residual.abs();
+        if d > self.block_peak_dry { self.block_peak_dry = d; }
+        if r > self.block_peak_residual { self.block_peak_residual = r; }
+    }
+
+    fn track_pre_tpg(&mut self, samples: &[f32]) {
+        let peak: f32 = samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        self.block_peak_pre_tpg = peak;
+    }
+
+    fn track_post_tpg(&mut self, samples: &[f32], limit: f32) {
+        let peak: f32 = samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        self.block_peak_post_tpg = peak;
+        self.tpg_triggered = self.block_peak_pre_tpg > limit;
+    }
+
+    fn record(&mut self, phase: &'static str, sample_idx: usize, dry: f32, residual: f32, headroom: f32, scaled_residual: f32) {
+        self.entries.push(HeadroomEntry {
+            block: self.block_count,
+            phase,
+            sample_idx,
+            dry,
+            residual,
+            headroom,
+            scaled_residual,
+        });
+    }
+
+    fn end_block(&mut self) {
+        self.block_count += 1;
+        self.flush_counter += 1;
+        // Flush every 100 blocks (~1 second) with peak stats
+        if self.flush_counter >= 100 {
+            use std::io::Write;
+            let path = std::path::Path::new(r"C:\ProgramData\Phaselith\headroom.log");
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                // Always write peak summary
+                let _ = writeln!(f,
+                    "blk={} dry_pk={:.4} res_pk={:.4} pre_tpg={:.4} post_tpg={:.4} tpg={}{}",
+                    self.block_count,
+                    self.block_peak_dry,
+                    self.block_peak_residual,
+                    self.block_peak_pre_tpg,
+                    self.block_peak_post_tpg,
+                    if self.tpg_triggered { "YES" } else { "no" },
+                    if !self.entries.is_empty() {
+                        format!(" exceeds={}", self.entries.len())
+                    } else {
+                        String::new()
+                    }
+                );
+                // Write individual exceed entries if any
+                for e in &self.entries {
+                    let _ = writeln!(f,
+                        "  exceed: block={} {} i={} dry={:.4} res={:.4} headroom={:.4} scaled={:.4}",
+                        e.block, e.phase, e.sample_idx, e.dry, e.residual, e.headroom, e.scaled_residual
+                    );
+                }
+            }
+            self.entries.clear();
+            self.flush_counter = 0;
+            // Reset peak trackers for next window
+            self.block_peak_dry = 0.0;
+            self.block_peak_residual = 0.0;
+            self.block_peak_pre_tpg = 0.0;
+            self.block_peak_post_tpg = 0.0;
+            self.tpg_triggered = false;
+        } else {
+            // Reset per-block peaks but keep max across the window
+            // (already tracked above via max comparison)
+        }
+    }
+
+    fn flush(&mut self) {
+        use std::io::Write;
+        let dir = std::path::Path::new(r"C:\ProgramData\Phaselith");
+        let _ = std::fs::create_dir_all(dir);
+        let path = dir.join("headroom.log");
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            for e in &self.entries {
+                let _ = writeln!(f,
+                    "block={} {} i={} dry={:.4} res={:.4} headroom={:.4} scaled={:.4} ratio={:.2}",
+                    e.block, e.phase, e.sample_idx, e.dry, e.residual, e.headroom, e.scaled_residual,
+                    if e.residual.abs() > 1e-6 { e.scaled_residual / e.residual } else { 1.0 }
+                );
+            }
+        }
+        self.entries.clear();
+    }
 }
 
 impl PerceptualSafetyMixer {
@@ -64,6 +212,8 @@ impl PerceptualSafetyMixer {
             hf_deemph_lp2_time: 0.0,
             hf_deemph_lp1_delta: 0.0,
             hf_deemph_lp2_delta: 0.0,
+            #[cfg(feature = "headroom-log")]
+            headroom_log: HeadroomLog::new(),
         }
     }
 
@@ -249,16 +399,25 @@ impl PhaselithModule for PerceptualSafetyMixer {
                 let hp = raw_res - self.hf_deemph_lp2_freq;
                 let residual = raw_res - shelf_amount * hp;
 
-                let mixed = dry + residual;
+                #[cfg(feature = "headroom-log")]
+                self.headroom_log.track_dry_residual(dry, residual);
 
-                if mixed.abs() > limit {
-                    let headroom = (limit - dry.abs()).max(0.0);
-                    samples[i] = dry + residual.signum() * headroom.min(residual.abs());
+                // Directional headroom mixing: compute max residual that keeps
+                // |dry + residual| <= limit, accounting for sign.
+                let max_res = if residual >= 0.0 {
+                    (limit - dry).max(0.0)
                 } else {
-                    samples[i] = mixed;
-                }
-
-                samples[i] = samples[i].clamp(-limit, limit);
+                    (limit + dry).max(0.0) // distance to -limit
+                };
+                let res_abs = residual.abs();
+                let scaled_res = if res_abs > max_res && res_abs > 1e-6 {
+                    #[cfg(feature = "headroom-log")]
+                    self.headroom_log.record("1a-freq", i, dry, residual, max_res, residual * (max_res / res_abs));
+                    residual * (max_res / res_abs)
+                } else {
+                    residual
+                };
+                samples[i] = dry + scaled_res;
             }
         }
 
@@ -286,14 +445,21 @@ impl PhaselithModule for PerceptualSafetyMixer {
                 let time_res = raw_time_res - shelf_amount * hp;
 
                 if time_res.abs() > 0.0001 {
-                    let mixed = samples[i] + time_res;
-                    if mixed.abs() > limit {
-                        let headroom = (limit - samples[i].abs()).max(0.0);
-                        samples[i] += time_res.signum() * headroom.min(time_res.abs());
+                    let cur = samples[i];
+                    let max_tr = if time_res >= 0.0 {
+                        (limit - cur).max(0.0)
                     } else {
-                        samples[i] = mixed;
-                    }
-                    samples[i] = samples[i].clamp(-limit, limit);
+                        (limit + cur).max(0.0)
+                    };
+                    let tr_abs = time_res.abs();
+                    let scaled_tr = if tr_abs > max_tr && tr_abs > 1e-6 {
+                        #[cfg(feature = "headroom-log")]
+                        self.headroom_log.record("1b-time", i, cur, time_res, max_tr, time_res * (max_tr / tr_abs));
+                        time_res * (max_tr / tr_abs)
+                    } else {
+                        time_res
+                    };
+                    samples[i] += scaled_tr;
                 }
             }
         }
@@ -445,7 +611,14 @@ impl PhaselithModule for PerceptualSafetyMixer {
         //
         // Uses uniform block gain reduction (not per-sample hard clipping)
         // to preserve waveform shape while preventing inter-sample overs.
+        #[cfg(feature = "headroom-log")]
+        self.headroom_log.track_pre_tpg(samples);
         true_peak::apply_true_peak_guard(samples, limit);
+        #[cfg(feature = "headroom-log")]
+        {
+            self.headroom_log.track_post_tpg(samples, limit);
+            self.headroom_log.end_block();
+        }
     }
 
     fn reset(&mut self) {

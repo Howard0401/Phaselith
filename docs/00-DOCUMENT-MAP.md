@@ -42,3 +42,7 @@ This directory is organized by function and reading order.
    Shared psychoacoustic module (Terhardt threshold, Schroeder spreading), M5 adaptive convergence with perceptual stopping criterion, and M6 masking refactor.
 19. [19-OPTIMIZATION-SURVEY-AND-PATENT-FREE-ALGORITHMS.md](19-OPTIMIZATION-SURVEY-AND-PATENT-FREE-ALGORITHMS.md)
    Comprehensive M0–M6 optimization survey, limitations analysis, and 10 patent-free algorithms verified for commercial use.
+20. [20-CEPSTRAL-ENVELOPE-AND-HIGHFIDELITY-MODE.md](20-CEPSTRAL-ENVELOPE-AND-HIGHFIDELITY-MODE.md)
+   M4 cepstral spectral envelope (replacing power-law decay), HighFidelity QualityMode (decoupling FFT size from reprojection iterations), extreme dynamics protection, and perceptual comparison of power-law vs cepstral characteristics.
+21. [21-DIRECTIONAL-HEADROOM-MIXING.md](21-DIRECTIONAL-HEADROOM-MIXING.md)
+   M6 mixer directional headroom fix — corrected non-directional headroom formula and removed per-sample hard clamp that caused distortion during loud passages.
