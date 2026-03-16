@@ -80,6 +80,9 @@ pub struct EngineConfig {
     /// Independent parameter — does NOT reuse spatial_spread.
     /// Start very low (0.05-0.15) and tune by ear.
     pub ambience_preserve: f32,
+    /// High-level filter style selector.
+    /// When changed, overrides the 6-axis StyleConfig with the preset values.
+    pub filter_style: FilterStyle,
 }
 
 impl Default for EngineConfig {
@@ -98,13 +101,14 @@ impl Default for EngineConfig {
             style: StyleConfig::default(),
             synthesis_mode: SynthesisMode::default(),
             ambience_preserve: 0.0,
+            filter_style: FilterStyle::default(),
         }
     }
 }
 
 // ─── Style / Character System ───
 
-/// Style preset identifiers.
+/// Style preset identifiers (legacy fine-grained presets).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StylePreset {
     Reference,
@@ -114,6 +118,85 @@ pub enum StylePreset {
     Punch,
     Air,
     Night,
+}
+
+/// High-level filter style — user-facing audio character selector.
+///
+/// Three preset sonic identities plus a manual Custom mode:
+/// - Reference: faithful restoration, minimal coloration
+/// - Warm: tube-like character, even harmonics, gentle HF rolloff
+/// - BassPlus: enhanced low-end, sub-harmonic synthesis, impact boost
+/// - Custom: user-defined 6-axis StyleConfig (debug/advanced UI)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilterStyle {
+    /// Faithful restoration — current default. Prioritizes accuracy.
+    Reference,
+    /// Tube analog warmth — even-harmonic saturation, softer highs,
+    /// richer mid-range. Inspired by 12AX7 transfer curve.
+    Warm,
+    /// Bass enhancement — sub-harmonic reinforcement, impact boost,
+    /// body enrichment. For headphones that lack low-end.
+    BassPlus,
+    /// User-defined: 6-axis StyleConfig set manually via debug UI.
+    /// When active, APO reads individual axis values from mmap instead
+    /// of deriving from a preset.
+    Custom,
+}
+
+impl Default for FilterStyle {
+    fn default() -> Self {
+        FilterStyle::Reference
+    }
+}
+
+impl FilterStyle {
+    /// Convert from integer (for WASM/UI/mmap bridge).
+    /// 0=Reference, 1=Warm, 2=BassPlus, 3=Custom.
+    pub fn from_u32(v: u32) -> Self {
+        match v {
+            1 => FilterStyle::Warm,
+            2 => FilterStyle::BassPlus,
+            3 => FilterStyle::Custom,
+            _ => FilterStyle::Reference,
+        }
+    }
+
+    /// Convert to integer for serialization.
+    pub fn to_u32(self) -> u32 {
+        match self {
+            FilterStyle::Reference => 0,
+            FilterStyle::Warm => 1,
+            FilterStyle::BassPlus => 2,
+            FilterStyle::Custom => 3,
+        }
+    }
+
+    /// Get the StyleConfig axes for this filter style.
+    /// Custom returns Reference defaults — caller should override with actual values.
+    pub fn to_style_config(self) -> StyleConfig {
+        match self {
+            //                                warmth  air_br  smooth  spatial impact  body
+            FilterStyle::Reference => StyleConfig::new(0.15, 0.50, 0.40, 0.30, 0.15, 0.40),
+            FilterStyle::Warm =>      StyleConfig::new(0.55, 0.30, 0.60, 0.30, 0.15, 0.50),
+            FilterStyle::BassPlus =>  StyleConfig::new(0.20, 0.45, 0.35, 0.30, 0.45, 0.75),
+            FilterStyle::Custom =>    StyleConfig::new(0.15, 0.50, 0.40, 0.30, 0.15, 0.40),
+        }
+    }
+
+    /// Returns true if this is a preset (not Custom).
+    pub fn is_preset(self) -> bool {
+        !matches!(self, FilterStyle::Custom)
+    }
+
+    /// Display name for UI.
+    pub fn display_name(self) -> &'static str {
+        match self {
+            FilterStyle::Reference => "Reference",
+            FilterStyle::Warm => "Warm",
+            FilterStyle::BassPlus => "Bass+",
+            FilterStyle::Custom => "Custom",
+        }
+    }
 }
 
 /// Six-axis character configuration.
@@ -206,6 +289,14 @@ pub enum QualityMode {
     Standard,
     /// Full pipeline, maximum quality, ~28-45ms latency.
     Ultra,
+    /// Maximum FFT (4096), 5 reprojection iterations, ~50-85ms latency.
+    /// Uses 2x the CPU of Ultra for finer spectral resolution and
+    /// more accurate residual validation. For systems with headroom.
+    Extreme,
+    /// FFT 8192, 8 reprojection iterations, ~100-170ms latency.
+    /// Doubles Extreme's spectral resolution and adds 3 more reprojection
+    /// passes. For A/B comparison against Extreme on high-end CPUs.
+    UltraExtreme,
 }
 
 impl QualityMode {
@@ -215,6 +306,8 @@ impl QualityMode {
             QualityMode::Light => 512,
             QualityMode::Standard => 1024,
             QualityMode::Ultra => 2048,
+            QualityMode::Extreme => 4096,
+            QualityMode::UltraExtreme => 8192,
         }
     }
 
@@ -229,6 +322,8 @@ impl QualityMode {
             QualityMode::Light => 1,
             QualityMode::Standard => 2,
             QualityMode::Ultra => 3,
+            QualityMode::Extreme => 5,
+            QualityMode::UltraExtreme => 8,
         }
     }
 }

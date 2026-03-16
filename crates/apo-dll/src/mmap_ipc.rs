@@ -33,6 +33,16 @@ pub struct SharedConfig {
     pub phase_mode: AtomicU8,      // 0=Linear, 1=Minimum
     pub quality_preset: AtomicU8,  // 0=Light, 1=Standard, 2=Ultra
     pub synthesis_mode: AtomicU8,  // 0=LegacyAdditive, 1=FftOlaPilot, 2=FftOlaFull
+    pub filter_style: AtomicU8,   // 0=Reference, 1=Warm, 2=BassPlus, 3=Custom
+    // ─── 6-axis StyleConfig (for Custom filter_style) ───
+    // When filter_style==3 (Custom), APO reads these directly instead of
+    // deriving from a preset. All values are f32 * 10000 → u32 (same encoding).
+    pub warmth_u32: AtomicU32,
+    pub air_brightness_u32: AtomicU32,
+    pub smoothness_u32: AtomicU32,
+    pub spatial_spread_u32: AtomicU32,
+    pub impact_gain_u32: AtomicU32,
+    pub body_u32: AtomicU32,
 }
 
 impl SharedConfig {
@@ -54,6 +64,25 @@ impl SharedConfig {
 
     pub fn is_enabled(&self) -> bool {
         self.enabled.load(Ordering::Relaxed)
+    }
+
+    pub fn warmth(&self) -> f32 {
+        self.warmth_u32.load(Ordering::Relaxed) as f32 / 10000.0
+    }
+    pub fn air_brightness(&self) -> f32 {
+        self.air_brightness_u32.load(Ordering::Relaxed) as f32 / 10000.0
+    }
+    pub fn smoothness(&self) -> f32 {
+        self.smoothness_u32.load(Ordering::Relaxed) as f32 / 10000.0
+    }
+    pub fn spatial_spread(&self) -> f32 {
+        self.spatial_spread_u32.load(Ordering::Relaxed) as f32 / 10000.0
+    }
+    pub fn impact_gain(&self) -> f32 {
+        self.impact_gain_u32.load(Ordering::Relaxed) as f32 / 10000.0
+    }
+    pub fn body(&self) -> f32 {
+        self.body_u32.load(Ordering::Relaxed) as f32 / 10000.0
     }
 }
 
@@ -305,7 +334,7 @@ mod tests {
         assert!(size > 0, "SharedConfig should have non-zero size");
         // 4 (version) + 1 (enabled) + 4*4 (u32 fields) + 3 (u8 fields) = 24
         // With repr(C) alignment/padding this may differ — just ensure consistency.
-        assert!(size <= 64, "SharedConfig unexpectedly large: {size}");
+        assert!(size <= 128, "SharedConfig unexpectedly large: {size}");
     }
 
     #[test]
@@ -328,6 +357,13 @@ mod tests {
             phase_mode: AtomicU8::new(0),
             quality_preset: AtomicU8::new(1),
             synthesis_mode: AtomicU8::new(1),
+            filter_style: AtomicU8::new(0),
+            warmth_u32: AtomicU32::new(1500),
+            air_brightness_u32: AtomicU32::new(5000),
+            smoothness_u32: AtomicU32::new(4000),
+            spatial_spread_u32: AtomicU32::new(3000),
+            impact_gain_u32: AtomicU32::new(1500),
+            body_u32: AtomicU32::new(4000),
         };
 
         assert!(config.is_enabled());
@@ -349,6 +385,7 @@ mod tests {
             current_quality_tier: AtomicU8::new(0),
             current_clipping_u32: AtomicU32::new(0),
             processing_load_u32: AtomicU32::new(0),
+            wet_dry_diff_db_u32: AtomicU32::new(0),
         };
 
         status.increment_frames();

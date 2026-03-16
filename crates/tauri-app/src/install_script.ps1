@@ -34,9 +34,9 @@ $localServiceRule = New-Object System.Security.AccessControl.FileSystemAccessRul
     'NT AUTHORITY\LOCAL SERVICE', 'FullControl',
     'ContainerInherit,ObjectInherit', 'None', 'Allow')
 $acl.AddAccessRule($localServiceRule)
-# Also grant Everyone read/write for mmap IPC
+# Grant Authenticated Users read/write for mmap IPC (not FullControl, not Everyone)
 $everyoneRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-    'Everyone', 'FullControl',
+    'Authenticated Users', 'Modify',
     'ContainerInherit,ObjectInherit', 'None', 'Allow')
 $acl.AddAccessRule($everyoneRule)
 Set-Acl $phaselithDataDir $acl

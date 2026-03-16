@@ -51,9 +51,9 @@ impl FrameOrchestrator {
             ring_len - (actual_len - self.write_pos)
         };
 
+        let ring_mask = ring_len - 1;
         for i in 0..actual_len {
-            let idx = (start + i) % ring_len;
-            output[i] = self.ring_buffer[idx];
+            output[i] = self.ring_buffer[(start + i) & ring_mask];
         }
         actual_len
     }
@@ -99,10 +99,12 @@ impl PhaselithModule for FrameOrchestrator {
         }
 
         // Write incoming samples into ring buffer
-        let ring_len = self.ring_buffer.len();
+        // Ring size is always power-of-2 (AIR_FFT_SIZE * 2), so use
+        // bitwise AND instead of modulo (~1 cycle vs ~20 for division).
+        let ring_mask = self.ring_buffer.len() - 1; // power-of-2 assumption
         for &s in samples.iter() {
-            self.ring_buffer[self.write_pos % ring_len] = s;
-            self.write_pos = (self.write_pos + 1) % ring_len;
+            self.ring_buffer[self.write_pos & ring_mask] = s;
+            self.write_pos = (self.write_pos + 1) & ring_mask;
         }
         self.total_samples += samples.len() as u64;
 

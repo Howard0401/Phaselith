@@ -16,6 +16,10 @@ pub struct SpectralReconstructor {
     window: Vec<f32>,
     overlap_buffer: Vec<f32>,
     noise_phase: f32,
+    /// Cached FFT plans — avoid FftPlanner::new() per frame
+    cached_fft_fwd: Option<std::sync::Arc<dyn rustfft::Fft<f32>>>,
+    cached_fft_inv: Option<std::sync::Arc<dyn rustfft::Fft<f32>>>,
+    cached_fft_size: usize,
 }
 
 impl SpectralReconstructor {
@@ -25,6 +29,9 @@ impl SpectralReconstructor {
             window: Vec::new(),
             overlap_buffer: Vec::new(),
             noise_phase: 0.0,
+            cached_fft_fwd: None,
+            cached_fft_inv: None,
+            cached_fft_size: 0,
         }
     }
 }
@@ -44,6 +51,11 @@ impl DspStage for SpectralReconstructor {
             })
             .collect();
         self.overlap_buffer = vec![0.0; max_frame_size];
+        // Pre-build FFT plans for max size
+        let mut planner = FftPlanner::new();
+        self.cached_fft_fwd = Some(planner.plan_fft_forward(max_frame_size));
+        self.cached_fft_inv = Some(planner.plan_fft_inverse(max_frame_size));
+        self.cached_fft_size = max_frame_size;
     }
 
     fn process(&mut self, samples: &mut [f32], ctx: &mut StageContext) {
@@ -74,9 +86,14 @@ impl DspStage for SpectralReconstructor {
             );
         }
 
-        let mut planner = FftPlanner::new();
-        let fft = planner.plan_fft_forward(fft_size);
-        fft.process(&mut self.fft_buffer[..fft_size]);
+        // Reuse cached FFT plans; rebuild only if fft_size changed
+        if self.cached_fft_size != fft_size || self.cached_fft_fwd.is_none() {
+            let mut planner = FftPlanner::new();
+            self.cached_fft_fwd = Some(planner.plan_fft_forward(fft_size));
+            self.cached_fft_inv = Some(planner.plan_fft_inverse(fft_size));
+            self.cached_fft_size = fft_size;
+        }
+        self.cached_fft_fwd.as_ref().unwrap().process(&mut self.fft_buffer[..fft_size]);
 
         // === Material 1: Harmonic extension ===
         extension::extend_harmonics(
@@ -104,9 +121,8 @@ impl DspStage for SpectralReconstructor {
             bin_to_freq,
         );
 
-        // Inverse FFT
-        let ifft = planner.plan_fft_inverse(fft_size);
-        ifft.process(&mut self.fft_buffer[..fft_size]);
+        // Inverse FFT (uses cached plan)
+        self.cached_fft_inv.as_ref().unwrap().process(&mut self.fft_buffer[..fft_size]);
 
         // Apply window and write back
         let norm = 1.0 / fft_size as f32;

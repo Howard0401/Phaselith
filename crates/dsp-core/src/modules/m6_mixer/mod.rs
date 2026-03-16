@@ -169,7 +169,7 @@ impl PhaselithModule for PerceptualSafetyMixer {
         self.sample_rate = sample_rate;
         self.kweight_dry = kweighting::KWeightingFilter::new(sample_rate);
         self.kweight_post = kweighting::KWeightingFilter::new(sample_rate);
-        let max_hop = crate::config::QualityMode::Ultra.hop_size();
+        let max_hop = crate::config::QualityMode::UltraExtreme.hop_size();
         self.delayed_transient_dry_buffer = vec![0.0; _max_frame_size + max_hop];
         self.delayed_transient_delta_buffer = vec![0.0; _max_frame_size + max_hop];
         self.delayed_transient_len = 0;
@@ -191,7 +191,14 @@ impl PhaselithModule for PerceptualSafetyMixer {
         let mix_gain = restoration_gain.max(character_floor);
 
         let len = samples.len();
-        let limit = 0.99f32;
+        // True peak ceiling with headroom margin.
+        // 0.95 (-0.45 dBFS) provides ~0.4 dB headroom for:
+        //   - Phase 4 makeup gain pushing samples toward ceiling
+        //   - Delayed transient repair adding dry + delta after makeup
+        //   - Inter-sample peaks between discrete samples
+        // Previously 0.99 left almost no margin, causing audible clipping
+        // especially at lower quality presets (smaller FFT → coarser residuals).
+        let limit = 0.95f32;
 
         // ── Global output level reference (K-weighted) ──
         // Measure dry K-weighted MS for this block. Must happen BEFORE early return
@@ -429,6 +436,16 @@ impl PhaselithModule for PerceptualSafetyMixer {
         }
 
         self.apply_delayed_transient_repair(samples, ctx);
+
+        // ── Final true peak guard ──
+        // apply_delayed_transient_repair reconstructs dry + filtered_delta
+        // WITHOUT any ceiling enforcement, and runs AFTER Phase 4's makeup
+        // gain already pushed samples near 0.99. The sum can exceed 1.0,
+        // causing hard clipping in the DAC.
+        //
+        // Uses uniform block gain reduction (not per-sample hard clipping)
+        // to preserve waveform shape while preventing inter-sample overs.
+        true_peak::apply_true_peak_guard(samples, limit);
     }
 
     fn reset(&mut self) {

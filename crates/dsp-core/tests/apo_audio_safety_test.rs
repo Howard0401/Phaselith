@@ -33,6 +33,7 @@ fn apo_config() -> EngineConfig {
         style: StyleConfig::default(),
         synthesis_mode: SynthesisMode::FftOlaPilot,
         ambience_preserve: 0.0,
+        filter_style: phaselith_dsp_core::config::FilterStyle::Reference,
     }
 }
 

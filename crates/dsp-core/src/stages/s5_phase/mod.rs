@@ -12,6 +12,10 @@ use rustfft::{FftPlanner, num_complex::Complex};
 pub struct PhaseCoherence {
     fft_buffer: Vec<Complex<f32>>,
     window: Vec<f32>,
+    /// Cached FFT plans — avoid FftPlanner::new() per frame
+    cached_fft_fwd: Option<std::sync::Arc<dyn rustfft::Fft<f32>>>,
+    cached_fft_inv: Option<std::sync::Arc<dyn rustfft::Fft<f32>>>,
+    cached_fft_size: usize,
 }
 
 impl PhaseCoherence {
@@ -19,6 +23,9 @@ impl PhaseCoherence {
         Self {
             fft_buffer: Vec::new(),
             window: Vec::new(),
+            cached_fft_fwd: None,
+            cached_fft_inv: None,
+            cached_fft_size: 0,
         }
     }
 }
@@ -37,6 +44,11 @@ impl DspStage for PhaseCoherence {
                         .cos())
             })
             .collect();
+        // Pre-build FFT plans
+        let mut planner = FftPlanner::new();
+        self.cached_fft_fwd = Some(planner.plan_fft_forward(max_frame_size));
+        self.cached_fft_inv = Some(planner.plan_fft_inverse(max_frame_size));
+        self.cached_fft_size = max_frame_size;
     }
 
     fn process(&mut self, samples: &mut [f32], ctx: &mut StageContext) {
@@ -67,9 +79,14 @@ impl DspStage for PhaseCoherence {
             );
         }
 
-        let mut planner = FftPlanner::new();
-        let fft = planner.plan_fft_forward(fft_size);
-        fft.process(&mut self.fft_buffer[..fft_size]);
+        // Reuse cached FFT plans; rebuild only if fft_size changed
+        if self.cached_fft_size != fft_size || self.cached_fft_fwd.is_none() {
+            let mut planner = FftPlanner::new();
+            self.cached_fft_fwd = Some(planner.plan_fft_forward(fft_size));
+            self.cached_fft_inv = Some(planner.plan_fft_inverse(fft_size));
+            self.cached_fft_size = fft_size;
+        }
+        self.cached_fft_fwd.as_ref().unwrap().process(&mut self.fft_buffer[..fft_size]);
 
         // Apply phase coherence
         let blend_ratio = match ctx.config.phase_mode {
@@ -83,9 +100,8 @@ impl DspStage for PhaseCoherence {
             blend_ratio,
         );
 
-        // Inverse FFT
-        let ifft = planner.plan_fft_inverse(fft_size);
-        ifft.process(&mut self.fft_buffer[..fft_size]);
+        // Inverse FFT (uses cached plan)
+        self.cached_fft_inv.as_ref().unwrap().process(&mut self.fft_buffer[..fft_size]);
 
         let norm = 1.0 / fft_size as f32;
         for i in 0..samples.len().min(fft_size) {

@@ -1,4 +1,4 @@
-# CIRRUS Document Map
+# Phaselith Document Map
 
 This directory is organized by function and reading order.
 
@@ -34,3 +34,7 @@ This directory is organized by function and reading order.
    Root cause analysis of the M2 StftEngine crackling in Chrome AudioWorklet, workaround, and rules for future FFT path changes.
 15. [15-APO-CHROME-COEXISTENCE.md](15-APO-CHROME-COEXISTENCE.md)
    APO and Chrome extension cannot coexist — passthrough APO causes Chrome audio crackling. Analysis, audio path diagram, and solution options.
+16. [16-AUDIO-ARCHITECTURE-ANALYSIS.md](16-AUDIO-ARCHITECTURE-ANALYSIS.md)
+   Audio architecture analysis.
+17. [17-BUILD-PROFILES-AND-REALTIME-SAFETY.md](17-BUILD-PROFILES-AND-REALTIME-SAFETY.md)
+   Why DSP crates must always compile with optimizations, even in dev mode. Per-crate profile overrides, industry practice, and the debug-build crackling root cause.

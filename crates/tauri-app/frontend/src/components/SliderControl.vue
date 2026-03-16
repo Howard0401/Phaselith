@@ -9,6 +9,7 @@
       min="0"
       max="100"
       :value="Math.round(modelValue * 100)"
+      :disabled="disabled"
       @input="$emit('update:modelValue', $event.target.value / 100)"
     >
   </div>
@@ -18,6 +19,7 @@
 defineProps({
   label: String,
   modelValue: Number,
+  disabled: { type: Boolean, default: false },
 });
 defineEmits(['update:modelValue']);
 </script>
@@ -37,5 +39,9 @@ input[type="range"] {
   width: 100%;
   accent-color: #00d4ff;
   height: 4px;
+}
+input[type="range"]:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 </style>

@@ -462,22 +462,39 @@ impl PhaselithApo {
                 pre_echo_transient_scaling: 0.4,
                 declip_transient_scaling: 1.0,
                 delayed_transient_repair: false,
-                phase_mode: match sc.phase_mode.load(std::sync::atomic::Ordering::Relaxed) {
-                    1 => PhaseMode::Minimum,
-                    _ => PhaseMode::Linear,
+                // APO fixed parameters: UltraExtreme quality — FFT 8192,
+                // 8 reprojection iterations, hop 2048. Maximum spectral
+                // resolution and residual validation. All other modes cause
+                // more clipping due to coarser decomposition.
+                // Phase/synthesis also locked: Linear + FftOlaPilot only.
+                phase_mode: PhaseMode::Linear,
+                quality_mode: QualityMode::UltraExtreme,
+                // Read filter style from mmap and apply corresponding StyleConfig.
+                // When Custom (3), read individual 6-axis values from mmap.
+                // When preset (0/1/2), derive from preset (ignore mmap axis values).
+                style: {
+                    let fs_val = sc.filter_style.load(std::sync::atomic::Ordering::Relaxed) as u32;
+                    let fs = phaselith_dsp_core::config::FilterStyle::from_u32(fs_val);
+                    if fs.is_preset() {
+                        fs.to_style_config()
+                    } else {
+                        // Custom: read 6 axes directly from mmap
+                        StyleConfig::new(
+                            sc.warmth(),
+                            sc.air_brightness(),
+                            sc.smoothness(),
+                            sc.spatial_spread(),
+                            sc.impact_gain(),
+                            sc.body(),
+                        )
+                    }
                 },
-                quality_mode: match sc.quality_preset.load(std::sync::atomic::Ordering::Relaxed) {
-                    0 => QualityMode::Light,
-                    2 => QualityMode::Ultra,
-                    _ => QualityMode::Standard,
-                },
-                style: StyleConfig::default(),
-                // APO always uses FftOlaPilot: LegacyAdditive synthesis restarts
-                // from n=0 every block, producing periodic discontinuities when
-                // block_size (480) < fft_size (1024). FftOlaPilot uses proper
-                // ISTFT + overlap-add for continuous, hop-aligned output.
                 synthesis_mode: SynthesisMode::FftOlaPilot,
                 ambience_preserve: 0.0,
+                filter_style: {
+                    let fs_val = sc.filter_style.load(std::sync::atomic::Ordering::Relaxed) as u32;
+                    phaselith_dsp_core::config::FilterStyle::from_u32(fs_val)
+                },
             }
         } else {
             EngineConfig::default()

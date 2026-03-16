@@ -26,12 +26,29 @@ impl PhaselithEngine {
 
         self.context.frame_index += 1;
 
-        // native-rt: skip timing on RT thread (QueryPerformanceCounter can stall)
+        // Timing for CPU load monitoring.
+        // native-rt uses RDTSC (direct TSC register read, ~1ns, no syscall)
+        // instead of Instant::now() which calls QueryPerformanceCounter
+        // (kernel transition, can stall on RT threads).
+        #[cfg(all(feature = "native-rt", target_arch = "x86_64"))]
+        let t0 = unsafe { core::arch::x86_64::_rdtsc() };
+
         #[cfg(all(not(target_arch = "wasm32"), not(feature = "native-rt")))]
         let t0 = std::time::Instant::now();
 
         for module in &mut self.modules {
             module.process(samples, &mut self.context);
+        }
+
+        // Convert RDTSC ticks to microseconds.
+        // Modern x86_64 TSC runs at ~base clock (typically 2-4 GHz).
+        // We estimate 3 GHz (3000 ticks/us) — not perfectly accurate but
+        // sufficient for load percentage display. The EMA in M7 smooths
+        // any per-block jitter.
+        #[cfg(all(feature = "native-rt", target_arch = "x86_64"))]
+        {
+            let elapsed_ticks = unsafe { core::arch::x86_64::_rdtsc() }.wrapping_sub(t0);
+            self.context.processing_time_us = elapsed_ticks as f32 / 3000.0;
         }
 
         #[cfg(all(not(target_arch = "wasm32"), not(feature = "native-rt")))]

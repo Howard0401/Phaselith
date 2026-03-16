@@ -12,7 +12,7 @@
 use core::cell::UnsafeCell;
 
 use phaselith_dsp_core::config::{
-    EngineConfig, PhaseMode, QualityMode, StyleConfig, StylePreset, SynthesisMode,
+    EngineConfig, FilterStyle, PhaseMode, QualityMode, StyleConfig, StylePreset, SynthesisMode,
 };
 use phaselith_dsp_core::engine::PhaselithEngineBuilder;
 use phaselith_dsp_core::types::CrossChannelContext;
@@ -288,6 +288,17 @@ pub extern "C" fn set_impact_gain(value: f32) {
 pub extern "C" fn set_body(value: f32) {
     let mut config = current_config();
     config.style.body = value.clamp(0.0, 1.0);
+    with_both_engines(|e| e.update_config(config));
+}
+
+/// Set filter style: 0=Reference, 1=Warm, 2=BassPlus
+/// Updates both filter_style and the derived StyleConfig axes.
+#[no_mangle]
+pub extern "C" fn set_filter_style(style: u32) {
+    let fs = FilterStyle::from_u32(style);
+    let mut config = current_config();
+    config.filter_style = fs;
+    config.style = fs.to_style_config();
     with_both_engines(|e| e.update_config(config));
 }
 

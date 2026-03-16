@@ -13,3 +13,14 @@ version = "0.1.0"
 edition = "2021"
 license = "AGPL-3.0-or-later"
 authors = ["Howard Chen <chenhoward0401@gmail.com>"]
+
+# ─── Real-time audio safety ───
+# APO DLL runs in audiodg.exe's real-time thread.
+# Debug build is 5-10x slower → CPU overruns → crackling.
+# Always compile the APO and DSP core with optimizations,
+# even during `cargo tauri dev` (debug mode).
+[profile.dev.package.phaselith-apo]
+opt-level = 3
+
+[profile.dev.package.phaselith-dsp-core]
+opt-level = 3

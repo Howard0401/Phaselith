@@ -1,7 +1,7 @@
 // ─── CIRRUS Core Data Structures ───
 
-/// Maximum FFT size supported (air lattice).
-pub const MAX_FFT_SIZE: usize = 4096;
+/// Maximum FFT size supported (UltraExtreme core lattice).
+pub const MAX_FFT_SIZE: usize = 8192;
 /// Micro lattice FFT size.
 pub const MICRO_FFT_SIZE: usize = 256;
 /// Core lattice FFT size.

@@ -14,6 +14,11 @@ use rustfft::{FftPlanner, num_complex::Complex};
 pub struct HarmonicTracker {
     fft_buffer: Vec<Complex<f32>>,
     magnitude_buf: Vec<f32>,
+    /// Pre-allocated scratch buffer for noise floor estimation (avoids heap alloc in process())
+    noise_scratch: Vec<f32>,
+    /// Cached FFT plan — FftPlanner::new() + plan_fft_forward() is expensive per-frame
+    cached_fft: Option<std::sync::Arc<dyn rustfft::Fft<f32>>>,
+    cached_fft_size: usize,
 }
 
 impl HarmonicTracker {
@@ -21,6 +26,9 @@ impl HarmonicTracker {
         Self {
             fft_buffer: Vec::new(),
             magnitude_buf: Vec::new(),
+            noise_scratch: Vec::new(),
+            cached_fft: None,
+            cached_fft_size: 0,
         }
     }
 }
@@ -33,6 +41,11 @@ impl DspStage for HarmonicTracker {
     fn init(&mut self, max_frame_size: usize, _sample_rate: u32) {
         self.fft_buffer = vec![Complex::new(0.0, 0.0); max_frame_size];
         self.magnitude_buf = vec![0.0; max_frame_size / 2];
+        self.noise_scratch = vec![0.0; max_frame_size / 2];
+        // Pre-build FFT plan for the max size; will be rebuilt only if size changes
+        let mut planner = FftPlanner::new();
+        self.cached_fft = Some(planner.plan_fft_forward(max_frame_size));
+        self.cached_fft_size = max_frame_size;
     }
 
     fn process(&mut self, samples: &mut [f32], ctx: &mut StageContext) {
@@ -66,9 +79,13 @@ impl DspStage for HarmonicTracker {
             );
         }
 
-        let mut planner = FftPlanner::new();
-        let fft = planner.plan_fft_forward(fft_size);
-        fft.process(&mut self.fft_buffer[..fft_size]);
+        // Reuse cached FFT plan; only rebuild if fft_size changed
+        if self.cached_fft_size != fft_size || self.cached_fft.is_none() {
+            let mut planner = FftPlanner::new();
+            self.cached_fft = Some(planner.plan_fft_forward(fft_size));
+            self.cached_fft_size = fft_size;
+        }
+        self.cached_fft.as_ref().unwrap().process(&mut self.fft_buffer[..fft_size]);
 
         let half = fft_size / 2;
         for i in 0..half.min(self.magnitude_buf.len()) {
@@ -91,8 +108,11 @@ impl DspStage for HarmonicTracker {
             let mut harmonics = Vec::new();
             let mut n = 1usize;
 
-            // Estimate noise floor for this region
-            let noise_floor = estimate_local_noise_floor(&self.magnitude_buf[..half]);
+            // Estimate noise floor using pre-allocated scratch buffer (no heap alloc)
+            let noise_floor = estimate_local_noise_floor_inplace(
+                &self.magnitude_buf[..half],
+                &mut self.noise_scratch[..half],
+            );
 
             while f0 * n as f32 <= cutoff {
                 let harmonic_freq = f0 * n as f32;
@@ -144,17 +164,27 @@ impl DspStage for HarmonicTracker {
     fn reset(&mut self) {
         self.fft_buffer.fill(Complex::new(0.0, 0.0));
         self.magnitude_buf.fill(0.0);
+        self.noise_scratch.fill(0.0);
     }
 }
 
-fn estimate_local_noise_floor(magnitudes: &[f32]) -> f32 {
+/// Estimate noise floor as the 10th percentile of magnitudes.
+/// Uses a pre-allocated scratch buffer — zero heap allocation.
+/// `select_nth_unstable_by` is O(n) average, much faster than full sort.
+fn estimate_local_noise_floor_inplace(magnitudes: &[f32], scratch: &mut [f32]) -> f32 {
     if magnitudes.is_empty() {
         return 0.0;
     }
-    let mut sorted: Vec<f32> = magnitudes.to_vec();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let idx = sorted.len() / 10;
-    sorted.get(idx).copied().unwrap_or(0.0)
+    let len = magnitudes.len().min(scratch.len());
+    scratch[..len].copy_from_slice(&magnitudes[..len]);
+    let idx = len / 10;
+    if idx >= len {
+        return 0.0;
+    }
+    scratch[..len].select_nth_unstable_by(idx, |a, b| {
+        a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    scratch[idx]
 }
 
 fn extract_noise_envelope(

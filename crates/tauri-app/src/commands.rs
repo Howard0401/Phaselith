@@ -15,9 +15,30 @@ pub struct ConfigPayload {
     pub quality_preset: u8,
     #[serde(default = "default_synthesis_mode")]
     pub synthesis_mode: u8,
+    #[serde(default)]
+    pub filter_style: u8, // 0=Reference, 1=Warm, 2=BassPlus, 3=Custom
+    // ─── 6-axis StyleConfig (debug/advanced UI) ───
+    #[serde(default = "default_warmth")]
+    pub warmth: f32,
+    #[serde(default = "default_air_brightness")]
+    pub air_brightness: f32,
+    #[serde(default = "default_smoothness")]
+    pub smoothness: f32,
+    #[serde(default = "default_spatial_spread")]
+    pub spatial_spread: f32,
+    #[serde(default = "default_impact_gain")]
+    pub impact_gain: f32,
+    #[serde(default = "default_body")]
+    pub body: f32,
 }
 
 fn default_synthesis_mode() -> u8 { 1 } // FftOlaPilot
+fn default_warmth() -> f32 { 0.15 }
+fn default_air_brightness() -> f32 { 0.50 }
+fn default_smoothness() -> f32 { 0.40 }
+fn default_spatial_spread() -> f32 { 0.30 }
+fn default_impact_gain() -> f32 { 0.15 }
+fn default_body() -> f32 { 0.40 }
 
 #[derive(Serialize)]
 pub struct ConfigResponse {
@@ -29,11 +50,44 @@ pub struct ConfigResponse {
     pub phase_mode: u8,
     pub quality_preset: u8,
     pub synthesis_mode: u8,
+    pub filter_style: u8,
+    pub warmth: f32,
+    pub air_brightness: f32,
+    pub smoothness: f32,
+    pub spatial_spread: f32,
+    pub impact_gain: f32,
+    pub body: f32,
 }
+
+/// Track frame_count for staleness detection.
+/// If frame_count hasn't changed for STALE_THRESHOLD consecutive polls,
+/// the APO is not running → return None (Disconnected).
+static LAST_FRAME_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
+static STALE_COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+const STALE_THRESHOLD: u32 = 15; // 15 × 200ms = 3 seconds
 
 #[tauri::command]
 pub fn get_status() -> Result<Option<ipc_bridge::StatusSnapshot>, String> {
-    Ok(ipc_bridge::read_status())
+    let snap = ipc_bridge::read_status();
+    match snap {
+        Some(ref s) => {
+            let prev = LAST_FRAME_COUNT.swap(s.frame_count, std::sync::atomic::Ordering::Relaxed);
+            if s.frame_count == prev {
+                let count = STALE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                if count >= STALE_THRESHOLD {
+                    // APO not running — stale mmap data
+                    return Ok(None);
+                }
+            } else {
+                STALE_COUNTER.store(0, std::sync::atomic::Ordering::Relaxed);
+            }
+            Ok(snap)
+        }
+        None => {
+            STALE_COUNTER.store(0, std::sync::atomic::Ordering::Relaxed);
+            Ok(None)
+        }
+    }
 }
 
 #[tauri::command]
@@ -59,6 +113,13 @@ pub fn set_config(config: ConfigPayload) {
         config.phase_mode,
         config.quality_preset,
         config.synthesis_mode,
+        config.filter_style,
+        config.warmth,
+        config.air_brightness,
+        config.smoothness,
+        config.spatial_spread,
+        config.impact_gain,
+        config.body,
     );
 }
 
@@ -77,6 +138,13 @@ pub fn get_config() -> ConfigResponse {
         phase_mode: 0,
         quality_preset: 1,
         synthesis_mode: 1, // FftOlaPilot (default)
+        filter_style: 0,   // Reference (default)
+        warmth: 0.15,
+        air_brightness: 0.50,
+        smoothness: 0.40,
+        spatial_spread: 0.30,
+        impact_gain: 0.15,
+        body: 0.40,
     })
 }
 
@@ -280,6 +348,14 @@ pub fn uninstall_apo() -> Result<String, String> {
 
         let _ = std::fs::remove_file(&script_path);
         let _ = std::fs::remove_file(&marker_path);
+
+        // Disconnect IPC bridge so UI shows "Disconnected" immediately
+        ipc_bridge::disconnect();
+
+        // Clean up mmap files — they're stale now that APO is gone
+        let _ = std::fs::remove_file(r"C:\ProgramData\Phaselith\shared_config.bin");
+        let _ = std::fs::remove_file(r"C:\ProgramData\Phaselith\shared_status.bin");
+        let _ = std::fs::remove_dir(r"C:\ProgramData\Phaselith");
 
         Ok(format!("APO uninstalled. {elevated_msg}."))
     }

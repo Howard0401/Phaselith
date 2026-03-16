@@ -15,17 +15,17 @@ pub fn detect_ridges(
         return (None, 0.0);
     }
 
-    // Find peaks in the spectrum
+    // Find peaks in the spectrum (zero-alloc fixed buffer)
     let peaks = find_spectral_peaks(magnitude, 10);
-    if peaks.is_empty() {
-        return (None, 0.0);
-    }
 
     // Try each peak as a potential fundamental
     let mut best_f0 = 0.0f32;
     let mut best_score = 0.0f32;
 
     for &peak_bin in &peaks {
+        if peak_bin == 0 && magnitude.get(0).copied().unwrap_or(0.0) < 1e-10 {
+            continue; // skip sentinel zeros
+        }
         let f0 = peak_bin as f32 * bin_to_freq;
         if f0 < 50.0 || f0 > 4000.0 {
             continue;
@@ -105,19 +105,50 @@ fn fill_harmonic_field(magnitude: &[f32], f0: f32, bin_to_freq: f32, harmonic_fi
 }
 
 /// Find the top N spectral peaks (local maxima).
-fn find_spectral_peaks(magnitude: &[f32], max_peaks: usize) -> Vec<usize> {
-    let mut peaks: Vec<(usize, f32)> = Vec::new();
+/// Zero-alloc: uses a fixed-size inline buffer with insertion to maintain
+/// the top-N peaks, avoiding Vec allocation and full sort on the hot path.
+fn find_spectral_peaks(magnitude: &[f32], max_peaks: usize) -> [usize; 10] {
+    // Fixed buffer: stores (bin_index, magnitude) for up to 10 peaks.
+    // max_peaks is always 10 in practice.
+    let cap = max_peaks.min(10);
+    let mut top_bins = [0usize; 10];
+    let mut top_mags = [0.0f32; 10];
+    let mut count = 0usize;
 
-    for i in 1..magnitude.len() - 1 {
-        if magnitude[i] > magnitude[i - 1] && magnitude[i] > magnitude[i + 1] {
-            peaks.push((i, magnitude[i]));
+    for i in 1..magnitude.len().saturating_sub(1) {
+        let m = magnitude[i];
+        if m > magnitude[i - 1] && m > magnitude[i + 1] {
+            if count < cap {
+                // Buffer not full — insert at end
+                let pos = count;
+                count += 1;
+                top_bins[pos] = i;
+                top_mags[pos] = m;
+                // Bubble up to maintain descending order
+                let mut j = pos;
+                while j > 0 && top_mags[j] > top_mags[j - 1] {
+                    top_bins.swap(j, j - 1);
+                    top_mags.swap(j, j - 1);
+                    j -= 1;
+                }
+            } else if m > top_mags[cap - 1] {
+                // Replace the smallest (last) entry
+                top_bins[cap - 1] = i;
+                top_mags[cap - 1] = m;
+                // Bubble up
+                let mut j = cap - 1;
+                while j > 0 && top_mags[j] > top_mags[j - 1] {
+                    top_bins.swap(j, j - 1);
+                    top_mags.swap(j, j - 1);
+                    j -= 1;
+                }
+            }
         }
     }
 
-    peaks.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-    peaks.truncate(max_peaks);
-    peaks.into_iter().map(|(i, _)| i).collect()
+    top_bins
 }
+
 
 #[cfg(test)]
 mod tests {

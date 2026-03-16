@@ -73,6 +73,8 @@ impl PhaselithModule for QualityGovernor {
                 QualityMode::Light => 0,
                 QualityMode::Standard => 1,
                 QualityMode::Ultra => 2,
+                QualityMode::Extreme => 3,
+                QualityMode::UltraExtreme => 4,
             },
             frame_count: ctx.frame_index,
         };
@@ -82,6 +84,8 @@ impl PhaselithModule for QualityGovernor {
             self.suggested_mode = if self.avg_process_time_us > 20000.0 {
                 // Too slow, downgrade
                 match ctx.config.quality_mode {
+                    QualityMode::UltraExtreme => QualityMode::Extreme,
+                    QualityMode::Extreme => QualityMode::Ultra,
                     QualityMode::Ultra => QualityMode::Standard,
                     QualityMode::Standard => QualityMode::Light,
                     QualityMode::Light => QualityMode::Light,
@@ -91,7 +95,9 @@ impl PhaselithModule for QualityGovernor {
                 match ctx.config.quality_mode {
                     QualityMode::Light => QualityMode::Standard,
                     QualityMode::Standard => QualityMode::Ultra,
-                    QualityMode::Ultra => QualityMode::Ultra,
+                    QualityMode::Ultra => QualityMode::Extreme,
+                    QualityMode::Extreme => QualityMode::UltraExtreme,
+                    QualityMode::UltraExtreme => QualityMode::UltraExtreme,
                 }
             } else {
                 ctx.config.quality_mode

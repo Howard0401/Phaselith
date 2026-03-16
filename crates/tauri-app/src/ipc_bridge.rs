@@ -31,6 +31,14 @@ pub struct SharedConfig {
     pub phase_mode: AtomicU8,
     pub quality_preset: AtomicU8,
     pub synthesis_mode: AtomicU8,  // 0=LegacyAdditive, 1=FftOlaPilot, 2=FftOlaFull
+    pub filter_style: AtomicU8,   // 0=Reference, 1=Warm, 2=BassPlus, 3=Custom
+    // ─── 6-axis StyleConfig (for Custom filter_style) ───
+    pub warmth_u32: AtomicU32,
+    pub air_brightness_u32: AtomicU32,
+    pub smoothness_u32: AtomicU32,
+    pub spatial_spread_u32: AtomicU32,
+    pub impact_gain_u32: AtomicU32,
+    pub body_u32: AtomicU32,
 }
 
 #[repr(C)]
@@ -145,7 +153,9 @@ pub fn reconnect() -> bool {
     false
 }
 
-/// Write config values to shared memory (Tauri → APO)
+/// Write config values to shared memory (Tauri → APO).
+/// All atomic stores happen BEFORE version.fetch_add(Release) — APO sees
+/// consistent state when it detects the version change (Acquire).
 pub fn write_config(
     enabled: bool,
     strength: f32,
@@ -155,6 +165,13 @@ pub fn write_config(
     phase_mode: u8,
     quality_preset: u8,
     synthesis_mode: u8,
+    filter_style: u8,
+    warmth: f32,
+    air_brightness: f32,
+    smoothness: f32,
+    spatial_spread: f32,
+    impact_gain: f32,
+    body: f32,
 ) {
     let guard = BRIDGE.lock().unwrap();
     if let Some(bridge) = guard.as_ref() {
@@ -168,6 +185,15 @@ pub fn write_config(
         config.phase_mode.store(phase_mode, Ordering::Relaxed);
         config.quality_preset.store(quality_preset, Ordering::Relaxed);
         config.synthesis_mode.store(synthesis_mode, Ordering::Relaxed);
+        config.filter_style.store(filter_style, Ordering::Relaxed);
+        // 6-axis style parameters (used when filter_style==3 Custom)
+        config.warmth_u32.store((warmth * 10000.0) as u32, Ordering::Relaxed);
+        config.air_brightness_u32.store((air_brightness * 10000.0) as u32, Ordering::Relaxed);
+        config.smoothness_u32.store((smoothness * 10000.0) as u32, Ordering::Relaxed);
+        config.spatial_spread_u32.store((spatial_spread * 10000.0) as u32, Ordering::Relaxed);
+        config.impact_gain_u32.store((impact_gain * 10000.0) as u32, Ordering::Relaxed);
+        config.body_u32.store((body * 10000.0) as u32, Ordering::Relaxed);
+        // Version bump LAST — Release ordering ensures all stores above are visible
         config.version.fetch_add(1, Ordering::Release);
     }
 }
@@ -188,6 +214,13 @@ pub fn read_config() -> Option<crate::commands::ConfigResponse> {
         phase_mode: config.phase_mode.load(Ordering::Relaxed),
         quality_preset: config.quality_preset.load(Ordering::Relaxed),
         synthesis_mode: config.synthesis_mode.load(Ordering::Relaxed),
+        filter_style: config.filter_style.load(Ordering::Relaxed),
+        warmth: config.warmth_u32.load(Ordering::Relaxed) as f32 / 10000.0,
+        air_brightness: config.air_brightness_u32.load(Ordering::Relaxed) as f32 / 10000.0,
+        smoothness: config.smoothness_u32.load(Ordering::Relaxed) as f32 / 10000.0,
+        spatial_spread: config.spatial_spread_u32.load(Ordering::Relaxed) as f32 / 10000.0,
+        impact_gain: config.impact_gain_u32.load(Ordering::Relaxed) as f32 / 10000.0,
+        body: config.body_u32.load(Ordering::Relaxed) as f32 / 10000.0,
     })
 }
 
@@ -205,6 +238,14 @@ pub fn read_status() -> Option<StatusSnapshot> {
         processing_load: f32::from_bits(status.processing_load_u32.load(Ordering::Relaxed)),
         wet_dry_diff_db: f32::from_bits(status.wet_dry_diff_db_u32.load(Ordering::Relaxed)),
     })
+}
+
+/// Disconnect the bridge (e.g. after uninstall).
+/// Drops all handles so read_status() returns None → UI shows Disconnected.
+pub fn disconnect() {
+    let mut guard = BRIDGE.lock().unwrap();
+    *guard = None;
+    eprintln!("Phaselith IPC bridge: disconnected");
 }
 
 /// Check if connected
