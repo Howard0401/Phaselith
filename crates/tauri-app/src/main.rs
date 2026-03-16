@@ -20,6 +20,7 @@ fn main() {
             commands::install_apo,
             commands::uninstall_apo,
             commands::get_config,
+            commands::is_apo_installed,
         ])
         .setup(|_app| {
             // Initialize mmap IPC bridge

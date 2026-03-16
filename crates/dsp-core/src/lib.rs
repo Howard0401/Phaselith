@@ -13,8 +13,8 @@ pub mod pipeline;
 
 // ─── CIRRUS public API ───
 pub use config::{EngineConfig, PhaseMode, QualityMode};
-pub use engine::{CirrusEngine, CirrusEngineBuilder};
-pub use module_trait::{CirrusModule, ProcessContext};
+pub use engine::{PhaselithEngine, PhaselithEngineBuilder};
+pub use module_trait::{PhaselithModule, ProcessContext};
 pub use types::{
     DamagePosterior, GaussianEstimate, Lattice, TriLattice,
     StructuredFields, ResidualCandidate, ValidatedResidual, QualityTier,

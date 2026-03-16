@@ -4,7 +4,7 @@ pub mod harmonic_ext;
 pub mod phase_relax;
 pub mod side_recovery;
 
-use crate::module_trait::{CirrusModule, ProcessContext};
+use crate::module_trait::{PhaselithModule, ProcessContext};
 use crate::types::ResidualCandidate;
 
 /// M4: Inverse Residual Solver.
@@ -32,7 +32,7 @@ impl InverseResidualSolver {
     }
 }
 
-impl CirrusModule for InverseResidualSolver {
+impl PhaselithModule for InverseResidualSolver {
     fn name(&self) -> &'static str {
         "M4:Solver"
     }
@@ -53,16 +53,20 @@ impl CirrusModule for InverseResidualSolver {
 
         // Ensure residual is allocated
         if ctx.residual.harmonic.len() != core_bins {
+            // native-rt: only happens on first call if test bypasses engine builder
             ctx.residual = ResidualCandidate::new(core_bins);
         }
         ctx.residual.clear();
 
         // Ensure time_candidate is sized to sample count (not bin count)
         let sample_len = samples.len();
-        if ctx.time_candidate.len() != sample_len {
+        if ctx.time_candidate.len() < sample_len {
+            // native-rt: pre-allocated to max_frame_size in engine build(),
+            // so this branch only fires if test bypasses engine builder.
             ctx.time_candidate.resize(sample_len, 0.0);
         }
-        ctx.time_candidate.fill(0.0);
+        // Zero only the portion we'll use
+        ctx.time_candidate[..sample_len].fill(0.0);
 
         let strength = ctx.config.strength;
 

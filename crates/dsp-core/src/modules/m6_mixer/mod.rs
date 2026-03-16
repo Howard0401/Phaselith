@@ -3,7 +3,7 @@ pub mod kweighting;
 pub mod masking;
 pub mod true_peak;
 
-use crate::module_trait::{CirrusModule, ProcessContext};
+use crate::module_trait::{PhaselithModule, ProcessContext};
 use crate::modules::m3_factorizer::transient;
 
 /// M6: Perceptual Safety Mixer.
@@ -129,7 +129,7 @@ impl PerceptualSafetyMixer {
     }
 }
 
-impl CirrusModule for PerceptualSafetyMixer {
+impl PhaselithModule for PerceptualSafetyMixer {
     fn name(&self) -> &'static str {
         "M6:SafetyMixer"
     }

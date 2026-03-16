@@ -73,9 +73,23 @@
       </div>
     </section>
 
-    <section class="actions">
-      <button class="btn install" @click="installApo">Install APO</button>
-      <button class="btn uninstall" @click="uninstallApo">Uninstall APO</button>
+    <section class="mode-section">
+      <div class="mode-header">
+        <label>Audio Mode</label>
+        <span class="mode-badge" :class="apoInstalled ? 'system' : 'browser'">
+          {{ apoInstalled ? 'System-Wide' : 'Chrome Extension' }}
+        </span>
+      </div>
+      <p class="mode-hint" v-if="apoInstalled">
+        APO is active. Disable Chrome extension to avoid crackling.
+      </p>
+      <p class="mode-hint" v-else>
+        Use Chrome extension for per-tab enhancement. Install APO for system-wide.
+      </p>
+      <div class="actions">
+        <button v-if="!apoInstalled" class="btn install" @click="installApo">Install APO</button>
+        <button v-else class="btn uninstall" @click="uninstallApo">Uninstall APO</button>
+      </div>
     </section>
 
     <footer>Phaselith v0.1.0</footer>
@@ -99,6 +113,7 @@ const config = ref({
 });
 
 const status = ref(null);
+const apoInstalled = ref(false);
 let pollTimer = null;
 
 onMounted(async () => {
@@ -109,6 +124,10 @@ onMounted(async () => {
     console.warn('Failed to load config:', e);
   }
 
+  // Sync UI config to mmap immediately on startup so APO reads correct values.
+  // Without this, mmap may have stale data (e.g. enabled=false from a previous session).
+  await applyConfig();
+
   pollTimer = setInterval(pollStatus, 200);
 });
 
@@ -118,9 +137,15 @@ onUnmounted(() => {
 
 async function pollStatus() {
   try {
-    status.value = await invoke('get_status');
+    const s = await invoke('get_status');
+    status.value = s;
   } catch {
     status.value = null;
+  }
+  try {
+    apoInstalled.value = await invoke('is_apo_installed');
+  } catch {
+    apoInstalled.value = false;
   }
 }
 
@@ -133,8 +158,15 @@ async function applyConfig() {
 }
 
 async function installApo() {
+  const ok = confirm(
+    'Install system-wide APO?\n\n' +
+    'Important: Disable the Chrome extension before installing.\n' +
+    'APO and Chrome extension cannot be active at the same time.'
+  );
+  if (!ok) return;
   try {
     const msg = await invoke('install_apo');
+    apoInstalled.value = true;
     alert(msg);
   } catch (e) {
     alert('Error: ' + e);
@@ -144,7 +176,8 @@ async function installApo() {
 async function uninstallApo() {
   try {
     const msg = await invoke('uninstall_apo');
-    alert(msg);
+    apoInstalled.value = false;
+    alert(msg + '\n\nYou can now use the Chrome extension.');
   } catch (e) {
     alert('Error: ' + e);
   }
@@ -249,6 +282,34 @@ input:checked + .slider::before { transform: translateX(20px); }
   font-size: 12px;
 }
 
+.mode-section {
+  background: #1a1a2e;
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.mode-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.mode-header label { font-size: 13px; font-weight: 600; }
+.mode-badge {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+.mode-badge.system { background: #00d4ff22; color: #00d4ff; border: 1px solid #00d4ff44; }
+.mode-badge.browser { background: #4ade8022; color: #4ade80; border: 1px solid #4ade8044; }
+.mode-hint {
+  font-size: 11px;
+  color: #888;
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
 .actions {
   display: flex;
   gap: 8px;

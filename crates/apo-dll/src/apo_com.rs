@@ -279,8 +279,10 @@ impl IAudioProcessingObjectRT_Impl for PhaselithApoCom_Impl {
         if count == 0 {
             apo_log!("APOProcess: first call! ch={} locked={}", self.channels.get(), self.locked.get());
         }
-        // catch_unwind: a panic here would kill audiodg.exe
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // catch_unwind: a panic here would kill audiodg.exe.
+        // On panic, we MUST still produce valid output (passthrough dry signal)
+        // to prevent buzzing/static from uninitialized output buffers.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             if ppinputconnections.is_null() || ppoutputconnections.is_null() {
                 return;
             }
@@ -326,6 +328,37 @@ impl IAudioProcessingObjectRT_Impl for PhaselithApoCom_Impl {
             output_prop.u32ValidFrameCount = frames as u32;
             output_prop.u32BufferFlags = APO_BUFFER_FLAGS(1); // BUFFER_VALID
         }));
+
+        // On panic: passthrough dry input to prevent audio corruption.
+        // This is critical — without it, the output buffer may contain
+        // uninitialized data that sounds like buzzing/static.
+        if result.is_err() {
+            apo_log!("APOProcess: PANIC caught! Falling back to passthrough");
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                if ppinputconnections.is_null() || ppoutputconnections.is_null() {
+                    return;
+                }
+                let input_prop = unsafe { &**ppinputconnections };
+                let output_prop = unsafe { &mut **ppoutputconnections };
+                let frames = input_prop.u32ValidFrameCount as usize;
+                let ch = self.channels.get() as usize;
+                if ch == 0 || frames == 0 { return; }
+                let sample_count = frames * ch;
+                let in_ptr = input_prop.pBuffer as *const f32;
+                let out_ptr = output_prop.pBuffer as *mut f32;
+                if !in_ptr.is_null() && !out_ptr.is_null() {
+                    let input = unsafe { std::slice::from_raw_parts(in_ptr, sample_count) };
+                    let output = unsafe { std::slice::from_raw_parts_mut(out_ptr, sample_count) };
+                    output.copy_from_slice(input);
+                    output_prop.u32ValidFrameCount = frames as u32;
+                    output_prop.u32BufferFlags = APO_BUFFER_FLAGS(1);
+                }
+            }));
+            // After a panic, enter bypass mode to prevent recurring panics
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.inner.borrow_mut().set_bypass_mode();
+            }));
+        }
     }
 
     fn CalcInputFrames(&self, u32outputframecount: u32) -> u32 {

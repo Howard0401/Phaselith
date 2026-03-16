@@ -1,9 +1,110 @@
 use rustfft::{FftPlanner, num_complex::Complex};
+#[cfg(feature = "native-rt")]
+use std::sync::Arc;
+
+/// Pre-allocated cutoff detector for native RT threads.
+/// Avoids per-call Vec<Complex> + FftPlanner allocation.
+#[cfg(feature = "native-rt")]
+pub struct CutoffDetector {
+    fft_size: usize,
+    complex_buf: Vec<Complex<f32>>,
+    magnitudes: Vec<f32>,
+    fft_forward: Arc<dyn rustfft::Fft<f32>>,
+    /// Pre-allocated FFT scratch buffer — avoids internal allocation by rustfft
+    /// which would block on CriticalSection on the RT thread.
+    fft_scratch: Vec<Complex<f32>>,
+}
+
+#[cfg(feature = "native-rt")]
+impl CutoffDetector {
+    pub fn new(fft_size: usize) -> Self {
+        let mut planner = FftPlanner::new();
+        let fft_forward = planner.plan_fft_forward(fft_size);
+        let scratch_len = fft_forward.get_inplace_scratch_len();
+        Self {
+            fft_size,
+            complex_buf: vec![Complex::new(0.0f32, 0.0); fft_size],
+            magnitudes: vec![0.0f32; fft_size / 2],
+            fft_scratch: vec![Complex::new(0.0f32, 0.0); scratch_len],
+            fft_forward,
+        }
+    }
+
+    /// Zero-alloc cutoff detection. Same algorithm as `detect_cutoff()`.
+    pub fn detect(&mut self, samples: &[f32], sample_rate: u32) -> Option<f32> {
+        let fft_size = self.fft_size;
+        let len = samples.len().min(fft_size);
+        if len < 64 {
+            return None;
+        }
+
+        // Window + fill complex buffer (no allocation)
+        for i in 0..len {
+            let window =
+                0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / (len - 1) as f32).cos());
+            self.complex_buf[i] = Complex::new(samples[i] * window, 0.0);
+        }
+        for i in len..fft_size {
+            self.complex_buf[i] = Complex::new(0.0, 0.0);
+        }
+
+        self.fft_forward.process_with_scratch(&mut self.complex_buf, &mut self.fft_scratch);
+
+        // Compute magnitudes (no allocation)
+        let half = fft_size / 2;
+        for i in 0..half {
+            self.magnitudes[i] = self.complex_buf[i].norm();
+        }
+
+        // Energy cliff detection (same as legacy)
+        let bin_to_freq = sample_rate as f32 / fft_size as f32;
+        let band_size = 8.max(fft_size / 256);
+        let max_bin = ((20000.0 / bin_to_freq) as usize).min(half - 1);
+        let cliff_ratio = 10.0;
+
+        for center in (band_size..=max_bin.saturating_sub(band_size)).rev() {
+            let freq = center as f32 * bin_to_freq;
+            if freq > 20000.0 || freq < 2000.0 {
+                continue;
+            }
+
+            let below_start = center.saturating_sub(band_size);
+            let above_end = (center + band_size).min(half - 1);
+
+            let energy_below: f32 = self.magnitudes[below_start..center]
+                .iter()
+                .map(|m| m * m)
+                .sum::<f32>()
+                / band_size as f32;
+
+            let energy_above: f32 = self.magnitudes[center..=above_end]
+                .iter()
+                .map(|m| m * m)
+                .sum::<f32>()
+                / (above_end - center + 1) as f32;
+
+            if energy_above < f32::EPSILON {
+                if energy_below > f32::EPSILON {
+                    return if freq > 19500.0 { None } else { Some(freq) };
+                }
+                continue;
+            }
+
+            let ratio = energy_below / energy_above;
+            if ratio > cliff_ratio {
+                return if freq > 19500.0 { None } else { Some(freq) };
+            }
+        }
+
+        None
+    }
+}
 
 /// Detect the high-frequency cutoff of lossy-compressed audio.
 /// Returns `None` if no cutoff is detected (lossless).
 ///
 /// Adapted from S0 cutoff detection with energy cliff algorithm.
+/// Note: allocates per call — use `CutoffDetector` for native RT.
 pub fn detect_cutoff(samples: &[f32], sample_rate: u32, fft_size: usize) -> Option<f32> {
     let len = samples.len().min(fft_size);
     if len < 64 {

@@ -54,6 +54,45 @@ pub fn apply_constraints_styled(
     constrained
 }
 
+/// Zero-alloc variant: writes constrained mask into pre-allocated `out` buffer.
+#[cfg(feature = "native-rt")]
+pub fn apply_constraints_styled_into(
+    mask: &[f32],
+    cutoff_bin: usize,
+    sample_rate: u32,
+    fft_size: usize,
+    impact_gain: f32,
+    transient_field: &[f32],
+    out: &mut [f32],
+) {
+    let len = mask.len().min(out.len());
+    out[..len].copy_from_slice(&mask[..len]);
+    let bin_to_freq = sample_rate as f32 / fft_size.max(1) as f32;
+
+    let impact_lo_bin = (80.0 / bin_to_freq) as usize;
+    let impact_hi_bin = (180.0 / bin_to_freq) as usize;
+    let impact_max = impact_gain.clamp(0.0, 1.0) * 0.4;
+
+    for k in 0..cutoff_bin.min(len) {
+        if impact_gain > 0.01
+            && k >= impact_lo_bin
+            && k < impact_hi_bin
+            && k < transient_field.len()
+        {
+            let transient_gate = transient_field[k].clamp(0.0, 1.0);
+            out[k] = (mask[k] * impact_max * transient_gate).min(impact_max);
+        } else {
+            out[k] = 0.0;
+        }
+    }
+
+    let transition_width = 5;
+    for k in cutoff_bin..cutoff_bin.saturating_add(transition_width).min(len) {
+        let t = (k - cutoff_bin) as f32 / transition_width as f32;
+        out[k] *= t;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

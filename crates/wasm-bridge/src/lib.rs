@@ -11,19 +11,19 @@
 
 use core::cell::UnsafeCell;
 
-use asce_dsp_core::config::{
+use phaselith_dsp_core::config::{
     EngineConfig, PhaseMode, QualityMode, StyleConfig, StylePreset, SynthesisMode,
 };
-use asce_dsp_core::engine::CirrusEngineBuilder;
-use asce_dsp_core::types::CrossChannelContext;
-use asce_dsp_core::CirrusEngine;
+use phaselith_dsp_core::engine::PhaselithEngineBuilder;
+use phaselith_dsp_core::types::CrossChannelContext;
+use phaselith_dsp_core::PhaselithEngine;
 
 // ─── Global state container ───
 // WASM is single-threaded, so we wrap in UnsafeCell + manual Sync impl.
 
 struct WasmState {
-    engine_l: UnsafeCell<Option<CirrusEngine>>,
-    engine_r: UnsafeCell<Option<CirrusEngine>>,
+    engine_l: UnsafeCell<Option<PhaselithEngine>>,
+    engine_r: UnsafeCell<Option<PhaselithEngine>>,
     input_buf: UnsafeCell<[f32; 128]>,
     output_buf: UnsafeCell<[f32; 128]>,
 
@@ -60,8 +60,8 @@ fn make_config() -> EngineConfig {
     }
 }
 
-fn build_engine(sample_rate: u32, config: EngineConfig) -> CirrusEngine {
-    CirrusEngineBuilder::new(sample_rate, 1024)
+fn build_engine(sample_rate: u32, config: EngineConfig) -> PhaselithEngine {
+    PhaselithEngineBuilder::new(sample_rate, 1024)
         .with_channels(1) // Each engine processes one deinterleaved mono channel
         .with_config(config)
         .build_default()
@@ -152,7 +152,7 @@ pub extern "C" fn process_block(len: u32) {
 // ─── Config control exports ───
 // All set_* functions update BOTH engines to keep them in sync.
 
-fn with_both_engines(f: impl Fn(&mut CirrusEngine)) {
+fn with_both_engines(f: impl Fn(&mut PhaselithEngine)) {
     unsafe {
         if let Some(engine) = (*STATE.engine_l.get()).as_mut() {
             f(engine);

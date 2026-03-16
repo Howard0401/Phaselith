@@ -42,6 +42,11 @@ pub struct PhaselithApo {
     cross_channel_prev: Option<CrossChannelContext>,
     /// Last seen config version from mmap (for change-only updates).
     last_config_version: u32,
+    /// Previous frame's enabled state — used to detect transitions for crossfade.
+    prev_enabled: bool,
+    /// Frame counter for warmup phase. Engine output is blended from 0%→100%
+    /// over the first WARMUP_FRAMES to let OLA/EMA/damage posteriors settle.
+    process_frame_count: u64,
 }
 
 impl PhaselithApo {
@@ -60,6 +65,35 @@ impl PhaselithApo {
             dry_lr_saved: Vec::new(),
             cross_channel_prev: None,
             last_config_version: 0,
+            prev_enabled: false,
+            process_frame_count: 0,
+        }
+    }
+
+    /// Number of frames to blend from dry→wet on engine startup.
+    /// Lets OLA buffer fill, EMA smoothers converge, and damage posteriors
+    /// accumulate before applying full enhancement.
+    const WARMUP_FRAMES: u64 = 80;
+
+    /// Check a buffer for NaN/Inf values. Returns true if the buffer is clean.
+    #[inline]
+    fn is_buffer_clean(buf: &[f32], len: usize) -> bool {
+        for i in 0..len {
+            if !buf[i].is_finite() {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Compute the blend factor for warmup phase.
+    /// Returns 0.0 at frame 0, rises to 1.0 at WARMUP_FRAMES.
+    #[inline]
+    fn warmup_blend(&self) -> f32 {
+        if self.process_frame_count >= Self::WARMUP_FRAMES {
+            1.0
+        } else {
+            self.process_frame_count as f32 / Self::WARMUP_FRAMES as f32
         }
     }
 
@@ -109,9 +143,12 @@ impl PhaselithApo {
 
         // Dual-engine: each engine processes one mono channel independently.
         // Aligned with browser WASM bridge architecture (with_channels(1)).
-        // Use fft_size (1024) as max_frame_size — same as Chrome WASM bridge.
+        // Use frame_size (480) as max_frame_size — NOT fft_size (1024).
+        // Using fft_size caused frame_params.host_block_size=1024 (wrong),
+        // validated.data sized to 1024 (47% wasted/zeroed), and OLA drain
+        // under-serving the actual 480-sample blocks.
         self.engine_l = Some(
-            PhaselithEngineBuilder::new(self.sample_rate, fft_size)
+            PhaselithEngineBuilder::new(self.sample_rate, self.frame_size)
                 .with_config(config)
                 .with_channels(1)
                 .build_default(),
@@ -119,7 +156,7 @@ impl PhaselithApo {
 
         if self.channels >= 2 {
             self.engine_r = Some(
-                PhaselithEngineBuilder::new(self.sample_rate, fft_size)
+                PhaselithEngineBuilder::new(self.sample_rate, self.frame_size)
                     .with_config(config)
                     .with_channels(1)
                     .build_default(),
@@ -132,6 +169,7 @@ impl PhaselithApo {
         self.dry_lr_saved = vec![0.0f32; frame_size * 2]; // L dry + R dry
         self.cross_channel_prev = None;
         self.last_config_version = 0;
+        self.process_frame_count = 0;
 
         self.locked = true;
     }
@@ -162,7 +200,7 @@ impl PhaselithApo {
         // then update config (mutable borrow). ALWAYS process through engines
         // to keep internal state — OLA buffer, frame clock — in sync.
         let (enabled, mmap_version) = if let Some(ref mmap) = self.mmap {
-            let ver = mmap.config().version.load(std::sync::atomic::Ordering::Relaxed);
+            let ver = mmap.config().version.load(std::sync::atomic::Ordering::Acquire);
             let en = mmap.config().is_enabled();
             (en, ver)
         } else {
@@ -186,13 +224,45 @@ impl PhaselithApo {
             return;
         }
 
+        // Detect enabled state transition for crossfade
+        let transitioning = enabled != self.prev_enabled;
+        self.prev_enabled = enabled;
+        self.process_frame_count += 1;
+
+        // Warmup blend: gradually ramp from dry→wet over WARMUP_FRAMES.
+        // During warmup the OLA buffer, EMA smoothers, and damage posteriors
+        // are still settling — full-strength output can contain artifacts.
+        let warmup = self.warmup_blend();
+
         if ch == 1 {
             // Mono: use L engine only — always process to keep state in sync
             if let Some(ref mut engine) = self.engine_l {
                 self.channel_buf_l[..frames].copy_from_slice(&input[..frames]);
                 engine.process(&mut self.channel_buf_l[..frames]);
-                if enabled {
-                    output[..frames].copy_from_slice(&self.channel_buf_l[..frames]);
+
+                // Safety: NaN/Inf guard — if engine produced garbage, passthrough
+                let clean = Self::is_buffer_clean(&self.channel_buf_l, frames);
+                if !clean {
+                    output[..frames].copy_from_slice(&input[..frames]);
+                } else if transitioning {
+                    for f in 0..frames {
+                        let t = (f as f32 + 1.0) / frames as f32;
+                        let (from, to) = if enabled {
+                            (input[f], self.channel_buf_l[f])
+                        } else {
+                            (self.channel_buf_l[f], input[f])
+                        };
+                        output[f] = from * (1.0 - t) + to * t;
+                    }
+                } else if enabled {
+                    // Apply warmup blend
+                    if warmup >= 1.0 {
+                        output[..frames].copy_from_slice(&self.channel_buf_l[..frames]);
+                    } else {
+                        for f in 0..frames {
+                            output[f] = input[f] * (1.0 - warmup) + self.channel_buf_l[f] * warmup;
+                        }
+                    }
                 } else {
                     output[..frames].copy_from_slice(&input[..frames]);
                 }
@@ -202,9 +272,7 @@ impl PhaselithApo {
         } else if ch >= 2 {
             // Stereo: dual-engine with symmetric cross-channel context.
             // ALWAYS process through engines to keep OLA/frame clock in sync.
-            // Output dry signal when disabled.
 
-            // Validate we have enough samples for stereo de-interleave
             if input.len() < frames * 2 || output.len() < frames * 2 {
                 output[..copy_len].copy_from_slice(&input[..copy_len]);
                 return;
@@ -216,35 +284,57 @@ impl PhaselithApo {
                 let r = input[f * 2 + 1];
                 self.channel_buf_l[f] = l;
                 self.channel_buf_r[f] = r;
-                self.dry_lr_saved[f] = l;               // L dry
-                self.dry_lr_saved[frames + f] = r;       // R dry
+                self.dry_lr_saved[f] = l;
+                self.dry_lr_saved[frames + f] = r;
             }
 
-            // Inject previous frame's cross-channel context into L engine
+            // Process L
             if let Some(ref mut engine) = self.engine_l {
                 engine.context_mut().cross_channel = self.cross_channel_prev;
                 engine.process(&mut self.channel_buf_l[..frames]);
             }
 
-            // Inject same cross-channel context into R engine (symmetric)
+            // Process R
             if let Some(ref mut engine) = self.engine_r {
                 engine.context_mut().cross_channel = self.cross_channel_prev;
                 engine.process(&mut self.channel_buf_r[..frames]);
             }
 
-            // Compute cross-channel from saved dry L + dry R (AFTER processing)
-            // Not used until next frame — symmetric one-frame delay
+            // Cross-channel context (one-frame delay)
             let cc = CrossChannelContext::from_lr(
                 &self.dry_lr_saved[..frames],
                 &self.dry_lr_saved[frames..frames * 2],
             );
             self.cross_channel_prev = Some(cc);
 
-            // Re-interleave output: use wet (processed) when enabled, dry when disabled
-            if enabled {
+            // Safety: NaN/Inf guard — if either engine produced garbage, passthrough
+            let clean_l = Self::is_buffer_clean(&self.channel_buf_l, frames);
+            let clean_r = Self::is_buffer_clean(&self.channel_buf_r, frames);
+            if !clean_l || !clean_r {
+                output[..copy_len].copy_from_slice(&input[..copy_len]);
+            } else if transitioning {
                 for f in 0..frames {
-                    output[f * 2] = self.channel_buf_l[f];
-                    output[f * 2 + 1] = self.channel_buf_r[f];
+                    let t = (f as f32 + 1.0) / frames as f32;
+                    if enabled {
+                        output[f * 2] = self.dry_lr_saved[f] * (1.0 - t) + self.channel_buf_l[f] * t;
+                        output[f * 2 + 1] = self.dry_lr_saved[frames + f] * (1.0 - t) + self.channel_buf_r[f] * t;
+                    } else {
+                        output[f * 2] = self.channel_buf_l[f] * (1.0 - t) + self.dry_lr_saved[f] * t;
+                        output[f * 2 + 1] = self.channel_buf_r[f] * (1.0 - t) + self.dry_lr_saved[frames + f] * t;
+                    }
+                }
+            } else if enabled {
+                // Apply warmup blend
+                if warmup >= 1.0 {
+                    for f in 0..frames {
+                        output[f * 2] = self.channel_buf_l[f];
+                        output[f * 2 + 1] = self.channel_buf_r[f];
+                    }
+                } else {
+                    for f in 0..frames {
+                        output[f * 2] = self.dry_lr_saved[f] * (1.0 - warmup) + self.channel_buf_l[f] * warmup;
+                        output[f * 2 + 1] = self.dry_lr_saved[frames + f] * (1.0 - warmup) + self.channel_buf_r[f] * warmup;
+                    }
                 }
             } else {
                 output[..copy_len].copy_from_slice(&input[..copy_len]);
@@ -312,11 +402,11 @@ impl PhaselithApo {
                     _ => QualityMode::Standard,
                 },
                 style: StyleConfig::default(),
-                synthesis_mode: match sc.synthesis_mode.load(std::sync::atomic::Ordering::Relaxed) {
-                    0 => SynthesisMode::LegacyAdditive,
-                    2 => SynthesisMode::FftOlaFull,
-                    _ => SynthesisMode::FftOlaPilot, // default to Pilot (current best)
-                },
+                // APO always uses FftOlaPilot: LegacyAdditive synthesis restarts
+                // from n=0 every block, producing periodic discontinuities when
+                // block_size (480) < fft_size (1024). FftOlaPilot uses proper
+                // ISTFT + overlap-add for continuous, hop-aligned output.
+                synthesis_mode: SynthesisMode::FftOlaPilot,
                 ambience_preserve: 0.0,
             }
         } else {

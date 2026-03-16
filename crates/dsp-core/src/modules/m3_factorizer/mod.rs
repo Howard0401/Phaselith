@@ -3,7 +3,7 @@ pub mod harmonic;
 pub mod spatial;
 pub mod transient;
 
-use crate::module_trait::{CirrusModule, ProcessContext};
+use crate::module_trait::{PhaselithModule, ProcessContext};
 use crate::types::StructuredFields;
 
 /// M3: Structured Factorizer.
@@ -33,13 +33,21 @@ impl StructuredFactorizer {
     }
 }
 
-impl CirrusModule for StructuredFactorizer {
+impl PhaselithModule for StructuredFactorizer {
     fn name(&self) -> &'static str {
         "M3:Factorizer"
     }
 
     fn init(&mut self, _max_frame_size: usize, sample_rate: u32) {
         self.sample_rate = sample_rate;
+        // NOTE: Do NOT pre-allocate prev_magnitude here.
+        // If pre-filled with zeros, the first-frame spectral flux computation
+        // sees a massive zero→signal jump, producing a false transient that
+        // poisons the flux EMA and triggers spurious pre-echo suppression on
+        // every subsequent block (SNR drops ~48 dB).
+        // Leave empty so the first-frame guard (prev_magnitude.len() != mag.len())
+        // skips flux and copies actual magnitude. Second frame onward is zero-alloc
+        // via copy_from_slice since prev_magnitude is already correctly sized.
     }
 
     fn process(&mut self, samples: &mut [f32], ctx: &mut ProcessContext) {
@@ -51,6 +59,8 @@ impl CirrusModule for StructuredFactorizer {
         self.num_bins = core_bins;
 
         // Ensure fields are allocated
+        // native-rt: pre-allocated in engine build(); this only fires
+        // on first call if test bypasses engine builder.
         if ctx.fields.harmonic.len() != core_bins {
             ctx.fields = StructuredFields::new(core_bins);
         }
@@ -66,12 +76,19 @@ impl CirrusModule for StructuredFactorizer {
         ctx.fields.fundamental_freq = f0;
         ctx.fields.ridge_score = ridge_score;
 
-        // Transient detection from micro lattice
-        transient::detect_transients(
-            &ctx.lattice.micro.energy,
-            &ctx.lattice.core.energy,
-            &mut ctx.fields.transient,
-        );
+        // Transient detection from micro lattice.
+        // Only valid when both FFTs have comparable signal fill. When the
+        // block is shorter than the core FFT (APO: 480 < 1024), the core
+        // is heavily zero-padded while micro is fully filled, creating a
+        // ~2× total energy imbalance that produces false peak_t=1.0 on
+        // every frame. In that case, rely on spectral flux (below) instead.
+        if samples.len() >= ctx.lattice.core.fft_size {
+            transient::detect_transients(
+                &ctx.lattice.micro.energy,
+                &ctx.lattice.core.energy,
+                &mut ctx.fields.transient,
+            );
+        }
 
         // Air field: high-frequency envelope from air lattice
         let air_bin_to_freq = ctx.sample_rate as f32 / ctx.lattice.air.fft_size as f32;
@@ -123,8 +140,19 @@ impl CirrusModule for StructuredFactorizer {
             }
 
             // Store current magnitude for next frame comparison
+            // native-rt: prev_magnitude is pre-allocated in init(), never clone
             if self.prev_magnitude.len() != mag.len() {
-                self.prev_magnitude = mag.clone();
+                #[cfg(not(feature = "native-rt"))]
+                {
+                    self.prev_magnitude = mag.clone();
+                }
+                #[cfg(feature = "native-rt")]
+                {
+                    // Should not happen — prev_magnitude pre-allocated to core_bins in init().
+                    // Defensive: resize without cloning (fills with 0, next frame computes flux normally)
+                    self.prev_magnitude.resize(mag.len(), 0.0);
+                    self.prev_magnitude.copy_from_slice(mag);
+                }
             } else {
                 self.prev_magnitude.copy_from_slice(mag);
             }
@@ -240,7 +268,12 @@ mod tests {
         let mut config = EngineConfig::default();
         config.transient = 1.0;
         let mut ctx = ProcessContext::new(48000, 1, config);
-        ctx.lattice = TriLattice::new();
+        // Use block-sized lattices so detect_transients guard passes
+        // (samples.len() >= core.fft_size). TriLattice::new() would set
+        // core.fft_size=1024 which is > 128 and would skip detection.
+        ctx.lattice.micro = crate::types::Lattice::new(128);
+        ctx.lattice.core = crate::types::Lattice::new(128);
+        ctx.lattice.air = crate::types::Lattice::new(128);
         ctx.hops_this_block = 1;
         ctx.lattice.micro.energy.fill(4.0);
         ctx.lattice.core.energy.fill(1.0);

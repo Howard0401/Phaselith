@@ -110,6 +110,58 @@ fn compute_adaptive_threshold_scaled(error: &[f32], mad_multiplier: f32) -> f32 
     (median + mad_multiplier * mad).max(0.01)
 }
 
+/// Zero-alloc Wiener mask: writes into pre-allocated `out` buffer.
+#[cfg(feature = "native-rt")]
+pub fn compute_wiener_mask_into(
+    error: &[f32],
+    residual: &[f32],
+    cutoff_bin: usize,
+    dynamics: f32,
+    out: &mut [f32],
+) {
+    let len = error.len().min(out.len());
+    let dynamics_clamped = dynamics.clamp(0.0, 1.0);
+    let spectral_floor = 0.02 + dynamics_clamped * 0.03;
+
+    if !residual.is_empty() {
+        let epsilon = 1e-12_f32;
+        for k in 0..len {
+            let r = if k < residual.len() { residual[k] } else { 0.0 };
+            let e = error[k];
+            let r_sq = r * r;
+            let e_sq = e * e;
+            let wiener = r_sq / (r_sq + e_sq + epsilon);
+            out[k] = wiener.max(spectral_floor);
+            if k < cutoff_bin {
+                out[k] = 0.0;
+            }
+        }
+    } else {
+        // For native-rt, use a simplified threshold approach that avoids sorting
+        // (sorting requires allocation for the sorted copy)
+        let mut sum = 0.0f32;
+        let mut count = 0usize;
+        for k in 0..len {
+            sum += error[k];
+            count += 1;
+        }
+        let mean = if count > 0 { sum / count as f32 } else { 0.01 };
+        let threshold = (mean * 2.0).max(0.01);
+
+        for k in 0..len {
+            if error[k] > threshold {
+                let ratio = threshold / error[k].max(1e-10);
+                out[k] = ratio.max(spectral_floor);
+            } else {
+                out[k] = 1.0;
+            }
+            if k < cutoff_bin {
+                out[k] = 0.0;
+            }
+        }
+    }
+}
+
 /// Apply constrained shrinkage to the residual.
 /// α(m,k) = min(1, τ / E_rep(m,k))
 pub fn shrink_residual(residual: &mut [f32], mask: &[f32]) {

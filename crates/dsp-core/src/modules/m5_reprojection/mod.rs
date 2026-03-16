@@ -7,7 +7,7 @@ pub mod overlap_add;
 
 use crate::fft::planner::SharedFftPlans;
 use crate::frame::SynthesisMode;
-use crate::module_trait::{CirrusModule, ProcessContext};
+use crate::module_trait::{PhaselithModule, ProcessContext};
 use crate::modules::m2_lattice::stft::StftEngine;
 use crate::types::{Lattice, ValidatedResidual, CORE_FFT_SIZE};
 
@@ -39,6 +39,15 @@ pub struct SelfReprojectionValidator {
     pilot_lattice: Lattice,
     /// Scratch buffer for ISTFT output (fft_size samples).
     pilot_istft_buf: Vec<f32>,
+    /// Pre-allocated scratch: reprojection error (core_bins) — native-rt only.
+    #[cfg(feature = "native-rt")]
+    error_scratch: Vec<f32>,
+    /// Pre-allocated scratch: Wiener mask (core_bins) — native-rt only.
+    #[cfg(feature = "native-rt")]
+    mask_scratch: Vec<f32>,
+    /// Pre-allocated scratch: constrained mask (core_bins) — native-rt only.
+    #[cfg(feature = "native-rt")]
+    constrained_scratch: Vec<f32>,
     /// Phase B1-B: OLA accumulator for ISTFT frames.
     /// Properly overlaps ISTFT frame tails across hop boundaries.
     ola_buffer: overlap_add::OverlapAddBuffer,
@@ -61,9 +70,15 @@ impl SelfReprojectionValidator {
             pilot_engine: None,
             pilot_lattice: Lattice::new(CORE_FFT_SIZE),
             pilot_istft_buf: Vec::new(),
+            #[cfg(feature = "native-rt")]
+            error_scratch: Vec::new(),
+            #[cfg(feature = "native-rt")]
+            mask_scratch: Vec::new(),
+            #[cfg(feature = "native-rt")]
+            constrained_scratch: Vec::new(),
             ola_buffer: overlap_add::OverlapAddBuffer::new(CORE_FFT_SIZE, default_hop),
-            ola_drain: vec![0.0; default_hop],
-            ola_drain_pos: default_hop, // start exhausted → first block outputs zeros until first hop
+            ola_drain: vec![0.0; default_hop * 6],
+            ola_drain_pos: 0, // start empty — outputs zeros until enough OLA frames accumulate
             ola_hop_size: default_hop,
         }
     }
@@ -78,10 +93,16 @@ impl SelfReprojectionValidator {
         self.pilot_engine = Some(StftEngine::new_with_plans(plans, CORE_FFT_SIZE));
         self.pilot_lattice = Lattice::new(CORE_FFT_SIZE);
         self.pilot_istft_buf = vec![0.0; CORE_FFT_SIZE];
+        #[cfg(feature = "native-rt")]
+        {
+            self.error_scratch = vec![0.0; core_bins];
+            self.mask_scratch = vec![0.0; core_bins];
+            self.constrained_scratch = vec![0.0; core_bins];
+        }
         let hop = self.ola_hop_size;
         self.ola_buffer = overlap_add::OverlapAddBuffer::new(CORE_FFT_SIZE, hop);
-        self.ola_drain = vec![0.0; hop];
-        self.ola_drain_pos = hop;
+        self.ola_drain = vec![0.0; hop * 6];
+        self.ola_drain_pos = 0;
     }
 
     /// ISTFT one frame: builds a Lattice from residual magnitudes + analysis phase,
@@ -108,6 +129,8 @@ impl SelfReprojectionValidator {
         let num_bins = fft_size / 2 + 1;
 
         // Ensure lattice is sized correctly
+        // native-rt: pilot_lattice pre-allocated in init(); only fires
+        // on first call if test bypasses engine builder.
         if lattice.magnitude.len() != num_bins {
             *lattice = Lattice::new(fft_size);
         }
@@ -125,6 +148,7 @@ impl SelfReprojectionValidator {
         }
 
         // ISTFT: freq-domain → time-domain via real IFFT
+        // native-rt: pilot_istft_buf pre-allocated to CORE_FFT_SIZE in init()
         if istft_buf.len() < fft_size {
             istft_buf.resize(fft_size, 0.0);
         }
@@ -134,7 +158,7 @@ impl SelfReprojectionValidator {
     }
 }
 
-impl CirrusModule for SelfReprojectionValidator {
+impl PhaselithModule for SelfReprojectionValidator {
     fn name(&self) -> &'static str {
         "M5:Reprojection"
     }
@@ -149,11 +173,17 @@ impl CirrusModule for SelfReprojectionValidator {
         self.pilot_engine = Some(StftEngine::new(CORE_FFT_SIZE));
         self.pilot_lattice = Lattice::new(CORE_FFT_SIZE);
         self.pilot_istft_buf = vec![0.0; CORE_FFT_SIZE];
+        #[cfg(feature = "native-rt")]
+        {
+            self.error_scratch = vec![0.0; core_bins];
+            self.mask_scratch = vec![0.0; core_bins];
+            self.constrained_scratch = vec![0.0; core_bins];
+        }
         // OLA buffer uses default hop (256). Updated in process() if FrameParams differs.
         let hop = self.ola_hop_size;
         self.ola_buffer = overlap_add::OverlapAddBuffer::new(CORE_FFT_SIZE, hop);
-        self.ola_drain = vec![0.0; hop];
-        self.ola_drain_pos = hop; // exhausted → outputs zeros until first hop
+        self.ola_drain = vec![0.0; hop * 6];
+        self.ola_drain_pos = 0; // start empty — outputs zeros until enough OLA frames accumulate
     }
 
     fn process(&mut self, samples: &mut [f32], ctx: &mut ProcessContext) {
@@ -170,11 +200,13 @@ impl CirrusModule for SelfReprojectionValidator {
         };
 
         // Ensure validated residual is allocated
+        // native-rt: pre-allocated in engine build(); this only fires
+        // on first call if test bypasses engine builder.
         let sample_len = samples.len();
-        if ctx.validated.data.len() != sample_len {
+        if ctx.validated.data.len() < sample_len {
             ctx.validated = ValidatedResidual::new(sample_len);
         }
-        if ctx.validated.acceptance_mask.len() != core_bins {
+        if ctx.validated.acceptance_mask.len() < core_bins {
             ctx.validated.acceptance_mask = vec![1.0; core_bins];
         }
 
@@ -197,45 +229,96 @@ impl CirrusModule for SelfReprojectionValidator {
                 &mut self.reprojected_buf,
             );
 
-            // 2. Compute reprojection error
-            let e_rep = error::compute_reprojection_error(
-                samples,
-                &self.reprojected_buf[..reproj_len],
-                core_bins,
-            );
+            #[cfg(feature = "native-rt")]
+            {
+                // 2. Compute reprojection error (zero-alloc)
+                error::compute_reprojection_error_into(
+                    samples,
+                    &self.reprojected_buf[..reproj_len],
+                    core_bins,
+                    &mut self.error_scratch,
+                );
 
-            // 3. Compute Wiener soft mask (dynamics-controlled spectral floor)
-            // Passes combined residual magnitudes so the Wiener gain can compute
-            // per-bin SNR: G[k] = R²/(R² + E²), giving smooth accept/reject.
-            let mask = acceptance::compute_wiener_mask(
-                &e_rep,
-                &self.combined_buf[..core_bins],
-                cutoff_bin,
-                ctx.config.dynamics,
-            );
+                // 3. Compute Wiener soft mask (zero-alloc)
+                acceptance::compute_wiener_mask_into(
+                    &self.error_scratch[..core_bins],
+                    &self.combined_buf[..core_bins],
+                    cutoff_bin,
+                    ctx.config.dynamics,
+                    &mut self.mask_scratch,
+                );
 
-            // 4. Apply constraints (low-band lock + impact band)
-            let constrained_mask = constraints::apply_constraints_styled(
-                &mask, cutoff_bin, ctx.sample_rate,
-                fft_size,
-                ctx.config.style.impact_gain,
-                &ctx.fields.transient,
-            );
+                // 4. Apply constraints (zero-alloc)
+                constraints::apply_constraints_styled_into(
+                    &self.mask_scratch[..core_bins],
+                    cutoff_bin,
+                    ctx.sample_rate,
+                    fft_size,
+                    ctx.config.style.impact_gain,
+                    &ctx.fields.transient,
+                    &mut self.constrained_scratch,
+                );
 
-            // 5. Shrink residual where error is high
-            for k in 0..self.combined_buf.len().min(constrained_mask.len()) {
-                self.combined_buf[k] *= constrained_mask[k];
+                // 5. Shrink residual where error is high
+                for k in 0..self.combined_buf.len().min(core_bins) {
+                    self.combined_buf[k] *= self.constrained_scratch[k];
+                }
+
+                // 6. Check convergence
+                let j_rep: f32 = self.error_scratch[..core_bins].iter().map(|e| e * e).sum::<f32>()
+                    / core_bins.max(1) as f32;
+                if j_rep < best_error {
+                    best_error = j_rep;
+                } else {
+                    break;
+                }
+
+                // Copy constrained mask into acceptance_mask (zero-alloc)
+                let copy_len = ctx.validated.acceptance_mask.len().min(core_bins);
+                ctx.validated.acceptance_mask[..copy_len]
+                    .copy_from_slice(&self.constrained_scratch[..copy_len]);
             }
 
-            // 6. Check convergence
-            let j_rep: f32 = e_rep.iter().map(|e| e * e).sum::<f32>() / e_rep.len().max(1) as f32;
-            if j_rep < best_error {
-                best_error = j_rep;
-            } else {
-                break; // error increasing, stop
-            }
+            #[cfg(not(feature = "native-rt"))]
+            {
+                // 2. Compute reprojection error
+                let e_rep = error::compute_reprojection_error(
+                    samples,
+                    &self.reprojected_buf[..reproj_len],
+                    core_bins,
+                );
 
-            ctx.validated.acceptance_mask = constrained_mask;
+                // 3. Compute Wiener soft mask (dynamics-controlled spectral floor)
+                let mask = acceptance::compute_wiener_mask(
+                    &e_rep,
+                    &self.combined_buf[..core_bins],
+                    cutoff_bin,
+                    ctx.config.dynamics,
+                );
+
+                // 4. Apply constraints (low-band lock + impact band)
+                let constrained_mask = constraints::apply_constraints_styled(
+                    &mask, cutoff_bin, ctx.sample_rate,
+                    fft_size,
+                    ctx.config.style.impact_gain,
+                    &ctx.fields.transient,
+                );
+
+                // 5. Shrink residual where error is high
+                for k in 0..self.combined_buf.len().min(constrained_mask.len()) {
+                    self.combined_buf[k] *= constrained_mask[k];
+                }
+
+                // 6. Check convergence
+                let j_rep: f32 = e_rep.iter().map(|e| e * e).sum::<f32>() / e_rep.len().max(1) as f32;
+                if j_rep < best_error {
+                    best_error = j_rep;
+                } else {
+                    break;
+                }
+
+                ctx.validated.acceptance_mask = constrained_mask;
+            }
         }
 
         // ── Synthesis: freq-domain → time-domain ──
@@ -246,20 +329,45 @@ impl CirrusModule for SelfReprojectionValidator {
 
         match ctx.synthesis_mode {
             SynthesisMode::FftOlaPilot => {
-                // Phase B1-B: Pilot ISTFT + OLA.
-                // At hop boundaries: ISTFT → synthesis window → OLA accumulate.
-                // Every block: drain block_size samples from OLA output.
+                // Phase B1-B: Pilot ISTFT + OLA with FIFO drain.
+                //
+                // The OLA drain is a FIFO that decouples hop-aligned synthesis
+                // from arbitrary host block sizes. This is critical for APO where
+                // block_size (480) != hop_size (256): the old code drained only
+                // one hop (256 samples) per block, leaving 47% of output zeroed.
+                //
+                // New flow:
+                // 1. At hop boundaries: ISTFT → window → add to OLA accumulator
+                // 2. Drain ALL available hops from OLA into FIFO
+                // 3. Serve block_size samples from FIFO to validated.data
+                // 4. Compact FIFO (shift remaining data to front)
                 let hop_size = ctx.frame_params.hop_size;
+                let block_size = samples.len();
 
                 // Lazily update OLA hop size if FrameParams changed
                 if hop_size != self.ola_hop_size && hop_size > 0 {
                     self.ola_hop_size = hop_size;
-                    self.ola_buffer = overlap_add::OverlapAddBuffer::new(fft_size, hop_size);
-                    self.ola_drain = vec![0.0; hop_size];
-                    self.ola_drain_pos = hop_size;
+                    #[cfg(not(feature = "native-rt"))]
+                    {
+                        self.ola_buffer = overlap_add::OverlapAddBuffer::new(fft_size, hop_size);
+                        self.ola_drain = vec![0.0; hop_size * 6];
+                        self.ola_drain_pos = 0;
+                    }
+                    #[cfg(feature = "native-rt")]
+                    {
+                        let needed = hop_size * 6;
+                        if self.ola_drain.len() < needed {
+                            self.ola_drain = vec![0.0; needed];
+                        } else {
+                            let clear_end = self.ola_drain_pos.min(self.ola_drain.len());
+                            self.ola_drain[..clear_end].fill(0.0);
+                        }
+                        self.ola_buffer = overlap_add::OverlapAddBuffer::new(fft_size, hop_size);
+                        self.ola_drain_pos = 0;
+                    }
                 }
 
-                // When hop boundary crossed: ISTFT + window + add to OLA
+                // Step 1: At hop boundaries, ISTFT + window + add to OLA
                 if ctx.hops_this_block > 0 {
                     if let Some(engine) = &mut self.pilot_engine {
                         let ok = Self::istft_residual(
@@ -281,36 +389,58 @@ impl CirrusModule for SelfReprojectionValidator {
                                 self.pilot_istft_buf[i] *= window[i];
                             }
 
-                            // Add windowed frame to OLA accumulator
-                            // For multiple hops in one block, add the same frame multiple times
-                            // (analysis is the same within one block)
+                            // Add windowed frame to OLA accumulator for each hop.
+                            // M2 produces one analysis per block, but when
+                            // block_size > hop_size (APO 480/528 > 256), multiple
+                            // hops are needed per block. Re-adding the same
+                            // windowed frame at each hop position is correct OLA
+                            // behavior: the Hann window at 75% overlap sums to
+                            // constant gain, and the signal changes negligibly
+                            // over one hop (5.3ms at 48kHz). This avoids the
+                            // amplitude dips caused by advance_write_only().
                             for _ in 0..ctx.hops_this_block {
                                 self.ola_buffer.add_frame(&self.pilot_istft_buf[..fft_size]);
                             }
                         }
                     }
+                }
 
-                    // Drain one hop from OLA into drain buffer
-                    if self.ola_buffer.readable() > 0 {
-                        self.ola_buffer.read_hop(&mut self.ola_drain);
-                        self.ola_drain_pos = 0;
+                // Step 2: Drain ALL available hops from OLA into FIFO
+                while self.ola_buffer.readable() > 0 {
+                    let write_start = self.ola_drain_pos;
+                    let write_end = write_start + self.ola_hop_size;
+                    if write_end > self.ola_drain.len() {
+                        break; // FIFO full
+                    }
+                    let n = self.ola_buffer.read_hop(
+                        &mut self.ola_drain[write_start..write_end],
+                    );
+                    if n > 0 {
+                        self.ola_drain_pos += n;
+                    } else {
+                        break;
                     }
                 }
 
-                // Copy block_size samples from drain buffer to validated.data
-                let block_size = ctx.validated.data.len();
-                let avail = self.ola_drain.len().saturating_sub(self.ola_drain_pos);
-                let copy_len = block_size.min(avail);
-                if copy_len > 0 {
-                    ctx.validated.data[..copy_len].copy_from_slice(
-                        &self.ola_drain[self.ola_drain_pos..self.ola_drain_pos + copy_len],
-                    );
-                    self.ola_drain_pos += copy_len;
+                // Step 3: Serve block_size samples from FIFO to validated.data
+                let serve = block_size
+                    .min(self.ola_drain_pos)
+                    .min(ctx.validated.data.len());
+                if serve > 0 {
+                    ctx.validated.data[..serve]
+                        .copy_from_slice(&self.ola_drain[..serve]);
                 }
-                // Zero any remaining samples
-                for i in copy_len..block_size {
+                let vd_len = block_size.min(ctx.validated.data.len());
+                for i in serve..vd_len {
                     ctx.validated.data[i] = 0.0;
                 }
+
+                // Step 4: Compact FIFO (shift remaining data to front)
+                let remaining = self.ola_drain_pos - serve;
+                if remaining > 0 {
+                    self.ola_drain.copy_within(serve..self.ola_drain_pos, 0);
+                }
+                self.ola_drain_pos = remaining;
             }
             _ => {
                 // LegacyAdditive (proven path) or FftOlaFull (future).
@@ -346,7 +476,7 @@ impl CirrusModule for SelfReprojectionValidator {
         self.pilot_istft_buf.fill(0.0);
         self.ola_buffer.reset();
         self.ola_drain.fill(0.0);
-        self.ola_drain_pos = self.ola_hop_size;
+        self.ola_drain_pos = 0; // empty FIFO
     }
 }
 

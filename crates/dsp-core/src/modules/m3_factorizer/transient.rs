@@ -4,6 +4,15 @@ const PRE_ECHO_TRANSIENT_THRESHOLD: f32 = 0.15;
 ///
 /// Transients appear as energy bursts in the micro lattice (short window)
 /// that are smoothed out in the core lattice (longer window).
+///
+/// **Important**: this comparison is only valid when both FFTs receive the
+/// same amount of signal data (relative to their window sizes). When the
+/// block size is shorter than the core FFT (e.g., APO: 480 < 1024), the
+/// core FFT is zero-padded while the micro FFT is fully filled, creating
+/// a systematic energy imbalance (micro total ≈ 2× core total) that
+/// causes false transient detection on every frame. Callers should skip
+/// this function when `block_size < core_fft_size` and rely on spectral
+/// flux for transient detection instead.
 pub fn detect_transients(micro_energy: &[f32], core_energy: &[f32], transient_field: &mut [f32]) {
     let len = transient_field.len();
     transient_field.fill(0.0);

@@ -1,12 +1,12 @@
-use asce_dsp_core::engine::{CirrusEngineBuilder, test_helpers::RecordingModule};
-use asce_dsp_core::config::EngineConfig;
+use phaselith_dsp_core::engine::{PhaselithEngineBuilder, test_helpers::RecordingModule};
+use phaselith_dsp_core::config::EngineConfig;
 use std::sync::{Arc, Mutex};
 
 #[test]
 fn engine_executes_modules_in_order() {
     let call_log = Arc::new(Mutex::new(Vec::new()));
 
-    let mut engine = CirrusEngineBuilder::new(48000, 1024)
+    let mut engine = PhaselithEngineBuilder::new(48000, 1024)
         .add_module(Box::new(RecordingModule::new("M0", call_log.clone())))
         .add_module(Box::new(RecordingModule::new("M1", call_log.clone())))
         .add_module(Box::new(RecordingModule::new("M2", call_log.clone())))
@@ -26,7 +26,7 @@ fn engine_executes_modules_in_order() {
 
 #[test]
 fn default_engine_has_8_modules() {
-    let engine = CirrusEngineBuilder::new(48000, 1024).build_default();
+    let engine = PhaselithEngineBuilder::new(48000, 1024).build_default();
     assert_eq!(engine.module_count(), 8);
     assert_eq!(engine.module_name(0), Some("M0:Orchestrator"));
     assert_eq!(engine.module_name(1), Some("M1:DamagePosterior"));
@@ -47,7 +47,7 @@ fn context_propagation_m0_writes_damage_m1_reads_it() {
     let m1 = RecordingModule::new("M1", call_log.clone());
     let m1_saw_cutoff = m1.saw_cutoff_mean.clone();
 
-    let mut engine = CirrusEngineBuilder::new(48000, 1024)
+    let mut engine = PhaselithEngineBuilder::new(48000, 1024)
         .add_module(Box::new(m0))
         .add_module(Box::new(m1))
         .build();
@@ -66,7 +66,7 @@ fn bypass_when_disabled_no_modules_run() {
     let mut config = EngineConfig::default();
     config.enabled = false;
 
-    let mut engine = CirrusEngineBuilder::new(48000, 1024)
+    let mut engine = PhaselithEngineBuilder::new(48000, 1024)
         .with_config(config)
         .add_module(Box::new(RecordingModule::new("M0", call_log.clone())))
         .add_module(Box::new(RecordingModule::new("M1", call_log.clone())))
@@ -84,7 +84,7 @@ fn bypass_when_disabled_no_modules_run() {
 
 #[test]
 fn reset_clears_damage_and_frame_index() {
-    let mut engine = CirrusEngineBuilder::new(48000, 1024).build_default();
+    let mut engine = PhaselithEngineBuilder::new(48000, 1024).build_default();
 
     let mut buf = vec![0.5f32; 1024];
     engine.process(&mut buf);
@@ -101,7 +101,7 @@ fn reset_clears_damage_and_frame_index() {
 
 #[test]
 fn update_config_propagates_to_context() {
-    let mut engine = CirrusEngineBuilder::new(48000, 1024).build_default();
+    let mut engine = PhaselithEngineBuilder::new(48000, 1024).build_default();
 
     let mut config = EngineConfig::default();
     config.strength = 0.1;
@@ -114,7 +114,7 @@ fn update_config_propagates_to_context() {
 
 #[test]
 fn frame_index_increments_each_process() {
-    let mut engine = CirrusEngineBuilder::new(48000, 1024).build_default();
+    let mut engine = PhaselithEngineBuilder::new(48000, 1024).build_default();
     let mut buf = vec![0.0f32; 1024];
 
     assert_eq!(engine.context().frame_index, 0);
@@ -128,7 +128,7 @@ fn frame_index_increments_each_process() {
 fn dry_buffer_captures_input() {
     let call_log = Arc::new(Mutex::new(Vec::new()));
 
-    let mut engine = CirrusEngineBuilder::new(48000, 1024)
+    let mut engine = PhaselithEngineBuilder::new(48000, 1024)
         .add_module(Box::new(RecordingModule::new("M0", call_log.clone())))
         .build();
 
@@ -148,7 +148,7 @@ fn dry_buffer_captures_input() {
 
 #[test]
 fn multiple_process_calls_accumulate_frame_index() {
-    let mut engine = CirrusEngineBuilder::new(48000, 512).build_default();
+    let mut engine = PhaselithEngineBuilder::new(48000, 512).build_default();
     let mut buf = vec![0.0f32; 512];
 
     for _ in 0..10 {

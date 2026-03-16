@@ -1,5 +1,5 @@
 [package]
-name = "asce-dsp-core"
+name = "phaselith-dsp-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,6 +8,11 @@ license.workspace = true
 default = ["std"]
 std = []
 test-helpers = []
+# Zero-alloc hot path for native real-time threads (Windows APO).
+# Pre-allocates FFT plans and scratch buffers in init(), eliminates
+# per-call heap allocation in process(). Do NOT enable for WASM —
+# the legacy per-call path works fine with dlmalloc.
+native-rt = []
 
 [dependencies]
 num-complex = { version = "0.4", default-features = false }
@@ -15,4 +20,4 @@ rustfft = "6"
 
 [dev-dependencies]
 approx = "0.5"
-asce-dsp-core = { path = ".", features = ["test-helpers"] }
+phaselith-dsp-core = { path = ".", features = ["test-helpers"] }

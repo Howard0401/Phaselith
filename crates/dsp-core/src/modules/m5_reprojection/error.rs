@@ -18,6 +18,23 @@ pub fn compute_reprojection_error(
     error
 }
 
+/// Zero-alloc variant: writes into pre-allocated `out` buffer.
+#[cfg(feature = "native-rt")]
+pub fn compute_reprojection_error_into(
+    original: &[f32],
+    reprojected: &[f32],
+    num_bins: usize,
+    out: &mut [f32],
+) {
+    let len = num_bins.min(original.len()).min(reprojected.len()).min(out.len());
+    for i in 0..len {
+        out[i] = (reprojected[i] - original[i]).abs();
+    }
+    for i in len..out.len().min(num_bins) {
+        out[i] = 0.0;
+    }
+}
+
 /// Compute total reprojection cost J_rep = Σ E_rep²(m,k) / N.
 pub fn total_reprojection_cost(error: &[f32]) -> f32 {
     if error.is_empty() {

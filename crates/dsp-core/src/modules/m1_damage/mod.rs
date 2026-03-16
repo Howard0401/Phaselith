@@ -2,7 +2,7 @@ pub mod features;
 pub mod posterior;
 pub mod smoothing;
 
-use crate::module_trait::{CirrusModule, ProcessContext};
+use crate::module_trait::{PhaselithModule, ProcessContext};
 use crate::types::GaussianEstimate;
 
 /// M1: Damage Posterior Engine.
@@ -18,6 +18,10 @@ pub struct DamagePosteriorEngine {
     fft_size: usize,
     /// Temporal smoothing state.
     smoother: smoothing::TemporalSmoother,
+    /// Pre-allocated cutoff detection state (native-rt only).
+    /// Avoids per-call Vec<Complex> + FftPlanner allocation.
+    #[cfg(feature = "native-rt")]
+    cutoff_detector: Option<features::CutoffDetector>,
 }
 
 impl DamagePosteriorEngine {
@@ -28,21 +32,35 @@ impl DamagePosteriorEngine {
             sample_rate: 48000,
             fft_size: 1024,
             smoother: smoothing::TemporalSmoother::new(),
+            #[cfg(feature = "native-rt")]
+            cutoff_detector: None,
         }
     }
 }
 
-impl CirrusModule for DamagePosteriorEngine {
+impl PhaselithModule for DamagePosteriorEngine {
     fn name(&self) -> &'static str {
         "M1:DamagePosterior"
     }
 
     fn init(&mut self, _max_frame_size: usize, sample_rate: u32) {
         self.sample_rate = sample_rate;
+        #[cfg(feature = "native-rt")]
+        {
+            self.cutoff_detector = Some(features::CutoffDetector::new(self.fft_size));
+        }
     }
 
     fn process(&mut self, samples: &mut [f32], ctx: &mut ProcessContext) {
-        self.fft_size = ctx.config.quality_mode.core_fft_size();
+        let new_fft_size = ctx.config.quality_mode.core_fft_size();
+
+        // Re-create cutoff detector if FFT size changed
+        #[cfg(feature = "native-rt")]
+        if new_fft_size != self.fft_size {
+            self.cutoff_detector = Some(features::CutoffDetector::new(new_fft_size));
+        }
+
+        self.fft_size = new_fft_size;
         self.frame_counter += 1;
 
         // Only analyze periodically
@@ -50,8 +68,18 @@ impl CirrusModule for DamagePosteriorEngine {
             return;
         }
 
-        // Extract features
+        // Extract features — cutoff uses pre-allocated path under native-rt
+        #[cfg(feature = "native-rt")]
+        let cutoff_raw = {
+            if let Some(ref mut det) = self.cutoff_detector {
+                det.detect(samples, self.sample_rate)
+            } else {
+                None
+            }
+        };
+        #[cfg(not(feature = "native-rt"))]
         let cutoff_raw = features::detect_cutoff(samples, self.sample_rate, self.fft_size);
+
         let clipping_raw = features::detect_clipping(samples);
         let compression_raw = features::estimate_compression(samples);
         let stereo_raw = if ctx.channels >= 2 && samples.len() >= 2 {

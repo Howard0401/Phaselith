@@ -1,5 +1,5 @@
 [package]
-name = "asce-wasm-bridge"
+name = "phaselith-wasm-bridge"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,4 +8,4 @@ license.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
-asce-dsp-core = { path = "../dsp-core", default-features = false }
+phaselith-dsp-core = { path = "../dsp-core", default-features = false }

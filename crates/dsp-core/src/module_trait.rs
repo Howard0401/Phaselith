@@ -42,7 +42,7 @@ pub struct ProcessContext {
     /// Dry signal copy for M6 safety mixing.
     pub dry_buffer: Vec<f32>,
     /// Total processing time for the current block (microseconds).
-    /// Written by CirrusEngine::process() after the module loop.
+    /// Written by PhaselithEngine::process() after the module loop.
     /// Only measured on native targets; remains 0.0 in WASM.
     pub processing_time_us: f32,
 }
@@ -95,7 +95,7 @@ impl ProcessContext {
 /// - **Constant time** (avoid input-dependent branching that affects timing)
 ///
 /// All scratch memory MUST be pre-allocated in `init()`.
-pub trait CirrusModule: Send + Sync {
+pub trait PhaselithModule: Send + Sync {
     /// Human-readable name for diagnostics.
     fn name(&self) -> &'static str;
 
@@ -122,7 +122,7 @@ impl NoOpModule {
     }
 }
 
-impl CirrusModule for NoOpModule {
+impl PhaselithModule for NoOpModule {
     fn name(&self) -> &'static str {
         self.module_name
     }

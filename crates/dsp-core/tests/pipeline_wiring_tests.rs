@@ -1,6 +1,6 @@
-use asce_dsp_core::pipeline::test_helpers::RecordingStage;
-use asce_dsp_core::pipeline::PipelineBuilder;
-use asce_dsp_core::config::DspConfig;
+use phaselith_dsp_core::pipeline::test_helpers::RecordingStage;
+use phaselith_dsp_core::pipeline::PipelineBuilder;
+use phaselith_dsp_core::config::DspConfig;
 use std::sync::{Arc, Mutex};
 
 #[test]

@@ -1,18 +1,18 @@
 use crate::config::EngineConfig;
 use crate::fft::planner::SharedFftPlans;
-use crate::module_trait::{CirrusModule, ProcessContext};
+use crate::module_trait::{PhaselithModule, ProcessContext};
 use crate::modules;
 
 /// The CIRRUS engine: M0-M7 processing pipeline.
 ///
 /// Replaces the old 6-stage Pipeline. Each module reads/writes to ProcessContext
 /// fields as appropriate. The engine ensures correct execution order.
-pub struct CirrusEngine {
-    modules: Vec<Box<dyn CirrusModule>>,
+pub struct PhaselithEngine {
+    modules: Vec<Box<dyn PhaselithModule>>,
     context: ProcessContext,
 }
 
-impl CirrusEngine {
+impl PhaselithEngine {
     /// Process audio in-place through all modules.
     /// MUST be zero-alloc on the hot path.
     pub fn process(&mut self, samples: &mut [f32]) {
@@ -26,14 +26,15 @@ impl CirrusEngine {
 
         self.context.frame_index += 1;
 
-        #[cfg(not(target_arch = "wasm32"))]
+        // native-rt: skip timing on RT thread (QueryPerformanceCounter can stall)
+        #[cfg(all(not(target_arch = "wasm32"), not(feature = "native-rt")))]
         let t0 = std::time::Instant::now();
 
         for module in &mut self.modules {
             module.process(samples, &mut self.context);
         }
 
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(all(not(target_arch = "wasm32"), not(feature = "native-rt")))]
         {
             self.context.processing_time_us = t0.elapsed().as_micros() as f32;
         }
@@ -84,17 +85,17 @@ impl CirrusEngine {
     }
 }
 
-/// Builder for constructing a CirrusEngine.
+/// Builder for constructing a PhaselithEngine.
 /// This is the composition root — the single place where DI wiring happens.
-pub struct CirrusEngineBuilder {
+pub struct PhaselithEngineBuilder {
     sample_rate: u32,
     channels: u16,
     max_frame_size: usize,
     config: EngineConfig,
-    modules: Vec<Box<dyn CirrusModule>>,
+    modules: Vec<Box<dyn PhaselithModule>>,
 }
 
-impl CirrusEngineBuilder {
+impl PhaselithEngineBuilder {
     pub fn new(sample_rate: u32, max_frame_size: usize) -> Self {
         Self {
             sample_rate,
@@ -116,14 +117,14 @@ impl CirrusEngineBuilder {
     }
 
     /// Add a module to the engine. Modules are executed in insertion order.
-    pub fn add_module(mut self, module: Box<dyn CirrusModule>) -> Self {
+    pub fn add_module(mut self, module: Box<dyn PhaselithModule>) -> Self {
         self.modules.push(module);
         self
     }
 
     /// Build with the default M0-M7 CIRRUS module chain.
     /// Uses a shared FFT plan cache so M2 and M5 reuse the same plans.
-    pub fn build_default(self) -> CirrusEngine {
+    pub fn build_default(self) -> PhaselithEngine {
         let mut plans = SharedFftPlans::new();
 
         let mut m2 = modules::m2_lattice::TriLatticeAnalysis::new();
@@ -144,7 +145,7 @@ impl CirrusEngineBuilder {
     }
 
     /// Build with whatever modules have been added.
-    pub fn build(mut self) -> CirrusEngine {
+    pub fn build(mut self) -> PhaselithEngine {
         let mut context = ProcessContext::new(self.sample_rate, self.channels, self.config);
         context.frame_params = crate::frame::FrameParams::new(
             self.max_frame_size,
@@ -153,11 +154,25 @@ impl CirrusEngineBuilder {
         );
         context.dry_buffer = vec![0.0; self.max_frame_size];
 
+        // native-rt: pre-allocate ALL context fields to max sizes so modules
+        // never allocate on the hot path. Without this, M3/M4/M5 allocate on
+        // first process() call when they see empty/mismatched field sizes.
+        #[cfg(feature = "native-rt")]
+        {
+            use crate::types::{CORE_FFT_SIZE, StructuredFields, ResidualCandidate, ValidatedResidual};
+            let core_bins = CORE_FFT_SIZE / 2 + 1;
+            context.fields = StructuredFields::new(core_bins);
+            context.residual = ResidualCandidate::new(core_bins);
+            context.validated = ValidatedResidual::new(self.max_frame_size);
+            context.validated.acceptance_mask = vec![1.0; core_bins];
+            context.time_candidate = vec![0.0; self.max_frame_size];
+        }
+
         for module in &mut self.modules {
             module.init(self.max_frame_size, self.sample_rate);
         }
 
-        CirrusEngine {
+        PhaselithEngine {
             modules: self.modules,
             context,
         }
@@ -194,7 +209,7 @@ pub mod test_helpers {
         }
     }
 
-    impl CirrusModule for RecordingModule {
+    impl PhaselithModule for RecordingModule {
         fn name(&self) -> &'static str {
             self.module_name
         }
@@ -227,7 +242,7 @@ mod tests {
     fn engine_bypass_when_disabled() {
         let mut config = EngineConfig::default();
         config.enabled = false;
-        let mut engine = CirrusEngineBuilder::new(48000, 1024)
+        let mut engine = PhaselithEngineBuilder::new(48000, 1024)
             .with_config(config)
             .add_module(Box::new(NoOpModule::new("test")))
             .build();
@@ -239,7 +254,7 @@ mod tests {
 
     #[test]
     fn engine_module_count() {
-        let engine = CirrusEngineBuilder::new(48000, 1024)
+        let engine = PhaselithEngineBuilder::new(48000, 1024)
             .add_module(Box::new(NoOpModule::new("a")))
             .add_module(Box::new(NoOpModule::new("b")))
             .build();
@@ -248,7 +263,7 @@ mod tests {
 
     #[test]
     fn engine_module_names() {
-        let engine = CirrusEngineBuilder::new(48000, 1024)
+        let engine = PhaselithEngineBuilder::new(48000, 1024)
             .add_module(Box::new(NoOpModule::new("M0")))
             .add_module(Box::new(NoOpModule::new("M1")))
             .build();
@@ -259,7 +274,7 @@ mod tests {
 
     #[test]
     fn engine_reset_clears_state() {
-        let mut engine = CirrusEngineBuilder::new(48000, 1024)
+        let mut engine = PhaselithEngineBuilder::new(48000, 1024)
             .add_module(Box::new(NoOpModule::new("test")))
             .build();
 
@@ -273,7 +288,7 @@ mod tests {
 
     #[test]
     fn engine_update_config() {
-        let mut engine = CirrusEngineBuilder::new(48000, 1024)
+        let mut engine = PhaselithEngineBuilder::new(48000, 1024)
             .add_module(Box::new(NoOpModule::new("test")))
             .build();
 

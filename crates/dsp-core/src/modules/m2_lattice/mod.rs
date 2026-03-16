@@ -3,7 +3,7 @@ pub mod energy;
 pub mod group_delay;
 
 use crate::fft::planner::SharedFftPlans;
-use crate::module_trait::{CirrusModule, ProcessContext};
+use crate::module_trait::{PhaselithModule, ProcessContext};
 use crate::types::{MICRO_FFT_SIZE, CORE_FFT_SIZE, AIR_FFT_SIZE};
 
 /// M2: Tri-Lattice Analysis.
@@ -13,18 +13,24 @@ use crate::types::{MICRO_FFT_SIZE, CORE_FFT_SIZE, AIR_FFT_SIZE};
 /// - Core (1024): main synthesis
 /// - Air (2048): high-frequency stability
 ///
-/// Uses `StftEngine` for zero-alloc hot-path FFT. Window tables and
-/// FFT plans are pre-allocated in `init()`.
+/// Two paths controlled by `native-rt` feature:
+/// - `native-rt` enabled: StftEngine (pre-allocated, zero-alloc hot path).
+///   Required for Windows APO real-time thread.
+/// - `native-rt` disabled: legacy per-call `analyze_lattice()` path.
+///   Works fine in WASM (dlmalloc has no lock contention).
 pub struct TriLatticeAnalysis {
     /// Scratch buffers for each lattice's FFT input.
     micro_scratch: Vec<f32>,
     core_scratch: Vec<f32>,
     air_scratch: Vec<f32>,
-    /// Zero-alloc STFT engines (pre-allocated window + complex buf + FFT plan).
-    micro_engine: Option<stft::StftEngine>,
-    core_engine: Option<stft::StftEngine>,
-    air_engine: Option<stft::StftEngine>,
     sample_rate: u32,
+    /// Pre-allocated STFT engines (native-rt only).
+    #[cfg(feature = "native-rt")]
+    micro_engine: Option<stft::StftEngine>,
+    #[cfg(feature = "native-rt")]
+    core_engine: Option<stft::StftEngine>,
+    #[cfg(feature = "native-rt")]
+    air_engine: Option<stft::StftEngine>,
 }
 
 impl TriLatticeAnalysis {
@@ -33,26 +39,34 @@ impl TriLatticeAnalysis {
             micro_scratch: Vec::new(),
             core_scratch: Vec::new(),
             air_scratch: Vec::new(),
-            micro_engine: None,
-            core_engine: None,
-            air_engine: None,
             sample_rate: 48000,
+            #[cfg(feature = "native-rt")]
+            micro_engine: None,
+            #[cfg(feature = "native-rt")]
+            core_engine: None,
+            #[cfg(feature = "native-rt")]
+            air_engine: None,
         }
     }
 
-    /// Initialize using a shared FFT plan cache (avoids redundant plan creation).
+    /// Initialize using a shared FFT plan cache.
     pub fn init_with_plans(&mut self, sample_rate: u32, plans: &mut SharedFftPlans) {
         self.sample_rate = sample_rate;
         self.micro_scratch = vec![0.0; MICRO_FFT_SIZE];
         self.core_scratch = vec![0.0; CORE_FFT_SIZE];
         self.air_scratch = vec![0.0; AIR_FFT_SIZE];
-        self.micro_engine = Some(stft::StftEngine::new_with_plans(plans, MICRO_FFT_SIZE));
-        self.core_engine = Some(stft::StftEngine::new_with_plans(plans, CORE_FFT_SIZE));
-        self.air_engine = Some(stft::StftEngine::new_with_plans(plans, AIR_FFT_SIZE));
+
+        #[cfg(feature = "native-rt")]
+        {
+            self.micro_engine = Some(stft::StftEngine::new_with_plans(plans, MICRO_FFT_SIZE));
+            self.core_engine = Some(stft::StftEngine::new_with_plans(plans, CORE_FFT_SIZE));
+            self.air_engine = Some(stft::StftEngine::new_with_plans(plans, AIR_FFT_SIZE));
+        }
+        let _ = plans; // suppress unused warning when native-rt is off
     }
 }
 
-impl CirrusModule for TriLatticeAnalysis {
+impl PhaselithModule for TriLatticeAnalysis {
     fn name(&self) -> &'static str {
         "M2:TriLattice"
     }
@@ -62,9 +76,13 @@ impl CirrusModule for TriLatticeAnalysis {
         self.micro_scratch = vec![0.0; MICRO_FFT_SIZE];
         self.core_scratch = vec![0.0; CORE_FFT_SIZE];
         self.air_scratch = vec![0.0; AIR_FFT_SIZE];
-        self.micro_engine = Some(stft::StftEngine::new(MICRO_FFT_SIZE));
-        self.core_engine = Some(stft::StftEngine::new(CORE_FFT_SIZE));
-        self.air_engine = Some(stft::StftEngine::new(AIR_FFT_SIZE));
+
+        #[cfg(feature = "native-rt")]
+        {
+            self.micro_engine = Some(stft::StftEngine::new(MICRO_FFT_SIZE));
+            self.core_engine = Some(stft::StftEngine::new(CORE_FFT_SIZE));
+            self.air_engine = Some(stft::StftEngine::new(AIR_FFT_SIZE));
+        }
     }
 
     fn process(&mut self, samples: &mut [f32], ctx: &mut ProcessContext) {
@@ -74,18 +92,12 @@ impl CirrusModule for TriLatticeAnalysis {
         for i in micro_len..MICRO_FFT_SIZE {
             self.micro_scratch[i] = 0.0;
         }
-        if let Some(engine) = &mut self.micro_engine {
-            engine.analyze(&self.micro_scratch[..MICRO_FFT_SIZE], &mut ctx.lattice.micro);
-        }
 
         // Prepare core scratch
         let core_len = samples.len().min(CORE_FFT_SIZE);
         self.core_scratch[..core_len].copy_from_slice(&samples[..core_len]);
         for i in core_len..CORE_FFT_SIZE {
             self.core_scratch[i] = 0.0;
-        }
-        if let Some(engine) = &mut self.core_engine {
-            engine.analyze(&self.core_scratch[..CORE_FFT_SIZE], &mut ctx.lattice.core);
         }
 
         // Prepare air scratch
@@ -94,8 +106,27 @@ impl CirrusModule for TriLatticeAnalysis {
         for i in air_len..AIR_FFT_SIZE {
             self.air_scratch[i] = 0.0;
         }
-        if let Some(engine) = &mut self.air_engine {
-            engine.analyze(&self.air_scratch[..AIR_FFT_SIZE], &mut ctx.lattice.air);
+
+        // native-rt: zero-alloc StftEngine path
+        #[cfg(feature = "native-rt")]
+        {
+            if let Some(ref mut engine) = self.micro_engine {
+                engine.analyze(&self.micro_scratch[..MICRO_FFT_SIZE], &mut ctx.lattice.micro);
+            }
+            if let Some(ref mut engine) = self.core_engine {
+                engine.analyze(&self.core_scratch[..CORE_FFT_SIZE], &mut ctx.lattice.core);
+            }
+            if let Some(ref mut engine) = self.air_engine {
+                engine.analyze(&self.air_scratch[..AIR_FFT_SIZE], &mut ctx.lattice.air);
+            }
+        }
+
+        // WASM / default: legacy per-call path (allocates per call — fine for WASM)
+        #[cfg(not(feature = "native-rt"))]
+        {
+            stft::analyze_lattice(&self.micro_scratch[..MICRO_FFT_SIZE], &mut ctx.lattice.micro, self.sample_rate);
+            stft::analyze_lattice(&self.core_scratch[..CORE_FFT_SIZE], &mut ctx.lattice.core, self.sample_rate);
+            stft::analyze_lattice(&self.air_scratch[..AIR_FFT_SIZE], &mut ctx.lattice.air, self.sample_rate);
         }
     }
 
@@ -118,9 +149,6 @@ mod tests {
         assert_eq!(m2.micro_scratch.len(), MICRO_FFT_SIZE);
         assert_eq!(m2.core_scratch.len(), CORE_FFT_SIZE);
         assert_eq!(m2.air_scratch.len(), AIR_FFT_SIZE);
-        assert!(m2.micro_engine.is_some());
-        assert!(m2.core_engine.is_some());
-        assert!(m2.air_engine.is_some());
     }
 
     #[test]
@@ -163,8 +191,8 @@ mod tests {
     }
 
     #[test]
-    fn stft_engine_produces_same_result_as_legacy() {
-        // Verify that after switching M2 to StftEngine, results match
+    fn legacy_analyze_lattice_works() {
+        // Verify legacy path produces correct results
         let mut m2 = TriLatticeAnalysis::new();
         m2.init(2048, 48000);
         let mut ctx = ProcessContext::new(48000, 2, EngineConfig::default());
@@ -176,7 +204,7 @@ mod tests {
 
         m2.process(&mut samples, &mut ctx);
 
-        // Compare against legacy function
+        // Compare against direct legacy function call
         let mut legacy_lattice = crate::types::Lattice::new(CORE_FFT_SIZE);
         let mut scratch = vec![0.0f32; CORE_FFT_SIZE];
         let copy_len = samples.len().min(CORE_FFT_SIZE);
@@ -186,7 +214,7 @@ mod tests {
         for i in 0..ctx.lattice.core.num_bins() {
             assert!(
                 (ctx.lattice.core.magnitude[i] - legacy_lattice.magnitude[i]).abs() < 1e-6,
-                "Bin {} mismatch: engine={} legacy={}",
+                "Bin {} mismatch: m2={} legacy={}",
                 i, ctx.lattice.core.magnitude[i], legacy_lattice.magnitude[i]
             );
         }

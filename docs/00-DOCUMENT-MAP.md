@@ -32,3 +32,5 @@ This directory is organized by function and reading order.
    Root cause, delayed-transient repair design, split transient probes, and platform explanation for the browser transient artifact that was most audible on macOS Chrome.
 14. [14-M2-STFT-ENGINE-CRACKLING.md](14-M2-STFT-ENGINE-CRACKLING.md)
    Root cause analysis of the M2 StftEngine crackling in Chrome AudioWorklet, workaround, and rules for future FFT path changes.
+15. [15-APO-CHROME-COEXISTENCE.md](15-APO-CHROME-COEXISTENCE.md)
+   APO and Chrome extension cannot coexist — passthrough APO causes Chrome audio crackling. Analysis, audio path diagram, and solution options.

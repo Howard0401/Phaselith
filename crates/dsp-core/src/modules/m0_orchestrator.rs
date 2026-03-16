@@ -1,5 +1,5 @@
 use crate::frame::FrameClock;
-use crate::module_trait::{CirrusModule, ProcessContext};
+use crate::module_trait::{PhaselithModule, ProcessContext};
 
 /// M0: Frame Orchestrator.
 ///
@@ -74,7 +74,7 @@ impl FrameOrchestrator {
     }
 }
 
-impl CirrusModule for FrameOrchestrator {
+impl PhaselithModule for FrameOrchestrator {
     fn name(&self) -> &'static str {
         "M0:Orchestrator"
     }

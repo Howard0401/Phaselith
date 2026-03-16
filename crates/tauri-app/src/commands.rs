@@ -217,6 +217,32 @@ fn marker_file_path() -> PathBuf {
 }
 
 #[tauri::command]
+pub fn is_apo_installed() -> bool {
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::Registry::*;
+        use windows::core::HSTRING;
+
+        let apo_clsid = r"SOFTWARE\Classes\CLSID\{A1B2C3D4-E5F6-4A5B-9C8D-1E2F3A4B5C6D}";
+        let subkey = HSTRING::from(apo_clsid);
+        let mut hkey = HKEY::default();
+        let result = unsafe {
+            RegOpenKeyExW(HKEY_LOCAL_MACHINE, &subkey, 0, KEY_READ, &mut hkey)
+        };
+        if result.is_ok() {
+            unsafe { let _ = RegCloseKey(hkey); }
+            true
+        } else {
+            false
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+#[tauri::command]
 pub fn uninstall_apo() -> Result<String, String> {
     #[cfg(windows)]
     {

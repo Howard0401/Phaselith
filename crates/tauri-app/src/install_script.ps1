@@ -262,6 +262,41 @@ function Set-RegSzValue {
     return $true
 }
 
+# Pre-pass: Clean corrupted ProcessingModes on ALL endpoints (active + inactive).
+# Previous install scripts may have accidentally written APO CLSIDs into
+# {d3993a3f...},5 (PKEY_SFX_ProcessingModes). This key should ONLY contain
+# audio signal processing mode GUIDs (e.g. Default mode), never APO CLSIDs.
+$cleanedModes = 0
+$preCleanKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($renderBase)
+if ($preCleanKey) {
+    foreach ($epGuid in $preCleanKey.GetSubKeyNames()) {
+        $fxSubKey = "$renderBase\$epGuid\FxProperties"
+        $fxTest = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($fxSubKey)
+        if (-not $fxTest) { continue }
+        $fxTest.Close()
+        try {
+            $modesInfo = Get-RegValue -SubKey $fxSubKey -Name $pkeyModes
+            if ($modesInfo -and $modesInfo.Value) {
+                $modesArr = @($modesInfo.Value)
+                $hasOurClsid = $false
+                foreach ($m in $modesArr) { if ($m -ieq $apoClsid) { $hasOurClsid = $true; break } }
+                if ($hasOurClsid) {
+                    $owned = Take-Ownership -SubKeyPath $fxSubKey
+                    if ($owned) {
+                        $cleanModes = @($modesArr | Where-Object { $_ -ine $apoClsid })
+                        if ($cleanModes.Count -gt 0) {
+                            Set-RegMultiString -SubKey $fxSubKey -Name $pkeyModes -Values $cleanModes | Out-Null
+                        }
+                        $cleanedModes++
+                    }
+                }
+            }
+        } catch {}
+    }
+    $preCleanKey.Close()
+}
+if ($cleanedModes -gt 0) { $log += "pre-clean: removed CLSID from $cleanedModes modes keys" }
+
 # Enumerate active render endpoints via .NET API
 $renderKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($renderBase)
 if ($renderKey) {
@@ -279,26 +314,6 @@ if ($renderKey) {
         $fxKey.Close()
 
         $bound = $false
-
-        # Step 4a: Clean modes key — remove our CLSID if accidentally present
-        try {
-            $modesInfo = Get-RegValue -SubKey $fxSubKey -Name $pkeyModes
-            if ($modesInfo -and $modesInfo.Value) {
-                $modesArr = @($modesInfo.Value)
-                $hasOurClsid = $false
-                foreach ($m in $modesArr) { if ($m -ieq $apoClsid) { $hasOurClsid = $true; break } }
-                if ($hasOurClsid) {
-                    $owned = Take-Ownership -SubKeyPath $fxSubKey
-                    if ($owned) {
-                        $cleanModes = @($modesArr | Where-Object { $_ -ine $apoClsid })
-                        if ($cleanModes.Count -gt 0) {
-                            Set-RegMultiString -SubKey $fxSubKey -Name $pkeyModes -Values $cleanModes | Out-Null
-                        }
-                        $details += "${epGuid}: modes-cleaned"
-                    }
-                }
-            }
-        } catch {}
 
         # Step 4b: Try CompositeFX SFX first (takes priority over V1)
         try {

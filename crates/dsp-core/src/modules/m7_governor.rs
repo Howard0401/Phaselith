@@ -1,5 +1,5 @@
 use crate::config::QualityMode;
-use crate::module_trait::{CirrusModule, ProcessContext};
+use crate::module_trait::{PhaselithModule, ProcessContext};
 
 /// M7: Quality Governor & Telemetry.
 ///
@@ -47,7 +47,7 @@ impl QualityGovernor {
     }
 }
 
-impl CirrusModule for QualityGovernor {
+impl PhaselithModule for QualityGovernor {
     fn name(&self) -> &'static str {
         "M7:Governor"
     }

@@ -13,6 +13,8 @@ pub struct StftEngine {
     complex_buf: Vec<Complex<f32>>,
     fft_forward: Arc<dyn Fft<f32>>,
     fft_inverse: Arc<dyn Fft<f32>>,
+    /// Pre-allocated scratch buffer for rustfft (avoids internal allocation).
+    fft_scratch: Vec<Complex<f32>>,
 }
 
 impl StftEngine {
@@ -26,6 +28,10 @@ impl StftEngine {
         let mut planner = FftPlanner::new();
         let fft_forward = planner.plan_fft_forward(fft_size);
         let fft_inverse = planner.plan_fft_inverse(fft_size);
+        // Pre-allocate scratch to the max required by either direction
+        let scratch_len = fft_forward.get_inplace_scratch_len()
+            .max(fft_inverse.get_inplace_scratch_len());
+        let fft_scratch = vec![Complex::new(0.0f32, 0.0); scratch_len];
 
         Self {
             fft_size,
@@ -33,6 +39,7 @@ impl StftEngine {
             complex_buf,
             fft_forward,
             fft_inverse,
+            fft_scratch,
         }
     }
 
@@ -45,6 +52,9 @@ impl StftEngine {
         let complex_buf = vec![Complex::new(0.0f32, 0.0); fft_size];
         let fft_forward = plans.forward(fft_size);
         let fft_inverse = plans.inverse(fft_size);
+        let scratch_len = fft_forward.get_inplace_scratch_len()
+            .max(fft_inverse.get_inplace_scratch_len());
+        let fft_scratch = vec![Complex::new(0.0f32, 0.0); scratch_len];
 
         Self {
             fft_size,
@@ -52,6 +62,7 @@ impl StftEngine {
             complex_buf,
             fft_forward,
             fft_inverse,
+            fft_scratch,
         }
     }
 
@@ -68,7 +79,7 @@ impl StftEngine {
             self.complex_buf[i] = Complex::new(samples[i] * self.window[i], 0.0);
         }
 
-        self.fft_forward.process(&mut self.complex_buf);
+        self.fft_forward.process_with_scratch(&mut self.complex_buf, &mut self.fft_scratch);
 
         let num_bins = fft_size / 2 + 1;
         if lattice.magnitude.len() != num_bins {
@@ -104,7 +115,7 @@ impl StftEngine {
             self.complex_buf[fft_size - i] = self.complex_buf[i].conj();
         }
 
-        self.fft_inverse.process(&mut self.complex_buf);
+        self.fft_inverse.process_with_scratch(&mut self.complex_buf, &mut self.fft_scratch);
 
         let inv_n = 1.0 / fft_size as f32;
         for i in 0..fft_size {

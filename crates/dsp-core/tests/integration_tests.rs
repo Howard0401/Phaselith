@@ -1,5 +1,5 @@
-use asce_dsp_core::engine::CirrusEngineBuilder;
-use asce_dsp_core::config::{EngineConfig, QualityMode, StyleConfig, StylePreset};
+use phaselith_dsp_core::engine::PhaselithEngineBuilder;
+use phaselith_dsp_core::config::{EngineConfig, QualityMode, StyleConfig, StylePreset};
 
 /// Generate a 440 Hz sine wave at the given sample rate.
 fn sine_440(sample_rate: u32, num_samples: usize) -> Vec<f32> {
@@ -49,7 +49,7 @@ fn bandlimited_signal(sample_rate: u32, num_samples: usize, cutoff_hz: f32) -> V
 
 #[test]
 fn default_engine_processes_without_panic() {
-    let mut engine = CirrusEngineBuilder::new(48000, 2048).build_default();
+    let mut engine = PhaselithEngineBuilder::new(48000, 2048).build_default();
 
     let mut buf = sine_440(48000, 2048);
 
@@ -66,7 +66,7 @@ fn engine_output_is_finite_for_all_quality_modes() {
         let mut config = EngineConfig::default();
         config.quality_mode = *mode;
 
-        let mut engine = CirrusEngineBuilder::new(48000, 2048)
+        let mut engine = PhaselithEngineBuilder::new(48000, 2048)
             .with_config(config)
             .build_default();
 
@@ -86,7 +86,7 @@ fn zero_strength_produces_near_original() {
     let mut config = EngineConfig::default();
     config.strength = 0.0;
 
-    let mut engine = CirrusEngineBuilder::new(48000, 1024)
+    let mut engine = PhaselithEngineBuilder::new(48000, 1024)
         .with_config(config)
         .build_default();
 
@@ -99,7 +99,7 @@ fn zero_strength_produces_near_original() {
 
 #[test]
 fn engine_handles_silence() {
-    let mut engine = CirrusEngineBuilder::new(48000, 1024).build_default();
+    let mut engine = PhaselithEngineBuilder::new(48000, 1024).build_default();
 
     let mut buf = vec![0.0f32; 1024];
     engine.process(&mut buf);
@@ -114,7 +114,7 @@ fn engine_handles_silence() {
 
 #[test]
 fn engine_handles_dc_offset() {
-    let mut engine = CirrusEngineBuilder::new(48000, 1024).build_default();
+    let mut engine = PhaselithEngineBuilder::new(48000, 1024).build_default();
 
     let mut buf = vec![0.5f32; 1024];
     engine.process(&mut buf);
@@ -124,7 +124,7 @@ fn engine_handles_dc_offset() {
 
 #[test]
 fn engine_handles_full_scale() {
-    let mut engine = CirrusEngineBuilder::new(48000, 1024).build_default();
+    let mut engine = PhaselithEngineBuilder::new(48000, 1024).build_default();
 
     // Clipped signal
     let mut buf = vec![1.0f32; 1024];
@@ -135,7 +135,7 @@ fn engine_handles_full_scale() {
 
 #[test]
 fn engine_multiple_frames_stable() {
-    let mut engine = CirrusEngineBuilder::new(48000, 1024).build_default();
+    let mut engine = PhaselithEngineBuilder::new(48000, 1024).build_default();
 
     // Process many frames to check for state accumulation issues
     for frame in 0..100 {
@@ -151,7 +151,7 @@ fn engine_multiple_frames_stable() {
 
 #[test]
 fn engine_reset_allows_clean_restart() {
-    let mut engine = CirrusEngineBuilder::new(48000, 1024).build_default();
+    let mut engine = PhaselithEngineBuilder::new(48000, 1024).build_default();
 
     // Process some frames
     for _ in 0..10 {
@@ -170,7 +170,7 @@ fn engine_reset_allows_clean_restart() {
 
 #[test]
 fn bandlimited_signal_is_processed() {
-    let mut engine = CirrusEngineBuilder::new(48000, 1024).build_default();
+    let mut engine = PhaselithEngineBuilder::new(48000, 1024).build_default();
 
     let mut buf = bandlimited_signal(48000, 1024, 16000.0);
     let original_energy: f32 = buf.iter().map(|s| s * s).sum();
@@ -190,7 +190,7 @@ fn bandlimited_signal_is_processed() {
 
 #[test]
 fn governor_telemetry_is_populated_after_processing() {
-    let mut engine = CirrusEngineBuilder::new(48000, 1024).build_default();
+    let mut engine = PhaselithEngineBuilder::new(48000, 1024).build_default();
 
     let mut buf = sine_440(48000, 1024);
     engine.process(&mut buf);
@@ -204,7 +204,7 @@ fn governor_telemetry_is_populated_after_processing() {
 #[test]
 fn different_frame_sizes_work() {
     for frame_size in &[256, 512, 1024, 2048] {
-        let mut engine = CirrusEngineBuilder::new(48000, *frame_size).build_default();
+        let mut engine = PhaselithEngineBuilder::new(48000, *frame_size).build_default();
         let mut buf = sine_440(48000, *frame_size);
         engine.process(&mut buf);
 
@@ -218,7 +218,7 @@ fn different_frame_sizes_work() {
 #[test]
 fn different_sample_rates_work() {
     for sr in &[44100u32, 48000, 96000] {
-        let mut engine = CirrusEngineBuilder::new(*sr, 1024).build_default();
+        let mut engine = PhaselithEngineBuilder::new(*sr, 1024).build_default();
         let mut buf = sine_440(*sr, 1024);
         engine.process(&mut buf);
 
@@ -233,7 +233,7 @@ fn different_sample_rates_work() {
 fn self_reprojection_does_not_explode() {
     // Process a degraded signal through multiple frames
     // Ensure the reprojection validator keeps things bounded
-    let mut engine = CirrusEngineBuilder::new(48000, 1024).build_default();
+    let mut engine = PhaselithEngineBuilder::new(48000, 1024).build_default();
 
     for _ in 0..50 {
         let mut buf = bandlimited_signal(48000, 1024, 14000.0);
@@ -253,7 +253,7 @@ fn safety_mixer_preserves_low_band() {
     let mut config = EngineConfig::default();
     config.strength = 1.0;
 
-    let mut engine = CirrusEngineBuilder::new(48000, 1024)
+    let mut engine = PhaselithEngineBuilder::new(48000, 1024)
         .with_config(config)
         .build_default();
 
@@ -270,7 +270,7 @@ fn safety_mixer_preserves_low_band() {
 
 #[test]
 fn config_changes_mid_stream() {
-    let mut engine = CirrusEngineBuilder::new(48000, 1024).build_default();
+    let mut engine = PhaselithEngineBuilder::new(48000, 1024).build_default();
 
     // Process a few frames with default config
     for _ in 0..5 {
@@ -300,7 +300,7 @@ fn e2e_clipped_signal_output_bounded() {
     // Heavily clipped signal — engine should not amplify beyond safe limits
     let mut config = EngineConfig::default();
     config.strength = 1.0;
-    let mut engine = CirrusEngineBuilder::new(48000, 1024)
+    let mut engine = PhaselithEngineBuilder::new(48000, 1024)
         .with_config(config)
         .build_default();
 
@@ -326,7 +326,7 @@ fn e2e_clipped_signal_output_bounded() {
 #[test]
 fn e2e_alternating_loud_quiet_stable() {
     // Alternate between loud and silent frames — tests state transitions
-    let mut engine = CirrusEngineBuilder::new(48000, 512).build_default();
+    let mut engine = PhaselithEngineBuilder::new(48000, 512).build_default();
 
     for frame in 0..40 {
         let mut buf = if frame % 2 == 0 {
@@ -354,7 +354,7 @@ fn e2e_alternating_loud_quiet_stable() {
 #[test]
 fn e2e_very_small_frame_64_samples() {
     // 64-sample frame — smaller than typical WASM block
-    let mut engine = CirrusEngineBuilder::new(48000, 64).build_default();
+    let mut engine = PhaselithEngineBuilder::new(48000, 64).build_default();
     let mut buf = sine_440(48000, 64);
     engine.process(&mut buf);
     assert!(buf.iter().all(|s| s.is_finite()));
@@ -363,7 +363,7 @@ fn e2e_very_small_frame_64_samples() {
 #[test]
 fn e2e_large_frame_4096_samples() {
     // 4096-sample frame — maximum expected size
-    let mut engine = CirrusEngineBuilder::new(48000, 4096).build_default();
+    let mut engine = PhaselithEngineBuilder::new(48000, 4096).build_default();
     let mut buf = sine_440(48000, 4096);
     engine.process(&mut buf);
 
@@ -375,7 +375,7 @@ fn e2e_large_frame_4096_samples() {
 #[test]
 fn e2e_near_nyquist_cutoff() {
     // Signal with cutoff near Nyquist — minimal damage, should pass through mostly unchanged
-    let mut engine = CirrusEngineBuilder::new(48000, 1024).build_default();
+    let mut engine = PhaselithEngineBuilder::new(48000, 1024).build_default();
     let mut buf = bandlimited_signal(48000, 1024, 23000.0); // near Nyquist
     let original_energy: f32 = buf.iter().map(|s| s * s).sum();
 
@@ -397,7 +397,7 @@ fn e2e_low_cutoff_heavy_damage() {
     let mut config = EngineConfig::default();
     config.strength = 1.0;
     config.quality_mode = QualityMode::Ultra;
-    let mut engine = CirrusEngineBuilder::new(48000, 1024)
+    let mut engine = PhaselithEngineBuilder::new(48000, 1024)
         .with_config(config)
         .build_default();
 
@@ -417,7 +417,7 @@ fn e2e_low_cutoff_heavy_damage() {
 #[test]
 fn e2e_impulse_signal() {
     // Single impulse (Dirac delta) — tests transient handling
-    let mut engine = CirrusEngineBuilder::new(48000, 1024).build_default();
+    let mut engine = PhaselithEngineBuilder::new(48000, 1024).build_default();
 
     let mut buf = vec![0.0f32; 1024];
     buf[512] = 1.0; // single impulse
@@ -446,7 +446,7 @@ fn e2e_all_style_presets_stable() {
         let mut config = EngineConfig::default();
         config.style = *style;
 
-        let mut engine = CirrusEngineBuilder::new(48000, 1024)
+        let mut engine = PhaselithEngineBuilder::new(48000, 1024)
             .with_config(config)
             .build_default();
 
@@ -468,7 +468,7 @@ fn e2e_all_style_presets_stable() {
 #[test]
 fn e2e_sequential_engine_resets_stable() {
     // Process → reset → process repeatedly — tests cleanup
-    let mut engine = CirrusEngineBuilder::new(48000, 1024).build_default();
+    let mut engine = PhaselithEngineBuilder::new(48000, 1024).build_default();
 
     for cycle in 0..5 {
         for _ in 0..10 {
@@ -489,7 +489,7 @@ fn e2e_mixed_damage_clipping_and_cutoff() {
     // Signal with both clipping AND low cutoff — combined damage paths
     let mut config = EngineConfig::default();
     config.strength = 1.0;
-    let mut engine = CirrusEngineBuilder::new(48000, 1024)
+    let mut engine = PhaselithEngineBuilder::new(48000, 1024)
         .with_config(config)
         .build_default();
 
@@ -517,7 +517,7 @@ fn e2e_mixed_damage_clipping_and_cutoff() {
 #[test]
 fn e2e_44100_sample_rate_multi_frame() {
     // 44.1kHz (CD quality) through multiple frames
-    let mut engine = CirrusEngineBuilder::new(44100, 1024).build_default();
+    let mut engine = PhaselithEngineBuilder::new(44100, 1024).build_default();
 
     for frame in 0..30 {
         let mut buf = bandlimited_signal(44100, 1024, 15000.0);
@@ -532,7 +532,7 @@ fn e2e_44100_sample_rate_multi_frame() {
 #[test]
 fn e2e_96khz_sample_rate_multi_frame() {
     // 96kHz (hi-res) through multiple frames
-    let mut engine = CirrusEngineBuilder::new(96000, 1024).build_default();
+    let mut engine = PhaselithEngineBuilder::new(96000, 1024).build_default();
 
     for frame in 0..30 {
         let mut buf = sine_440(96000, 1024);
@@ -551,7 +551,7 @@ fn e2e_reprojection_additive_synthesis_produces_content() {
     let mut config = EngineConfig::default();
     config.strength = 1.0;
 
-    let mut engine = CirrusEngineBuilder::new(48000, 1024)
+    let mut engine = PhaselithEngineBuilder::new(48000, 1024)
         .with_config(config)
         .build_default();
 
@@ -573,7 +573,7 @@ fn e2e_reprojection_additive_synthesis_produces_content() {
 #[test]
 fn e2e_noise_signal_does_not_explode() {
     // White noise — worst case for harmonic analysis
-    let mut engine = CirrusEngineBuilder::new(48000, 1024).build_default();
+    let mut engine = PhaselithEngineBuilder::new(48000, 1024).build_default();
 
     // Simple pseudo-random noise
     let mut seed: u32 = 12345;
