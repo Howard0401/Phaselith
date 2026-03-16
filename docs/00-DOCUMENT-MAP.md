@@ -46,3 +46,5 @@ This directory is organized by function and reading order.
    M4 cepstral spectral envelope (replacing power-law decay), HighFidelity QualityMode (decoupling FFT size from reprojection iterations), extreme dynamics protection, and perceptual comparison of power-law vs cepstral characteristics.
 21. [21-DIRECTIONAL-HEADROOM-MIXING.md](21-DIRECTIONAL-HEADROOM-MIXING.md)
    M6 mixer directional headroom fix — corrected non-directional headroom formula and removed per-sample hard clamp that caused distortion during loud passages.
+22. [22-APO-OLA-DISTORTION-ROOT-CAUSES.md](22-APO-OLA-DISTORTION-ROOT-CAUSES.md)
+   All APO distortion root causes: M6 non-directional headroom, M6 per-sample hard clamp, M5 OLA multi-hop double-add, APO block > hop structural constraint, and sub-block engine fix.

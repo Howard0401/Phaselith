@@ -15,11 +15,41 @@ pub struct PhaselithEngine {
 impl PhaselithEngine {
     /// Process audio in-place through all modules.
     /// MUST be zero-alloc on the hot path.
+    ///
+    /// When the host block size exceeds hop_size (e.g., APO 528 > hop 256),
+    /// the block is split into sub-blocks of at most hop_size samples.
+    /// This guarantees hops_this_block ≤ 1 per sub-block, preventing the
+    /// M5 OLA double-add distortion that occurs when M2 produces only one
+    /// STFT analysis per process() call but multiple hops are expected.
     pub fn process(&mut self, samples: &mut [f32]) {
         if !self.context.config.enabled {
             return; // bypass
         }
 
+        let hop = self.context.config.quality_mode.hop_size();
+
+        // Reset timing accumulator before processing (both paths use +=)
+        self.context.processing_time_us = 0.0;
+
+        if samples.len() <= hop {
+            // Fast path: block ≤ hop (Chrome/WASM block=128, hop=256).
+            // No splitting needed, zero overhead.
+            self.process_sub_block(samples);
+        } else {
+            // APO path: block > hop (e.g., 528 > 256). Split into sub-blocks
+            // so each sub-block triggers at most one hop boundary in M0's
+            // FrameClock, ensuring M2 analysis and M5 OLA stay 1:1.
+            let mut offset = 0;
+            while offset < samples.len() {
+                let sub_len = hop.min(samples.len() - offset);
+                self.process_sub_block(&mut samples[offset..offset + sub_len]);
+                offset += sub_len;
+            }
+        }
+    }
+
+    /// Process a single sub-block (≤ hop_size samples) through all modules.
+    fn process_sub_block(&mut self, samples: &mut [f32]) {
         // Save dry copy for M6 safety mixing
         let dry_len = samples.len().min(self.context.dry_buffer.len());
         self.context.dry_buffer[..dry_len].copy_from_slice(&samples[..dry_len]);
@@ -48,12 +78,13 @@ impl PhaselithEngine {
         #[cfg(all(feature = "native-rt", target_arch = "x86_64"))]
         {
             let elapsed_ticks = unsafe { core::arch::x86_64::_rdtsc() }.wrapping_sub(t0);
-            self.context.processing_time_us = elapsed_ticks as f32 / 3000.0;
+            // Accumulate across sub-blocks (reset to 0 before loop in split path)
+            self.context.processing_time_us += elapsed_ticks as f32 / 3000.0;
         }
 
         #[cfg(all(not(target_arch = "wasm32"), not(feature = "native-rt")))]
         {
-            self.context.processing_time_us = t0.elapsed().as_micros() as f32;
+            self.context.processing_time_us += t0.elapsed().as_micros() as f32;
         }
     }
 

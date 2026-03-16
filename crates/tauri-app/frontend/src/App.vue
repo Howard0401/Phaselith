@@ -12,18 +12,18 @@
       </div>
       <div v-if="status" class="status-info">
         <span class="stat-cell">{{ smoothed.cutoff > 100 ? (Math.round(smoothed.cutoff / 500) * 500 / 1000).toFixed(1) + ' kHz' : 'Lossless' }}</span>
-        <span class="stat-cell">CPU {{ smoothed.load.toFixed(1) }}%</span>
+        <span class="stat-cell">CPU {{ (smoothed.load / cpuCores).toFixed(2) }}%</span>
         <span class="stat-cell" :class="{ 'algo-active': smoothed.diff > -60 }">
           {{ smoothed.diff > -60 ? 'DSP ' + (smoothed.diff > 0 ? '+' : '') + smoothed.diff.toFixed(1) + ' dB' : 'DSP off' }}
         </span>
       </div>
     </section>
 
-    <section class="controls" :class="{ disabled: !status }">
+    <section class="controls" :class="{ disabled: !apoInstalled }">
       <div class="toggle-row">
         <label>Enable Enhancement</label>
-        <label class="switch" :class="{ disabled: !status }">
-          <input type="checkbox" v-model="config.enabled" :disabled="!status" @change="applyConfig">
+        <label class="switch" :class="{ disabled: !apoInstalled }">
+          <input type="checkbox" v-model="config.enabled" :disabled="!apoInstalled" @change="applyConfig">
           <span class="slider"></span>
         </label>
       </div>
@@ -31,25 +31,25 @@
       <SliderControl
         label="Compensation Strength"
         v-model="config.strength"
-        :disabled="!status"
+        :disabled="!apoInstalled"
         @update:modelValue="applyConfig"
       />
       <SliderControl
         label="HF Reconstruction"
         v-model="config.hf_reconstruction"
-        :disabled="!status"
+        :disabled="!apoInstalled"
         @update:modelValue="applyConfig"
       />
       <SliderControl
         label="Dynamics Restoration"
         v-model="config.dynamics"
-        :disabled="!status"
+        :disabled="!apoInstalled"
         @update:modelValue="applyConfig"
       />
       <SliderControl
         label="Transient Repair"
         v-model="config.transient"
-        :disabled="!status"
+        :disabled="!apoInstalled"
         @update:modelValue="applyConfig"
       />
 
@@ -64,13 +64,13 @@
             :key="idx"
             class="pill"
             :class="{ active: config.filter_style === idx, disabled: !status }"
-            :disabled="!status"
+            :disabled="!apoInstalled"
             @click="selectPreset(idx)"
           >{{ style }}</button>
           <button
             class="pill"
             :class="{ active: config.filter_style === 3, disabled: !status }"
-            :disabled="!status"
+            :disabled="!apoInstalled"
             @click="config.filter_style = 3; applyConfig()"
           >Custom</button>
         </div>
@@ -83,12 +83,12 @@
         <span v-if="isCustom" class="custom-badge">Custom</span>
       </div>
       <div v-show="advancedOpen" class="advanced-panel">
-        <SliderControl label="Warmth" v-model="config.warmth" :disabled="!status" @update:modelValue="onAxisChange" />
-        <SliderControl label="Air / Brightness" v-model="config.air_brightness" :disabled="!status" @update:modelValue="onAxisChange" />
-        <SliderControl label="Smoothness" v-model="config.smoothness" :disabled="!status" @update:modelValue="onAxisChange" />
-        <SliderControl label="Spatial Spread" v-model="config.spatial_spread" :disabled="!status" @update:modelValue="onAxisChange" />
-        <SliderControl label="Impact Gain" v-model="config.impact_gain" :disabled="!status" @update:modelValue="onAxisChange" />
-        <SliderControl label="Body" v-model="config.body" :disabled="!status" @update:modelValue="onAxisChange" />
+        <SliderControl label="Warmth" v-model="config.warmth" :disabled="!apoInstalled" @update:modelValue="onAxisChange" />
+        <SliderControl label="Air / Brightness" v-model="config.air_brightness" :disabled="!apoInstalled" @update:modelValue="onAxisChange" />
+        <SliderControl label="Smoothness" v-model="config.smoothness" :disabled="!apoInstalled" @update:modelValue="onAxisChange" />
+        <SliderControl label="Spatial Spread" v-model="config.spatial_spread" :disabled="!apoInstalled" @update:modelValue="onAxisChange" />
+        <SliderControl label="Impact Gain" v-model="config.impact_gain" :disabled="!apoInstalled" @update:modelValue="onAxisChange" />
+        <SliderControl label="Body" v-model="config.body" :disabled="!apoInstalled" @update:modelValue="onAxisChange" />
       </div>
 
     </section>
@@ -148,6 +148,7 @@ const config = ref({
   body: 0.40,
 });
 
+const cpuCores = navigator.hardwareConcurrency || 1;
 const advancedOpen = ref(false);
 const isCustom = computed(() => config.value.filter_style === 3);
 
@@ -207,8 +208,7 @@ async function pollStatus() {
         ? ema(isFinite(smoothed.value.diff) ? smoothed.value.diff : s.wet_dry_diff_db, s.wet_dry_diff_db)
         : -Infinity;
     } else if (wasConnected) {
-      // Just disconnected — reset toggle to off and clear display
-      config.value.enabled = false;
+      // Just disconnected — clear display but keep toggle state
       smoothed.value = { cutoff: 0, load: 0, diff: -Infinity };
     }
   } catch {

@@ -120,6 +120,14 @@ pub fn init() {
             match create_bridge() {
                 Ok(b) => {
                     eprintln!("Phaselith IPC bridge: connected (file-backed mmap)");
+                    // Push default enabled=true so APO starts processing immediately.
+                    // Without this, freshly-created mmap has all zeros → enabled=false.
+                    if !b.config_ptr.is_null() {
+                        let config = unsafe { &*b.config_ptr };
+                        config.enabled.store(true, std::sync::atomic::Ordering::Relaxed);
+                        config.compensation_strength_u32.store(7000, std::sync::atomic::Ordering::Relaxed); // 0.7
+                        config.version.fetch_add(1, std::sync::atomic::Ordering::Release);
+                    }
                     *guard = Some(b);
                 }
                 Err(e) => {
@@ -140,6 +148,13 @@ pub fn reconnect() -> bool {
         match create_bridge() {
             Ok(b) => {
                 eprintln!("Phaselith IPC bridge: reconnected (file-backed mmap)");
+                // Push default enabled=true on reconnect (same reason as init)
+                if !b.config_ptr.is_null() {
+                    let config = unsafe { &*b.config_ptr };
+                    config.enabled.store(true, std::sync::atomic::Ordering::Relaxed);
+                    config.compensation_strength_u32.store(7000, std::sync::atomic::Ordering::Relaxed);
+                    config.version.fetch_add(1, std::sync::atomic::Ordering::Release);
+                }
                 *guard = Some(b);
                 true
             }

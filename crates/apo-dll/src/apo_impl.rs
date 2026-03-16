@@ -480,13 +480,12 @@ impl PhaselithApo {
                 pre_echo_transient_scaling: 0.4,
                 declip_transient_scaling: 1.0,
                 delayed_transient_repair: false,
-                // APO fixed parameters: UltraExtreme quality — FFT 8192,
-                // 8 reprojection iterations, hop 2048. Maximum spectral
-                // resolution and residual validation. All other modes cause
-                // more clipping due to coarser decomposition.
-                // Phase/synthesis also locked: Linear + FftOlaPilot only.
+                // Standard mode (FFT 1024, hop 256) matches Chrome extension.
+                // Engine sub-block processing splits APO blocks (528) into
+                // ≤ hop_size chunks, guaranteeing hops_this_block ≤ 1 and
+                // preventing M5 OLA multi-hop artifacts.
                 phase_mode: PhaseMode::Linear,
-                quality_mode: QualityMode::UltraExtreme,
+                quality_mode: QualityMode::Standard,
                 // Read filter style from mmap and apply corresponding StyleConfig.
                 // When Custom (3), read individual 6-axis values from mmap.
                 // When preset (0/1/2), derive from preset (ignore mmap axis values).
@@ -507,7 +506,10 @@ impl PhaselithApo {
                         )
                     }
                 },
-                synthesis_mode: SynthesisMode::FftOlaPilot,
+                // LegacyAdditive (sum-of-cosines) matches Chrome extension default.
+                // FftOlaPilot (ISTFT+OLA) produces audible HF sizzling artifacts
+                // with Standard-mode's coarser 1024-point FFT resolution.
+                synthesis_mode: SynthesisMode::LegacyAdditive,
                 ambience_preserve: 0.0,
                 filter_style: {
                     let fs_val = sc.filter_style.load(std::sync::atomic::Ordering::Relaxed) as u32;

@@ -420,15 +420,8 @@ impl PhaselithModule for SelfReprojectionValidator {
                                 self.pilot_istft_buf[i] *= window[i];
                             }
 
-                            // Add windowed frame to OLA accumulator for each hop.
-                            // M2 produces one analysis per block, but when
-                            // block_size > hop_size (APO 480/528 > 256), multiple
-                            // hops are needed per block. Re-adding the same
-                            // windowed frame at each hop position is correct OLA
-                            // behavior: the Hann window at 75% overlap sums to
-                            // constant gain, and the signal changes negligibly
-                            // over one hop (5.3ms at 48kHz). This avoids the
-                            // amplitude dips caused by advance_write_only().
+                            // Sub-block engine guarantees hops_this_block ≤ 1,
+                            // so this loop executes at most once.
                             for _ in 0..ctx.hops_this_block {
                                 self.ola_buffer.add_frame(&self.pilot_istft_buf[..fft_size]);
                             }

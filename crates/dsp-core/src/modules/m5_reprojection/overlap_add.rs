@@ -115,21 +115,6 @@ impl OverlapAddBuffer {
         self.hop_size
     }
 
-    /// Advance write position by one hop WITHOUT accumulating frame data.
-    ///
-    /// Used when M2 produces only one analysis per block but M0's FrameClock
-    /// reports multiple hops (e.g., APO block_size=480, hop_size=256 → alternating
-    /// 1/2 hops per block). The first hop uses `add_frame()` to accumulate the
-    /// ISTFT output; subsequent hops call this to keep the OLA timing aligned
-    /// without re-adding the same frame (which would create a comb filter artifact).
-    ///
-    /// The read output for these "empty" hops comes from overlap tails of
-    /// previously accumulated frames — valid signal data at reduced amplitude.
-    #[cfg(feature = "native-rt")]
-    pub fn advance_write_only(&mut self) {
-        self.write_pos = (self.write_pos + self.hop_size) % self.accum.len();
-        self.readable_hops += 1;
-    }
 }
 
 #[cfg(test)]
