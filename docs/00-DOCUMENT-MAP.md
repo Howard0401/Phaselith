@@ -38,3 +38,5 @@ This directory is organized by function and reading order.
    Audio architecture analysis.
 17. [17-BUILD-PROFILES-AND-REALTIME-SAFETY.md](17-BUILD-PROFILES-AND-REALTIME-SAFETY.md)
    Why DSP crates must always compile with optimizations, even in dev mode. Per-crate profile overrides, industry practice, and the debug-build crackling root cause.
+18. [18-PSYCHOACOUSTIC-MODULE-AND-ADAPTIVE-CONVERGENCE.md](18-PSYCHOACOUSTIC-MODULE-AND-ADAPTIVE-CONVERGENCE.md)
+   Shared psychoacoustic module (Terhardt threshold, Schroeder spreading), M5 adaptive convergence with perceptual stopping criterion, and M6 masking refactor.

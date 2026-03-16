@@ -6,6 +6,7 @@ pub mod synthesizer;
 pub mod overlap_add;
 
 use crate::fft::planner::SharedFftPlans;
+use crate::psychoacoustic;
 use crate::frame::SynthesisMode;
 use crate::module_trait::{PhaselithModule, ProcessContext};
 use crate::modules::m2_lattice::stft::StftEngine;
@@ -264,7 +265,25 @@ impl PhaselithModule for SelfReprojectionValidator {
                     self.combined_buf[k] *= self.constrained_scratch[k];
                 }
 
-                // 6. Check convergence
+                // 6. Check convergence — adaptive perceptual + MSE fallback
+                // First: perceptual check — if error is below hearing threshold
+                // in ≥95% of bins, further iterations are inaudible.
+                let bin_to_freq = ctx.sample_rate as f32 / fft_size.max(1) as f32;
+                if psychoacoustic::is_perceptually_converged(
+                    &self.error_scratch[..core_bins],
+                    cutoff_bin,
+                    core_bins,
+                    bin_to_freq,
+                    0.95,
+                ) {
+                    // Copy final mask before breaking
+                    let copy_len = ctx.validated.acceptance_mask.len().min(core_bins);
+                    ctx.validated.acceptance_mask[..copy_len]
+                        .copy_from_slice(&self.constrained_scratch[..copy_len]);
+                    break;
+                }
+
+                // Second: MSE improvement check (original fallback)
                 let j_rep: f32 = self.error_scratch[..core_bins].iter().map(|e| e * e).sum::<f32>()
                     / core_bins.max(1) as f32;
                 if j_rep < best_error {
@@ -309,7 +328,19 @@ impl PhaselithModule for SelfReprojectionValidator {
                     self.combined_buf[k] *= constrained_mask[k];
                 }
 
-                // 6. Check convergence
+                // 6. Check convergence — adaptive perceptual + MSE fallback
+                let bin_to_freq = ctx.sample_rate as f32 / fft_size.max(1) as f32;
+                if psychoacoustic::is_perceptually_converged(
+                    &e_rep,
+                    cutoff_bin,
+                    core_bins,
+                    bin_to_freq,
+                    0.95,
+                ) {
+                    ctx.validated.acceptance_mask = constrained_mask;
+                    break;
+                }
+
                 let j_rep: f32 = e_rep.iter().map(|e| e * e).sum::<f32>() / e_rep.len().max(1) as f32;
                 if j_rep < best_error {
                     best_error = j_rep;

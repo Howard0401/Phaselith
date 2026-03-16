@@ -6,6 +6,7 @@ pub mod module_trait;
 pub mod modules;
 pub mod engine;
 pub mod fft;
+pub mod psychoacoustic;
 
 // Keep old modules alive during migration (APO/WASM still reference them)
 pub mod stages;
