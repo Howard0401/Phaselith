@@ -40,3 +40,5 @@ This directory is organized by function and reading order.
    Why DSP crates must always compile with optimizations, even in dev mode. Per-crate profile overrides, industry practice, and the debug-build crackling root cause.
 18. [18-PSYCHOACOUSTIC-MODULE-AND-ADAPTIVE-CONVERGENCE.md](18-PSYCHOACOUSTIC-MODULE-AND-ADAPTIVE-CONVERGENCE.md)
    Shared psychoacoustic module (Terhardt threshold, Schroeder spreading), M5 adaptive convergence with perceptual stopping criterion, and M6 masking refactor.
+19. [19-OPTIMIZATION-SURVEY-AND-PATENT-FREE-ALGORITHMS.md](19-OPTIMIZATION-SURVEY-AND-PATENT-FREE-ALGORITHMS.md)
+   Comprehensive M0–M6 optimization survey, limitations analysis, and 10 patent-free algorithms verified for commercial use.
