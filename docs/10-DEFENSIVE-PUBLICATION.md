@@ -2,13 +2,13 @@
 
 ## Purpose
 
-This document is a defensive-publication-style technical disclosure for CIRRUS.
+This document is a defensive-publication-style technical disclosure for Phaselith.
 
 Its purpose is:
 
-1. to publicly describe the core technical ideas behind CIRRUS in a structured way
+1. to publicly describe the core technical ideas behind Phaselith in a structured way
 2. to create a clearer prior-art style record than a normal README or architecture note
-3. to distinguish the CIRRUS approach from conventional EQ, virtualizer, codec-side enhancement, and offline restoration workflows
+3. to distinguish the Phaselith approach from conventional EQ, virtualizer, codec-side enhancement, and offline restoration workflows
 
 This document is not legal advice.
 
@@ -59,7 +59,7 @@ These approaches do not adequately solve the following combined requirement:
 
 ## High-Level Disclosure
 
-CIRRUS discloses a staged method for real-time perceptual audio restoration and presentation in which:
+Phaselith discloses a staged method for real-time perceptual audio restoration and presentation in which:
 
 1. a degradation posterior is estimated from the incoming signal
 2. the signal is decomposed into structured fields
@@ -118,7 +118,7 @@ over large, unconstrained, offline optimization.
 
 ## Core Processing Stages
 
-The current CIRRUS architecture is organized as M0-M7.
+The current Phaselith architecture is organized as M0-M7.
 
 ### M0. Orchestrator
 

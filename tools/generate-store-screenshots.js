@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * CIRRUS - Chrome Web Store Screenshot Generator
+ * Phaselith - Chrome Web Store Screenshot Generator
  *
  * Generates promotional screenshots for Chrome Web Store listing.
  * Output: 1280x800 24-bit PNG (no alpha) with branded background.
@@ -75,7 +75,7 @@ async function main() {
 
   if (args.length === 0 || args.includes('--help')) {
     console.log(`
-CIRRUS - Store Screenshot Generator
+Phaselith - Store Screenshot Generator
 
 Usage:
   node tools/generate-store-screenshots.js <input-png> [options]

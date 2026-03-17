@@ -2,7 +2,7 @@
   <div class="app">
     <header>
       <h1>Phaselith</h1>
-      <span class="subtitle">CIRRUS Algorithm Audio Enhancement</span>
+      <span class="subtitle">Phaselith Audio Enhancement</span>
     </header>
 
     <section class="status-bar" :class="{ active: isProcessing }">

@@ -1,7 +1,7 @@
 use crate::config::{EngineConfig, SynthesisMode};
 use crate::frame::FrameParams;
 
-/// Shared mutable context passed through the M0-M7 CIRRUS pipeline.
+/// Shared mutable context passed through the M0-M7 Phaselith pipeline.
 /// Earlier modules write fields that later modules read.
 ///
 /// All scratch buffers are pre-allocated in each module's `init()`.
@@ -82,7 +82,7 @@ impl ProcessContext {
     }
 }
 
-/// The core trait for every CIRRUS processing module (M0-M7).
+/// The core trait for every Phaselith processing module (M0-M7).
 ///
 /// # Real-time safety contract
 ///

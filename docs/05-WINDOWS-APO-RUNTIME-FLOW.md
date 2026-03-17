@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The Windows APO path is CIRRUS's system-wide runtime strategy.
+The Windows APO path is Phaselith's system-wide runtime strategy.
 
 Its long-term value is much larger than the browser path because it can become the real flagship desktop playback engine.
 

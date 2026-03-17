@@ -18,7 +18,7 @@ The engine currently exposes two classes of controls:
 - `quality_mode`
 - `synthesis_mode`
 
-These controls influence how aggressively CIRRUS tries to detect, reconstruct, and validate repairs.
+These controls influence how aggressively Phaselith tries to detect, reconstruct, and validate repairs.
 
 ### Presentation Controls
 
@@ -48,7 +48,7 @@ Why:
 
 Styles should not be random tone presets.
 
-Each style should represent a stable presentation personality built on the same CIRRUS core.
+Each style should represent a stable presentation personality built on the same Phaselith core.
 
 Typical style directions:
 

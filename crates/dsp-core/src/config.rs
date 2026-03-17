@@ -41,7 +41,7 @@ impl SynthesisMode {
     }
 }
 
-/// CIRRUS engine configuration.
+/// Phaselith engine configuration.
 /// Controlled by the UI (Tauri or Chrome popup) or shared memory (APO).
 /// All fields are plain data — safe to copy across thread boundaries.
 #[derive(Debug, Clone, Copy)]

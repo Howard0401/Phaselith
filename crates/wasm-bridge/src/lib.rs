@@ -1,4 +1,4 @@
-// ASCE WASM Bridge (CIRRUS Engine)
+// ASCE WASM Bridge (Phaselith Engine)
 // Exports C-style functions for AudioWorklet consumption.
 // No wasm-bindgen (AudioWorklet lacks TextDecoder/TextEncoder).
 //

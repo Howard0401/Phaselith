@@ -1,4 +1,4 @@
-//! Extreme value and edge case tests for the CIRRUS engine.
+//! Extreme value and edge case tests for the Phaselith engine.
 //!
 //! These tests verify robustness at boundaries:
 //! - Sub-block splitting edge cases (1 sample, hop±1, exact multiples)

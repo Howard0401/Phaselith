@@ -8,7 +8,7 @@
   <strong>English</strong> | <strong><a href="README.zh-TW.md">繁體中文</a></strong> | <strong><a href="README.zh-CN.md">简体中文</a></strong>
 </p>
 
-Phaselith is a real-time perceptual audio restoration and presentation engine powered by the CIRRUS Algorithm (Constrained Inverse Restoration with Real-time Uncertainty and Reprojection Solver).
+Phaselith is a real-time perceptual audio restoration and presentation engine.
 
 Phaselith makes damaged, lossy, spatially collapsed, or harsh playback sound more focused, more intelligible, and more physically "placed" in front of the listener.
 
@@ -32,7 +32,7 @@ The project focuses on five goals:
 
 EQ applies a fixed or semi-fixed tonal curve.
 
-The CIRRUS Algorithm instead:
+Phaselith instead:
 
 1. Estimates what kind of damage or collapse is present.
 2. Decomposes the signal into harmonic, air, transient, spatial, and phase-related structure.
@@ -44,7 +44,7 @@ That is why Phaselith can sound like it reduces muddiness, restores front focus,
 
 ## Core Algorithm
 
-The CIRRUS Algorithm engine is organized as M0-M7:
+The Phaselith engine is organized as M0-M7:
 
 1. `M0 Orchestrator`
    Buffers host callbacks, manages frame and hop timing, and provides aligned analysis windows.
@@ -91,7 +91,7 @@ Roadmap and limitations live in [docs/08-ROADMAP-AND-LIMITATIONS.md](docs/08-ROA
 - `chrome-ext/`
   Browser extension runtime and AudioWorklet host.
 - `crates/dsp-core/`
-  CIRRUS Algorithm core.
+  Phaselith core.
 - `crates/wasm-bridge/`
   WASM bridge used by the browser runtime.
 - `crates/apo-dll/`
@@ -116,7 +116,7 @@ Start with these files:
 
 ## Status
 
-> **Early Preview** — Phaselith is under active development. The CIRRUS Algorithm core is stable and producing strong listening results, but APIs, configuration options, and runtime architecture may change without notice.
+> **Early Preview** — Phaselith is under active development. The Phaselith core is stable and producing strong listening results, but APIs, configuration options, and runtime architecture may change without notice.
 
 Today, the browser runtime is the cleanest listening reference in this repository.
 

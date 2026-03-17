@@ -73,7 +73,7 @@ That work should stay disciplined:
 
 The right next step is not automatically the most mathematically elegant step.
 
-For CIRRUS, the right next step is the one that:
+For Phaselith, the right next step is the one that:
 
 1. preserves the strongest current listening results
 2. reduces architectural debt

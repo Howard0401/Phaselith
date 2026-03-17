@@ -4,7 +4,7 @@
 
 ### `crates/dsp-core`
 
-The algorithmic heart of CIRRUS.
+The algorithmic heart of Phaselith.
 
 Contains:
 

@@ -3,7 +3,7 @@ use crate::fft::planner::SharedFftPlans;
 use crate::module_trait::{PhaselithModule, ProcessContext};
 use crate::modules;
 
-/// The CIRRUS engine: M0-M7 processing pipeline.
+/// The Phaselith engine: M0-M7 processing pipeline.
 ///
 /// Replaces the old 6-stage Pipeline. Each module reads/writes to ProcessContext
 /// fields as appropriate. The engine ensures correct execution order.
@@ -170,7 +170,7 @@ impl PhaselithEngineBuilder {
         self
     }
 
-    /// Build with the default M0-M7 CIRRUS module chain.
+    /// Build with the default M0-M7 Phaselith module chain.
     /// Uses a shared FFT plan cache so M2 and M5 reuse the same plans.
     pub fn build_default(self) -> PhaselithEngine {
         let mut plans = SharedFftPlans::new();

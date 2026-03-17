@@ -2,7 +2,7 @@
 
 ## Why Validation Matters
 
-CIRRUS can produce impressive first-impression effects.
+Phaselith can produce impressive first-impression effects.
 
 That is both an advantage and a risk.
 
@@ -32,11 +32,11 @@ cargo test -p asce-dsp-core -p asce-wasm-bridge
 Maintain at least four groups of reference material:
 
 1. `obvious wins`
-   - clips where CIRRUS clearly helps
+   - clips where Phaselith clearly helps
 2. `subtle material`
    - material where improvement is smaller but still meaningful
 3. `clean references`
-   - already-good material where CIRRUS should stay disciplined
+   - already-good material where Phaselith should stay disciplined
 4. `risk material`
    - clips likely to expose dryness, false width, over-focus, or loss of musicality
 

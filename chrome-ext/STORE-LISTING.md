@@ -6,13 +6,13 @@
 
 ## Detailed Description (Store listing)
 
-Phaselith is a real-time browser audio optimization engine powered by the CIRRUS Algorithm. It analyzes playback in real time and helps reduce haze, roughness, and image instability so voices and instruments feel more focused, more intelligible, and more physically placed in front of the listener.
+Phaselith is a real-time browser audio optimization engine powered by Phaselith. It analyzes playback in real time and helps reduce haze, roughness, and image instability so voices and instruments feel more focused, more intelligible, and more physically placed in front of the listener.
 
-Unlike EQ plugins or sound enhancers that apply fixed tonal curves, Phaselith uses the CIRRUS Algorithm's multi-stage signal analysis pipeline to detect degradation patterns, generate candidate repairs, and mix only bounded, validated changes back into the signal.
+Unlike EQ plugins or sound enhancers that apply fixed tonal curves, Phaselith uses a multi-stage signal analysis pipeline to detect degradation patterns, generate candidate repairs, and mix only bounded, validated changes back into the signal.
 
 ### How It Works
 
-Phaselith processes audio through the CIRRUS Algorithm's 6-stage restoration pipeline:
+Phaselith processes audio through a 6-stage restoration pipeline:
 
 1. Damage Detection — Identifies codec cutoff frequency, clipping artifacts, dynamic compression, and stereo collapse.
 2. Signal Decomposition — Separates the audio into harmonic, air, transient, and spatial components.
@@ -33,7 +33,7 @@ Phaselith processes audio through the CIRRUS Algorithm's 6-stage restoration pip
 
 ### What Makes Phaselith Different
 
-Most audio enhancers add bass boost, virtual surround, or EQ curves on top of your audio. Phaselith instead uses the CIRRUS Algorithm to analyze degradation patterns and apply bounded, validated repair candidates rather than a fixed tonal recipe.
+Most audio enhancers add bass boost, virtual surround, or EQ curves on top of your audio. Phaselith instead analyzes degradation patterns and apply bounded, validated repair candidates rather than a fixed tonal recipe.
 
 ### Who Is This For
 
@@ -44,19 +44,19 @@ Most audio enhancers add bass boost, virtual surround, or EQ curves on top of yo
 
 ### Early Access
 
-Phaselith is currently in Early Access. The core CIRRUS Algorithm is stable and producing strong results, but we're actively refining presets and adding features based on user feedback.
+Phaselith is currently in Early Access. The core Phaselith engine is stable and producing strong results, but we're actively refining presets and adding features based on user feedback.
 
 ---
 
 即時瀏覽器音訊優化 — 降低霧感、提升焦點，並強化中心結像。
 
-Phaselith 是一個搭載 CIRRUS Algorithm 的即時瀏覽器音訊優化引擎。它會即時分析播放內容，並協助降低霧感、粗糙感與結像不穩定，讓人聲與樂器更聚焦、更容易理解，也更像實際位於聆聽者前方發聲。
+Phaselith 是一個搭載 Phaselith 的即時瀏覽器音訊優化引擎。它會即時分析播放內容，並協助降低霧感、粗糙感與結像不穩定，讓人聲與樂器更聚焦、更容易理解，也更像實際位於聆聽者前方發聲。
 
-與套用固定音調曲線的 EQ 插件或音效增強器不同，Phaselith 使用 CIRRUS Algorithm 的多階段訊號分析管線來偵測退化模式、生成候選修復，並只把有界、通過驗證的變更混回訊號。
+與套用固定音調曲線的 EQ 插件或音效增強器不同，Phaselith 使用多階段訊號分析管線來偵測退化模式、生成候選修復，並只把有界、通過驗證的變更混回訊號。
 
 ### 運作原理
 
-Phaselith 透過 CIRRUS Algorithm 的 6 階段修復管線處理音訊：
+Phaselith 透過 6 階段修復管線處理音訊：
 
 1. 損傷偵測 — 識別編解碼器截止頻率、削波失真、動態壓縮和立體聲塌縮。
 2. 訊號分解 — 將音訊分離為諧波、空氣感、瞬態和空間成分。
@@ -77,7 +77,7 @@ Phaselith 透過 CIRRUS Algorithm 的 6 階段修復管線處理音訊：
 
 ### Phaselith 的獨特之處
 
-大多數音訊增強器會在音訊上疊加低音增強、虛擬環繞或 EQ 曲線。Phaselith 的做法不同：它使用 CIRRUS Algorithm 分析退化模式，並加入有界、經過驗證的候選修復，而不是套用固定的音色配方。
+大多數音訊增強器會在音訊上疊加低音增強、虛擬環繞或 EQ 曲線。Phaselith 的做法不同：它分析退化模式，並加入有界、經過驗證的候選修復，而不是套用固定的音色配方。
 
 ### 適合誰
 
@@ -88,4 +88,4 @@ Phaselith 透過 CIRRUS Algorithm 的 6 階段修復管線處理音訊：
 
 ### 早期預覽
 
-Phaselith 目前處於早期預覽階段。核心 CIRRUS Algorithm 已穩定並產出強勁結果，我們正在根據用戶回饋積極改進預設和新增功能。
+Phaselith 目前處於早期預覽階段。核心 Phaselith 引擎已穩定並產出強勁結果，我們正在根據用戶回饋積極改進預設和新增功能。

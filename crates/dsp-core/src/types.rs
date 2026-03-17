@@ -1,4 +1,4 @@
-// ─── CIRRUS Core Data Structures ───
+// ─── Phaselith Core Data Structures ───
 
 /// Maximum FFT size supported (UltraExtreme core lattice).
 pub const MAX_FFT_SIZE: usize = 8192;

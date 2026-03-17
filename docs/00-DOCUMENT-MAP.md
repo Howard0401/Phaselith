@@ -5,7 +5,7 @@ This directory is organized by function and reading order.
 ## Recommended Order
 
 1. [01-PROJECT-SCOPE.md](01-PROJECT-SCOPE.md)
-   What CIRRUS is trying to do and what it is explicitly not trying to do.
+   What Phaselith is trying to do and what it is explicitly not trying to do.
 2. [02-REPOSITORY-AND-RUNTIMES.md](02-REPOSITORY-AND-RUNTIMES.md)
    How the repository is split into core DSP, browser runtime, Windows APO runtime, and control surfaces.
 3. [03-CORE-ALGORITHM.md](03-CORE-ALGORITHM.md)
@@ -23,7 +23,7 @@ This directory is organized by function and reading order.
 9. [09-LICENSING-AND-CONTRIBUTIONS.md](09-LICENSING-AND-CONTRIBUTIONS.md)
    Public licensing model, commercial licensing path, and contribution terms.
 10. [10-DEFENSIVE-PUBLICATION.md](10-DEFENSIVE-PUBLICATION.md)
-   Defensive-publication-style disclosure of the CIRRUS technical idea space.
+   Defensive-publication-style disclosure of the Phaselith technical idea space.
 11. [11-CHROME-STORE-LAUNCH-AND-MONETIZATION.md](11-CHROME-STORE-LAUNCH-AND-MONETIZATION.md)
    Chrome Web Store launch copy, Early Access messaging, and future Lite + Pro monetization plan.
 12. [12-PUBLIC-V0.1-OPEN-SOURCE-PACKAGING.md](12-PUBLIC-V0.1-OPEN-SOURCE-PACKAGING.md)

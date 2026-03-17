@@ -14,7 +14,7 @@ use crate::types::{Lattice, ValidatedResidual, CORE_FFT_SIZE};
 
 /// M5: Self-Reprojection Validator.
 ///
-/// The core innovation of CIRRUS: validates the residual by asking
+/// The core innovation of Phaselith: validates the residual by asking
 /// "if we add this residual and then re-degrade, do we get back
 /// the original input?"
 ///

@@ -55,9 +55,9 @@ See:
 
 If you want to:
 
-1. use CIRRUS as open-source software and comply with AGPL
+1. use Phaselith as open-source software and comply with AGPL
    - use the public repository
-2. use CIRRUS in a closed-source or proprietary setting
+2. use Phaselith in a closed-source or proprietary setting
    - obtain a commercial license
 3. contribute code back
    - read and accept the project contribution terms first

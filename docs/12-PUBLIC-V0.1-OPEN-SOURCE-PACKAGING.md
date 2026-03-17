@@ -2,14 +2,14 @@
 
 ## Purpose
 
-This document defines what the first public CIRRUS repository release should look like.
+This document defines what the first public Phaselith repository release should look like.
 
 The goal is not to dump an internal worktree onto GitHub.
 
 The goal is to publish a repository that:
 
 1. earns technical credibility
-2. communicates the CIRRUS architecture clearly
+2. communicates the Phaselith architecture clearly
 3. preserves a viable AGPL + commercial-license path
 4. avoids leaking low-signal internal clutter
 5. creates a strong first impression for stars, forks, and technical discussion
@@ -65,10 +65,10 @@ The first public release should not include:
 
 As of the current repo state, the following items should stay out of the first public commit:
 
-1. `cirrus-extension.zip`
-2. `CIRRUS_Architecture_Replan_Review.md`
-3. `CIRRUS_FFT_Full_Implementation_Plan.md`
-4. `CIRRUS_Safe_Replan.md`
+1. `phaselith-extension.zip`
+2. `PHASELITH_Architecture_Replan_Review.md`
+3. `PHASELITH_FFT_Full_Implementation_Plan.md`
+4. `PHASELITH_Safe_Replan.md`
 5. `.claude/`
 
 For local distribution packaging, extension store copy such as `chrome-ext/STORE-LISTING.md`
@@ -154,7 +154,7 @@ Keep `docs/10-DEFENSIVE-PUBLICATION.md` in the public repository.
 Use this route when the priority is:
 
 1. prior-art style disclosure
-2. technical staking of the CIRRUS method space
+2. technical staking of the Phaselith method space
 3. maximum architectural visibility
 
 ### Route B: Public + Narrower Disclosure

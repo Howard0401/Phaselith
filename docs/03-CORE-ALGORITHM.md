@@ -2,7 +2,7 @@
 
 ## Core Idea
 
-CIRRUS does not start from "boost this band" or "widen that channel."
+Phaselith does not start from "boost this band" or "widen that channel."
 
 It starts from a different question:
 
@@ -16,11 +16,11 @@ That leads to a staged system:
 4. validate those candidates against a degradation model
 5. mix only what survives perceptual and safety checks
 
-## Why CIRRUS Is Not a Traditional EQ
+## Why Phaselith Is Not a Traditional EQ
 
 EQ changes a transfer curve.
 
-CIRRUS changes the relationship between:
+Phaselith changes the relationship between:
 
 1. direct structure and diffuse haze
 2. harmonic content and masking
@@ -110,7 +110,7 @@ The system can produce effects that listeners often describe as:
 4. more premium or "high-end" presentation
 5. reduced haze on poor playback chains
 
-The current working hypothesis is that this often happens because CIRRUS reduces spectral, temporal, and spatial masking while tightening the relationship between direct structure and the listener's source-localization cues.
+The current working hypothesis is that this often happens because Phaselith reduces spectral, temporal, and spatial masking while tightening the relationship between direct structure and the listener's source-localization cues.
 
 ## Guardrails
 

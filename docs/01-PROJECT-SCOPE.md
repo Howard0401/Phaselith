@@ -1,8 +1,8 @@
 # 01. Project Scope
 
-## What CIRRUS Is
+## What Phaselith Is
 
-CIRRUS is a real-time playback optimization engine for damaged or underperforming playback chains.
+Phaselith is a real-time playback optimization engine for damaged or underperforming playback chains.
 
 Its purpose is not just to "make audio brighter" or "make everything wider." Its real aim is to improve how audio is perceived as a source in front of the listener:
 
@@ -30,7 +30,7 @@ Its purpose is not just to "make audio brighter" or "make everything wider." Its
 
 ## Non-Goals
 
-CIRRUS is not primarily trying to be:
+Phaselith is not primarily trying to be:
 
 1. a conventional EQ
 2. a generic widening effect
@@ -45,7 +45,7 @@ The project sits between restoration and presentation:
 - it should recover useful structure when possible
 - it may also improve presentation when strict restoration is impossible
 
-That means CIRRUS must always manage a tension between:
+That means Phaselith must always manage a tension between:
 
 1. truthful signal recovery
 2. premium-system presentation

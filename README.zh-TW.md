@@ -2,7 +2,7 @@
 
 **[English](README.md)** | **繁體中文** | **[简体中文](README.zh-CN.md)**
 
-Phaselith 是一個即時感知音訊修復與呈現引擎，由 CIRRUS Algorithm（Constrained Inverse Restoration with Real-time Uncertainty and Reprojection Solver）驅動。
+Phaselith 是一個即時感知音訊修復與呈現引擎，由 Phaselith 引擎驅動。
 
 Phaselith 讓受損、有損壓縮、空間塌縮或刺耳的播放音訊聽起來更聚焦、更清晰，並在聽者面前產生更真實的物理定位感。
 
@@ -26,7 +26,7 @@ Phaselith 旨在回答一個簡單的問題：
 
 EQ 套用固定或半固定的音調曲線。
 
-CIRRUS Algorithm 的做法是：
+Phaselith 的做法是：
 
 1. 估測當前存在何種損傷或塌縮。
 2. 將訊號分解為諧波、空氣感、瞬態、空間和相位相關結構。
@@ -38,7 +38,7 @@ CIRRUS Algorithm 的做法是：
 
 ## 核心演算法
 
-CIRRUS Algorithm 引擎組織為 M0-M7：
+Phaselith 引擎組織為 M0-M7：
 
 1. `M0 Orchestrator` — 緩衝主機回呼、管理幀與跳步時序、提供對齊的分析視窗。
 2. `M1 Damage Posterior` — 估測截止頻率、削波、限幅、立體聲塌縮和信賴度。
@@ -75,7 +75,7 @@ CIRRUS Algorithm 引擎組織為 M0-M7：
 ## 倉庫結構
 
 - `chrome-ext/` — 瀏覽器擴充功能執行環境和 AudioWorklet 主機。
-- `crates/dsp-core/` — CIRRUS Algorithm 核心。
+- `crates/dsp-core/` — Phaselith 核心。
 - `crates/wasm-bridge/` — 瀏覽器執行環境使用的 WASM 橋接。
 - `crates/apo-dll/` — Windows APO 執行環境。
 - `crates/tauri-app/` — 桌面控制面板和 APO 管理 UI。
@@ -83,7 +83,7 @@ CIRRUS Algorithm 引擎組織為 M0-M7：
 
 ## 狀態
 
-> **早期預覽** — Phaselith 正在積極開發中。CIRRUS Algorithm 核心已穩定且產出強勁的聽感結果，但 API、設定選項和執行環境架構可能在未通知的情況下變更。
+> **早期預覽** — Phaselith 正在積極開發中。Phaselith 核心已穩定且產出強勁的聽感結果，但 API、設定選項和執行環境架構可能在未通知的情況下變更。
 
 目前瀏覽器執行環境是本倉庫中最乾淨的聽感參考。
 
