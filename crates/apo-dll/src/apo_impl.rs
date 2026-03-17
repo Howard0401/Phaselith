@@ -46,8 +46,17 @@ struct StoredPrimeAudio {
     frame_size: usize,
 }
 
+/// Stored last processed output block — used for crossfade when fresh engines
+/// are created. Updated every process() call via try_lock (non-blocking, RT-safe).
+struct StoredOutputBlock {
+    data: Vec<f32>,   // interleaved output, one block
+    channels: u16,
+    frame_size: usize,
+}
+
 static STORED_ENGINES: Mutex<Option<StoredEngines>> = Mutex::new(None);
 static STORED_PRIME: Mutex<Option<StoredPrimeAudio>> = Mutex::new(None);
+static STORED_OUTPUT: Mutex<Option<StoredOutputBlock>> = Mutex::new(None);
 
 /// Lock-free last output storage — updated by every process() call (RT-safe).
 /// New instances read these to seed their click gate, enabling immediate
@@ -103,6 +112,15 @@ pub struct PhaselithApo {
     /// Set when last_output is seeded from global atomic storage, meaning
     /// we have valid reference values for boundary discontinuity detection.
     click_gate_armed: bool,
+    /// Stored output block from previous instance for crossfade (fresh engine only).
+    /// When set, first few frames blend from this old output to new engine output.
+    crossfade_from: Option<Vec<f32>>,
+    /// Remaining frames of crossfade (counts down to 0).
+    crossfade_frames_left: u32,
+    /// Number of consecutive zero-input blocks that were faded out.
+    /// When > 0 and real audio resumes, crossfade from silence into engine output
+    /// to prevent boundary discontinuity at the zero→audio transition.
+    zero_blocks_count: u32,
 }
 
 impl PhaselithApo {
@@ -128,6 +146,9 @@ impl PhaselithApo {
             last_output_l: 0.0,
             last_output_r: 0.0,
             click_gate_armed: false,
+            crossfade_from: None,
+            crossfade_frames_left: 0,
+            zero_blocks_count: 0,
         }
     }
 
@@ -142,7 +163,17 @@ impl PhaselithApo {
     /// from an empty accumulator (which causes a startup pop/click).
     /// Need at least ceil(fft_size / hop_size) = ceil(1024/256) = 4 frames
     /// to fully populate the OLA overlap. Use 6 for margin.
-    const PRIME_FRAMES: usize = 6;
+    const PRIME_FRAMES: usize = 32;
+
+    /// Number of frames to crossfade from old instance output to new engine output.
+    /// Only used for fresh engines (reused=false). 32 frames × 11ms = 352ms.
+    /// During crossfade the engine processes real audio → EMA/posteriors converge.
+    const CROSSFADE_FRAMES: u32 = 32;
+
+    /// Number of startup frames where zero-input protection is active.
+    /// Windows sends 1-3 zero blocks during audio graph reconfiguration.
+    /// Protection covers these plus the first real audio block after zeros.
+    const STARTUP_GUARD_FRAMES: u64 = 8;
 
     /// Check a buffer for NaN/Inf values. Returns true if the buffer is clean.
     #[inline]
@@ -217,6 +248,10 @@ impl PhaselithApo {
         self.process_frame_count = 0;
         self.gap_mute_active = false;
         self.click_gate_armed = false;
+        // Initialize prev_enabled = true so the first frame doesn't trigger
+        // a false dry→wet transition. Without this, click gate is skipped on
+        // frame 1 (transitioning=true), allowing boundary discontinuities through.
+        self.prev_enabled = true;
 
         // Try to reuse stored engines from a previous instance.
         // This preserves OLA buffers, EMA smoothers, and damage posteriors
@@ -316,9 +351,6 @@ impl PhaselithApo {
 
         // Seed last_output from global atomic storage so click gate can detect
         // boundary discontinuities from frame 1 (instead of waiting CLICK_GATE_DELAY).
-        // Critical for concurrent instances: when Windows switches from instance A
-        // to instance B, B's first output may differ from A's last output → pop.
-        // With seeded last_output, click gate catches this immediately.
         if LAST_OUTPUT_VALID.load(Ordering::Acquire) {
             self.last_output_l = f32::from_bits(LAST_OUTPUT_L_BITS.load(Ordering::Relaxed));
             self.last_output_r = f32::from_bits(LAST_OUTPUT_R_BITS.load(Ordering::Relaxed));
@@ -327,6 +359,12 @@ impl PhaselithApo {
         } else {
             self.last_output_l = 0.0;
             self.last_output_r = 0.0;
+        }
+
+        // Log diagnostics for fresh engine — help determine if pops are from
+        // our DSP or from the system-level audio graph switch.
+        if !reused {
+            apo_log!("FRESH_ENGINE: primed with {} frames, click_gate_armed={}", Self::PRIME_FRAMES, self.click_gate_armed);
         }
 
         self.locked = true;
@@ -413,6 +451,148 @@ impl PhaselithApo {
         let transitioning = enabled != self.prev_enabled;
         self.prev_enabled = enabled;
         self.process_frame_count += 1;
+
+        // Diagnostic: log input boundary on first 3 frames of fresh engine.
+        // If input itself has a discontinuity, the pop is from the system audio
+        // graph switch, not from our DSP processing.
+        if self.process_frame_count <= 3 && ch >= 2 && frames > 0 {
+            apo_log!("DIAG frame={}: input_first=({:.10},{:.10}) last_out=({:.6},{:.6})",
+                self.process_frame_count,
+                input[0], input[1],
+                self.last_output_l, self.last_output_r);
+        }
+
+        // ═══ Zero-input protection (startup guard) ═══
+        // Windows sends all-zero or near-zero blocks during audio graph
+        // reconfiguration (UAC, YY Voice, etc.). Don't feed zeros to engines
+        // — it dilutes the OLA buffer that was carefully primed. Instead:
+        // - All near-zero: smoothstep fadeout from last_output → 0, skip engine
+        // - Partial-zero (leading near-zeros): fill zeros with continuation from
+        //   last_output, then crossfade output for smooth transition
+        //
+        // IMPORTANT: Use near-zero threshold (1e-6) instead of exact zero.
+        // Windows may send denormalized floats that display as 0.000000
+        // but are not exactly 0.0 in IEEE 754.
+        const NEAR_ZERO: f32 = 1e-6;
+        if self.process_frame_count <= Self::STARTUP_GUARD_FRAMES {
+            let mut all_near_zero = true;
+            for i in 0..copy_len {
+                if input[i].abs() > NEAR_ZERO {
+                    all_near_zero = false;
+                    break;
+                }
+            }
+            if all_near_zero {
+                // All-zero block: smoothstep fadeout from last_output → 0
+                if self.last_output_l.abs() > 1e-6 || self.last_output_r.abs() > 1e-6 {
+                    if ch >= 2 && frames > 0 {
+                        for f in 0..frames {
+                            let t = 1.0 - ((f as f32 + 1.0) / frames as f32);
+                            let smooth = t * t * (3.0 - 2.0 * t);
+                            output[f * 2] = self.last_output_l * smooth;
+                            output[f * 2 + 1] = self.last_output_r * smooth;
+                        }
+                    } else if frames > 0 {
+                        for f in 0..frames {
+                            let t = 1.0 - ((f as f32 + 1.0) / frames as f32);
+                            let smooth = t * t * (3.0 - 2.0 * t);
+                            output[f] = self.last_output_l * smooth;
+                        }
+                    }
+                } else {
+                    output[..copy_len].fill(0.0);
+                }
+                apo_log!("ZERO_INPUT_SKIP: frame={}, fadeout from ({:.6},{:.6}), preserved OLA state",
+                    self.process_frame_count, self.last_output_l, self.last_output_r);
+                self.last_output_l = 0.0;
+                self.last_output_r = 0.0;
+                self.zero_blocks_count += 1;
+                LAST_OUTPUT_L_BITS.store(0f32.to_bits(), Ordering::Relaxed);
+                LAST_OUTPUT_R_BITS.store(0f32.to_bits(), Ordering::Relaxed);
+                LAST_OUTPUT_VALID.store(true, Ordering::Release);
+                return;
+            }
+
+            // Partial-zero: detect leading near-zeros in input
+            if ch >= 2 && frames > 0 {
+                let mut nz_start = 0usize;
+                for f in 0..frames {
+                    if input[f * 2].abs() > NEAR_ZERO || input[f * 2 + 1].abs() > NEAR_ZERO {
+                        nz_start = f;
+                        break;
+                    }
+                    if f == frames - 1 {
+                        nz_start = frames; // shouldn't happen (all_near_zero handled above)
+                    }
+                }
+                if nz_start > 0 && nz_start < frames {
+                    // Fill leading zeros with smooth continuation from last_output
+                    // so engine sees continuous signal (no OLA dilution)
+                    for f in 0..nz_start {
+                        let t = f as f32 / nz_start as f32;
+                        let smooth = t * t * (3.0 - 2.0 * t);
+                        self.channel_buf_l[f] = self.last_output_l * (1.0 - smooth) + input[nz_start * 2] * smooth;
+                        self.channel_buf_r[f] = self.last_output_r * (1.0 - smooth) + input[nz_start * 2 + 1] * smooth;
+                    }
+                    // Copy the rest normally
+                    for f in nz_start..frames {
+                        self.channel_buf_l[f] = input[f * 2];
+                        self.channel_buf_r[f] = input[f * 2 + 1];
+                    }
+                    // Save dry copies
+                    self.dry_lr_saved[..frames].copy_from_slice(&self.channel_buf_l[..frames]);
+                    self.dry_lr_saved[frames..frames * 2].copy_from_slice(&self.channel_buf_r[..frames]);
+
+                    // Process through engines with filled-in input
+                    if let Some(ref mut engine) = self.engine_l {
+                        engine.context_mut().cross_channel = self.cross_channel_prev;
+                        engine.process(&mut self.channel_buf_l[..frames]);
+                    }
+                    if let Some(ref mut engine) = self.engine_r {
+                        engine.context_mut().cross_channel = self.cross_channel_prev;
+                        engine.process(&mut self.channel_buf_r[..frames]);
+                    }
+                    let cc = CrossChannelContext::from_lr(
+                        &self.dry_lr_saved[..frames],
+                        &self.dry_lr_saved[frames..frames * 2],
+                    );
+                    self.cross_channel_prev = Some(cc);
+
+                    // Crossfade output over ENTIRE block from last_output to engine output.
+                    // Not just the leading-zero region — when nz_start is small (e.g., 1),
+                    // crossfading only 1 sample creates a 0.2+ jump that's audible as a click.
+                    // Full-block crossfade spreads the transition over 528 samples (11ms).
+                    let saved_l = self.last_output_l;
+                    let saved_r = self.last_output_r;
+                    for f in 0..frames {
+                        let t = (f as f32 + 1.0) / frames as f32;
+                        let smooth = t * t * (3.0 - 2.0 * t);
+                        self.channel_buf_l[f] = saved_l * (1.0 - smooth) + self.channel_buf_l[f] * smooth;
+                        self.channel_buf_r[f] = saved_r * (1.0 - smooth) + self.channel_buf_r[f] * smooth;
+                    }
+
+                    // Write interleaved output
+                    if enabled {
+                        for f in 0..frames {
+                            output[f * 2] = self.channel_buf_l[f];
+                            output[f * 2 + 1] = self.channel_buf_r[f];
+                        }
+                    } else {
+                        output[..copy_len].copy_from_slice(&input[..copy_len]);
+                    }
+
+                    self.last_output_l = self.channel_buf_l[frames - 1];
+                    self.last_output_r = self.channel_buf_r[frames - 1];
+                    LAST_OUTPUT_L_BITS.store(self.last_output_l.to_bits(), Ordering::Relaxed);
+                    LAST_OUTPUT_R_BITS.store(self.last_output_r.to_bits(), Ordering::Relaxed);
+                    LAST_OUTPUT_VALID.store(true, Ordering::Release);
+
+                    apo_log!("PARTIAL_ZERO_FILL: frame={}, nz_start={}, crossfaded from ({:.6},{:.6})",
+                        self.process_frame_count, nz_start, saved_l, saved_r);
+                    return;
+                }
+            }
+        }
 
         // Recovery blend: normally 1.0 (full wet, no warmup needed — PRIME_FRAMES
         // already settled the OLA buffer). Only < 1.0 during click gate recovery
@@ -535,14 +715,38 @@ impl PhaselithApo {
             }
         }
 
+        // ═══ Post-zero crossfade ═══
+        // After zero-input blocks (fadeout to silence), the first real-audio block
+        // needs a smooth fade-in. Without this, the transition from 0 → engine output
+        // creates a boundary discontinuity. Crossfade from last_output (≈0) into
+        // engine output over the block using smoothstep.
+        // Always clear zero_blocks_count (even when disabled) to prevent stale
+        // crossfade triggering hundreds of frames later when enabled changes.
+        if self.zero_blocks_count > 0 {
+            self.zero_blocks_count = 0;
+            let saved_l = self.last_output_l;
+            let saved_r = self.last_output_r;
+            if ch >= 2 {
+                for f in 0..frames {
+                    let t = (f as f32 + 1.0) / frames as f32;
+                    let smooth = t * t * (3.0 - 2.0 * t);
+                    output[f * 2] = saved_l * (1.0 - smooth) + output[f * 2] * smooth;
+                    output[f * 2 + 1] = saved_r * (1.0 - smooth) + output[f * 2 + 1] * smooth;
+                }
+            } else {
+                for f in 0..frames {
+                    let t = (f as f32 + 1.0) / frames as f32;
+                    let smooth = t * t * (3.0 - 2.0 * t);
+                    output[f] = saved_l * (1.0 - smooth) + output[f] * smooth;
+                }
+            }
+            apo_log!("POST_ZERO_CROSSFADE: frame={}, from ({:.6},{:.6})",
+                self.process_frame_count, saved_l, saved_r);
+        }
+
         // ═══ Click Gate (universal output safety) ═══
         // After all output is written, check for boundary discontinuities.
         // If detected, zero the block and activate gap_mute for smooth recovery.
-        // This catches ALL pop/click sources: engine restart, audio graph changes,
-        // stale OLA state, etc. — same approach as Apogee's output gate.
-        // Click gate armed from frame 1 when last_output was seeded from global,
-        // otherwise wait CLICK_GATE_DELAY frames (last_output starts at 0.0, which
-        // would cause false positives against non-zero first output).
         let click_gate_ready = if self.click_gate_armed {
             self.process_frame_count >= 1
         } else {
@@ -581,8 +785,8 @@ impl PhaselithApo {
             // Click if boundary exceeds adaptive threshold:
             // - Must be > 1.5× the largest within-block jump + absolute floor
             // - Absolute floor (0.05) prevents triggering on near-silence
-            const CLICK_RATIO: f32 = 1.5;
-            const CLICK_FLOOR: f32 = 0.01;
+            const CLICK_RATIO: f32 = 2.0;
+            const CLICK_FLOOR: f32 = 0.05;
             if boundary_disc > max_within * CLICK_RATIO + CLICK_FLOOR {
                 // Mute this block — zero output for clean gate
                 apo_log!("CLICK_GATE: disc={:.6}, max_within={:.6}, threshold={:.6}, frame={}",
