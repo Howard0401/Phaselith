@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+
+    <key>CFBundleExecutable</key>
+    <string>phaselith_core_audio</string>
+
+    <key>CFBundleIdentifier</key>
+    <string>com.phaselith.coreaudio-driver</string>
+
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+
+    <key>CFBundleName</key>
+    <string>Phaselith Audio Enhancement</string>
+
+    <key>CFBundlePackageType</key>
+    <string>BNDL</string>
+
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.18</string>
+
+    <key>CFBundleVersion</key>
+    <string>0.1.18</string>
+
+    <!-- CFPlugIn configuration -->
+    <key>CFPlugInFactories</key>
+    <dict>
+        <!-- Factory UUID → symbol name -->
+        <key>A1B2C3D4-E5F6-0123-4567-89ABCDEF0001</key>
+        <string>phaselith_driver_factory</string>
+    </dict>
+
+    <key>CFPlugInTypes</key>
+    <dict>
+        <!-- AudioServerPlugIn type UUID → Factory UUID -->
+        <key>443ABAB8-E7B3-491A-B985-BEB9187030DB</key>
+        <array>
+            <string>A1B2C3D4-E5F6-0123-4567-89ABCDEF0001</string>
+        </array>
+    </dict>
+
+    <!-- Mach service for IPC (optional, for future use) -->
+    <key>AudioServerPlugIn_MachServices</key>
+    <array>
+        <string>com.phaselith.coreaudio-driver</string>
+    </array>
+</dict>
+</plist>

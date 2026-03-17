@@ -6,6 +6,7 @@ members = [
     "crates/apo-test-host",
     "crates/wasm-bridge",
     "crates/tauri-app",
+    "crates/core-audio",
 ]
 
 [workspace.package]
@@ -23,4 +24,7 @@ authors = ["Howard Chen <chenhoward0401@gmail.com>"]
 opt-level = 3
 
 [profile.dev.package.phaselith-dsp-core]
+opt-level = 3
+
+[profile.dev.package.phaselith-core-audio]
 opt-level = 3
