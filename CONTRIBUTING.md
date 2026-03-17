@@ -1,4 +1,4 @@
-# Contributing to CIRRUS
+# Contributing to Phaselith
 
 Contributions are welcome, but this project is maintained with a dual-track licensing strategy:
 
@@ -34,8 +34,8 @@ By submitting a patch, pull request, issue attachment, or any other contribution
 
 1. You have the legal right to submit the contribution.
 2. Your contribution may be distributed under `AGPL-3.0-or-later` as part of this repository.
-3. You additionally grant Howard Chen, as Project Owner, a perpetual, worldwide, irrevocable, non-exclusive, sublicensable right to use, modify, sublicense, relicense, and commercialize your contribution as part of CIRRUS and related products.
-4. Your contribution may be included in paid, proprietary, or commercially licensed editions of CIRRUS.
+3. You additionally grant Howard Chen, as Project Owner, a perpetual, worldwide, irrevocable, non-exclusive, sublicensable right to use, modify, sublicense, relicense, and commercialize your contribution as part of Phaselith and related products.
+4. Your contribution may be included in paid, proprietary, or commercially licensed editions of Phaselith.
 5. Attribution may be preserved through Git history, release notes, contributor records, or a contributors list when maintained.
 
 This policy is here to keep the commercial-license path viable without blocking community collaboration.
@@ -54,7 +54,7 @@ This is an owner-led project.
 ## Code Areas
 
 - `crates/dsp-core/`
-  CIRRUS core DSP logic
+  Phaselith core DSP logic
 - `crates/wasm-bridge/`
   Browser runtime bridge
 - `chrome-ext/`

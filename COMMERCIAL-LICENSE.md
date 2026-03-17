@@ -1,14 +1,14 @@
 # Commercial Licensing
 
-CIRRUS is available under `AGPL-3.0-or-later` for open-source use.
+Phaselith is available under `AGPL-3.0-or-later` for open-source use.
 
-If you want to use CIRRUS without AGPL obligations, a separate commercial license is required.
+If you want to use Phaselith without AGPL obligations, a separate commercial license is required.
 
 Typical commercial-license scenarios include:
 
-1. Embedding CIRRUS into proprietary software.
-2. Redistributing CIRRUS in closed-source desktop, plugin, device, or OEM products.
-3. Offering CIRRUS as part of a paid service without releasing the corresponding source code required by AGPL.
+1. Embedding Phaselith into proprietary software.
+2. Redistributing Phaselith in closed-source desktop, plugin, device, or OEM products.
+3. Offering Phaselith as part of a paid service without releasing the corresponding source code required by AGPL.
 4. Shipping modified internal forks that you do not want to distribute under AGPL terms.
 
 Commercial licensing is intended for:
