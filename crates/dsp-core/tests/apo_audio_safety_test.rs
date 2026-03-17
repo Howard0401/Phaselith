@@ -19,19 +19,20 @@ const NUM_BLOCKS: usize = 200;
 
 /// Create an EngineConfig matching what the APO DLL uses.
 fn apo_config() -> EngineConfig {
+    // Must match the actual APO load_config() in apo_impl.rs
     EngineConfig {
         enabled: true,
         strength: 0.7,
         hf_reconstruction: 0.8,
         dynamics: 0.6,
         transient: 0.5,
-        pre_echo_transient_scaling: 1.0,
+        pre_echo_transient_scaling: 0.4, // APO uses 0.4, not 1.0
         declip_transient_scaling: 1.0,
         delayed_transient_repair: false,
         phase_mode: phaselith_dsp_core::config::PhaseMode::Linear,
         quality_mode: QualityMode::Standard,
         style: StyleConfig::default(),
-        synthesis_mode: SynthesisMode::FftOlaPilot,
+        synthesis_mode: SynthesisMode::LegacyAdditive, // APO uses LegacyAdditive
         ambience_preserve: 0.0,
         filter_style: phaselith_dsp_core::config::FilterStyle::Reference,
     }

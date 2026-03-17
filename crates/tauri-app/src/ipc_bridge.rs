@@ -49,6 +49,7 @@ pub struct SharedStatus {
     pub current_clipping_u32: AtomicU32,
     pub processing_load_u32: AtomicU32,
     pub wet_dry_diff_db_u32: AtomicU32,
+    pub pop_muted_count: AtomicU32,
 }
 
 const SHARED_DIR: &str = r"C:\ProgramData\Phaselith";
@@ -112,6 +113,30 @@ impl Drop for Bridge {
 
 static BRIDGE: Mutex<Option<Bridge>> = Mutex::new(None);
 
+/// Write all default config values to a freshly-created mmap.
+/// Ensures the APO starts with correct parameters instead of all-zeros.
+fn write_defaults(config: &SharedConfig) {
+    use std::sync::atomic::Ordering::Relaxed;
+    config.enabled.store(true, Relaxed);
+    config.compensation_strength_u32.store(7000, Relaxed);  // 0.7
+    config.hf_reconstruction_u32.store(8000, Relaxed);       // 0.8
+    config.dynamics_restoration_u32.store(6000, Relaxed);    // 0.6
+    config.transient_repair_u32.store(5000, Relaxed);        // 0.5
+    config.phase_mode.store(0, Relaxed);                     // Linear
+    config.quality_preset.store(1, Relaxed);                 // Standard
+    config.synthesis_mode.store(0, Relaxed);                 // LegacyAdditive
+    config.filter_style.store(0, Relaxed);                   // Reference
+    // Reference preset style axes
+    config.warmth_u32.store(1500, Relaxed);                  // 0.15
+    config.air_brightness_u32.store(5000, Relaxed);          // 0.50
+    config.smoothness_u32.store(4000, Relaxed);              // 0.40
+    config.spatial_spread_u32.store(3000, Relaxed);          // 0.30
+    config.impact_gain_u32.store(1500, Relaxed);             // 0.15
+    config.body_u32.store(4000, Relaxed);                    // 0.40
+    // Version bump LAST — Release ordering
+    config.version.fetch_add(1, std::sync::atomic::Ordering::Release);
+}
+
 pub fn init() {
     #[cfg(windows)]
     {
@@ -120,13 +145,10 @@ pub fn init() {
             match create_bridge() {
                 Ok(b) => {
                     eprintln!("Phaselith IPC bridge: connected (file-backed mmap)");
-                    // Push default enabled=true so APO starts processing immediately.
-                    // Without this, freshly-created mmap has all zeros → enabled=false.
+                    // Push full default config so APO starts with correct values.
+                    // Without this, freshly-created mmap has all zeros → wrong parameters.
                     if !b.config_ptr.is_null() {
-                        let config = unsafe { &*b.config_ptr };
-                        config.enabled.store(true, std::sync::atomic::Ordering::Relaxed);
-                        config.compensation_strength_u32.store(7000, std::sync::atomic::Ordering::Relaxed); // 0.7
-                        config.version.fetch_add(1, std::sync::atomic::Ordering::Release);
+                        write_defaults(unsafe { &*b.config_ptr });
                     }
                     *guard = Some(b);
                 }
@@ -148,12 +170,9 @@ pub fn reconnect() -> bool {
         match create_bridge() {
             Ok(b) => {
                 eprintln!("Phaselith IPC bridge: reconnected (file-backed mmap)");
-                // Push default enabled=true on reconnect (same reason as init)
+                // Push full default config on reconnect (same reason as init)
                 if !b.config_ptr.is_null() {
-                    let config = unsafe { &*b.config_ptr };
-                    config.enabled.store(true, std::sync::atomic::Ordering::Relaxed);
-                    config.compensation_strength_u32.store(7000, std::sync::atomic::Ordering::Relaxed);
-                    config.version.fetch_add(1, std::sync::atomic::Ordering::Release);
+                    write_defaults(unsafe { &*b.config_ptr });
                 }
                 *guard = Some(b);
                 true
@@ -252,6 +271,7 @@ pub fn read_status() -> Option<StatusSnapshot> {
         clipping: f32::from_bits(status.current_clipping_u32.load(Ordering::Relaxed)),
         processing_load: f32::from_bits(status.processing_load_u32.load(Ordering::Relaxed)),
         wet_dry_diff_db: f32::from_bits(status.wet_dry_diff_db_u32.load(Ordering::Relaxed)),
+        pop_muted_count: status.pop_muted_count.load(Ordering::Relaxed),
     })
 }
 
@@ -277,6 +297,7 @@ pub struct StatusSnapshot {
     pub clipping: f32,
     pub processing_load: f32,
     pub wet_dry_diff_db: f32,
+    pub pop_muted_count: u32,
 }
 
 /// Open (or create) a file and map it into memory.

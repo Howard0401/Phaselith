@@ -63,13 +63,13 @@
             v-for="(style, idx) in filterStyles"
             :key="idx"
             class="pill"
-            :class="{ active: config.filter_style === idx, disabled: !status }"
+            :class="{ active: config.filter_style === idx, disabled: !apoInstalled }"
             :disabled="!apoInstalled"
             @click="selectPreset(idx)"
           >{{ style }}</button>
           <button
             class="pill"
-            :class="{ active: config.filter_style === 3, disabled: !status }"
+            :class="{ active: config.filter_style === 3, disabled: !apoInstalled }"
             :disabled="!apoInstalled"
             @click="config.filter_style = 3; applyConfig()"
           >Custom</button>
@@ -112,7 +112,15 @@
       </div>
     </section>
 
-    <footer>Phaselith v0.1.18</footer>
+    <!-- Pop mute toast notification -->
+    <transition name="toast">
+      <div v-if="popToastVisible" class="pop-toast">
+        <span class="pop-icon">🔇</span>
+        <span>Audio artifact detected — muted</span>
+      </div>
+    </transition>
+
+    <footer>Phaselith v0.1.19</footer>
   </div>
 </template>
 
@@ -155,6 +163,11 @@ const isCustom = computed(() => config.value.filter_style === 3);
 const status = ref(null);
 const apoInstalled = ref(false);
 let pollTimer = null;
+
+// Pop mute notification
+const popToastVisible = ref(false);
+let lastPopMutedCount = 0;
+let popToastTimeout = null;
 
 // Processing = APO connected + enhancement enabled + audio flowing
 const isProcessing = computed(() =>
@@ -207,6 +220,12 @@ async function pollStatus() {
       smoothed.value.diff = s.wet_dry_diff_db > -60
         ? ema(isFinite(smoothed.value.diff) ? smoothed.value.diff : s.wet_dry_diff_db, s.wet_dry_diff_db)
         : -Infinity;
+
+      // Show toast when click gate mutes a pop
+      if (s.pop_muted_count > lastPopMutedCount && lastPopMutedCount > 0) {
+        showPopToast();
+      }
+      lastPopMutedCount = s.pop_muted_count;
     } else if (wasConnected) {
       // Just disconnected — clear display but keep toggle state
       smoothed.value = { cutoff: 0, load: 0, diff: -Infinity };
@@ -219,6 +238,14 @@ async function pollStatus() {
   } catch {
     apoInstalled.value = false;
   }
+}
+
+function showPopToast() {
+  popToastVisible.value = true;
+  if (popToastTimeout) clearTimeout(popToastTimeout);
+  popToastTimeout = setTimeout(() => {
+    popToastVisible.value = false;
+  }, 2000);
 }
 
 function selectPreset(idx) {
@@ -486,6 +513,31 @@ input:checked + .slider::before { transform: translateX(20px); }
 .btn.install { background: #00d4ff; color: #000; }
 .btn.uninstall { background: #333; color: #e0e0e0; }
 .btn:hover { opacity: 0.9; }
+
+/* Pop mute toast notification */
+.pop-toast {
+  position: fixed;
+  bottom: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1a1a2e;
+  border: 1px solid #facc1566;
+  border-radius: 10px;
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #facc15;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  z-index: 100;
+  white-space: nowrap;
+}
+.pop-icon { font-size: 14px; }
+.toast-enter-active { transition: all 0.3s ease; }
+.toast-leave-active { transition: all 0.3s ease; }
+.toast-enter-from { opacity: 0; transform: translateX(-50%) translateY(20px); }
+.toast-leave-to { opacity: 0; transform: translateX(-50%) translateY(20px); }
 
 footer {
   text-align: center;

@@ -98,6 +98,9 @@ pub struct SharedStatus {
     /// When algorithm is active and modifying audio, this will be > -60 dB.
     /// When passthrough or algorithm has no effect, this will be -inf or < -80 dB.
     pub wet_dry_diff_db_u32: AtomicU32,      // f32 bits (dB)
+    /// Cumulative count of blocks where the click gate detected an artifact
+    /// and muted the output. Tauri watches for increments to show notifications.
+    pub pop_muted_count: AtomicU32,
 }
 
 impl SharedStatus {
@@ -120,6 +123,10 @@ impl SharedStatus {
 
     pub fn increment_frames(&self) {
         self.frame_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn increment_pop_muted(&self) {
+        self.pop_muted_count.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -341,7 +348,7 @@ mod tests {
     fn shared_status_layout_size() {
         let size = mem::size_of::<SharedStatus>();
         assert!(size > 0, "SharedStatus should have non-zero size");
-        assert!(size <= 64, "SharedStatus unexpectedly large: {size}");
+        assert!(size <= 80, "SharedStatus unexpectedly large: {size}");
     }
 
     #[test]
@@ -386,6 +393,7 @@ mod tests {
             current_clipping_u32: AtomicU32::new(0),
             processing_load_u32: AtomicU32::new(0),
             wet_dry_diff_db_u32: AtomicU32::new(0),
+            pop_muted_count: AtomicU32::new(0),
         };
 
         status.increment_frames();

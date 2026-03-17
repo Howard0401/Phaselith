@@ -50,6 +50,17 @@ pub struct PhaselithApo {
     /// Shutdown fadeout: when true, process() applies a linear fadeout over
     /// one block and then enters bypass. Set by requesting shutdown.
     shutting_down: bool,
+    /// Count of consecutive silent input frames. Used to detect audio gaps
+    /// (UAC prompts, audio graph reconfiguration) and reset warmup on resume.
+    consecutive_silent_frames: u32,
+    /// When true, warmup blend fades from silence→wet instead of dry→wet.
+    /// Set by gap detection to mute the output during OLA settling, avoiding
+    /// the brief pop that would occur from stale OLA buffer data.
+    gap_mute_active: bool,
+    /// Last output sample per channel — used by click gate to detect
+    /// boundary discontinuities between consecutive blocks.
+    last_output_l: f32,
+    last_output_r: f32,
 }
 
 impl PhaselithApo {
@@ -71,6 +82,10 @@ impl PhaselithApo {
             prev_enabled: false,
             process_frame_count: 0,
             shutting_down: false,
+            consecutive_silent_frames: 0,
+            gap_mute_active: false,
+            last_output_l: 0.0,
+            last_output_r: 0.0,
         }
     }
 
@@ -78,7 +93,12 @@ impl PhaselithApo {
     /// Lets OLA buffer fill, EMA smoothers converge, and damage posteriors
     /// accumulate before applying full enhancement.
     /// At 480 samples/block, 48kHz: 16 frames = ~160ms (covers OLA settling of ~3 blocks).
-    const WARMUP_FRAMES: u64 = 16;
+    const WARMUP_FRAMES: u64 = 32;
+
+    /// Cooldown frames after warmup before GAP_DETECT can re-trigger.
+    /// Prevents rapid GAP→WARMUP→GAP cycling (e.g. YY Voice join/leave).
+    /// 64 frames ≈ 700ms at 528/48k — enough to ride out audio graph turbulence.
+    const GAP_COOLDOWN: u64 = 64;
 
     /// Number of silent frames to prime engines during lock_for_process().
     /// This fills the OLA buffer so the first real audio block doesn't start
@@ -186,6 +206,15 @@ impl PhaselithApo {
         self.cross_channel_prev = None;
         self.last_config_version = 0;
         self.process_frame_count = 0;
+        self.consecutive_silent_frames = 0;
+        // Engine was just recreated — use dry→wet fade-in during warmup.
+        // NOT silence→wet (gap_mute) because the previous APO instance was
+        // producing audio — silence would cause an audible dropout when
+        // Windows switches routing from old instance to this one.
+        // gap_mute_active is only for GAP_DETECT (input was already silent).
+        self.gap_mute_active = false;
+        self.last_output_l = 0.0;
+        self.last_output_r = 0.0;
 
         // Prime engines with silent frames to fill OLA buffer.
         // Without this, the first real audio block would read from an empty
@@ -210,30 +239,16 @@ impl PhaselithApo {
         }
 
         self.locked = true;
-
-        // Debug: use apo_log! (which we KNOW works) to confirm this code path runs
-        apo_log!("HEADROOM_TEST: lock_for_process reached end, frame_size={}", frame_size);
-
-        // Also try file write via debug_log's same pattern
-        {
-            use std::io::Write;
-            let _ = std::fs::create_dir_all("C:\\ProgramData\\Phaselith");
-            match std::fs::OpenOptions::new().create(true).append(true).open("C:\\ProgramData\\Phaselith\\headroom_test.txt") {
-                Ok(mut f) => {
-                    let _ = writeln!(f, "lock_for_process OK, frame_size={}", frame_size);
-                    apo_log!("HEADROOM_TEST: file write succeeded");
-                }
-                Err(e) => {
-                    apo_log!("HEADROOM_TEST: file write FAILED: {:?}", e);
-                }
-            }
-        }
+        self.last_output_l = 0.0;
+        self.last_output_r = 0.0;
+        apo_log!("lock_for_process done, frame_size={}, gap_mute=false (dry→wet)", frame_size);
     }
 
     /// Release resources.
     /// Sets shutting_down flag so the next process() call does a clean passthrough
     /// instead of abruptly cutting from wet to silence.
     pub fn unlock_for_process(&mut self) {
+        apo_log!("unlock_for_process, frame_count={}", self.process_frame_count);
         self.shutting_down = true;
         self.locked = false;
         self.engine_l = None;
@@ -291,6 +306,42 @@ impl PhaselithApo {
             return;
         }
 
+        // Gap detection: if input was silent for several frames and now has audio,
+        // reset warmup to blend back in smoothly. Handles UAC prompts, audio graph
+        // reconfiguration, and other system events that cause brief audio gaps.
+        // The stale OLA buffer from before the gap would produce artifacts if we
+        // jumped straight to full wet output.
+        {
+            let input_rms = {
+                let mut sum = 0.0f32;
+                let n = copy_len.min(64); // check first 64 samples for speed
+                for i in 0..n {
+                    sum += input[i] * input[i];
+                }
+                (sum / n.max(1) as f32).sqrt()
+            };
+            const SILENCE_THRESHOLD: f32 = 1e-6;
+            const GAP_FRAMES: u32 = 3; // ~33ms at 528/48k per frame
+            if input_rms < SILENCE_THRESHOLD {
+                self.consecutive_silent_frames = self.consecutive_silent_frames.saturating_add(1);
+            } else if self.consecutive_silent_frames >= GAP_FRAMES
+                && self.process_frame_count >= Self::WARMUP_FRAMES + Self::GAP_COOLDOWN
+            {
+                // Audio resumed after gap — reset warmup with dry→wet fade-in.
+                // Using dry→wet (NOT silence→wet) prevents the output from jumping
+                // to zero when warmup resets, which caused pops during rapid gap
+                // cycling (e.g. YY Voice joining channels).
+                // Cooldown prevents rapid GAP→WARMUP→GAP cycling.
+                apo_log!("GAP_DETECT: {} silent frames, rms={:.8}, resetting warmup (dry→wet)",
+                    self.consecutive_silent_frames, input_rms);
+                self.process_frame_count = 0;
+                self.consecutive_silent_frames = 0;
+                // gap_mute_active stays false — use dry→wet like lock_for_process
+            } else {
+                self.consecutive_silent_frames = 0;
+            }
+        }
+
         // Detect enabled state transition for crossfade
         let transitioning = enabled != self.prev_enabled;
         self.prev_enabled = enabled;
@@ -299,7 +350,14 @@ impl PhaselithApo {
         // Warmup blend: gradually ramp from dry→wet over WARMUP_FRAMES.
         // During warmup the OLA buffer, EMA smoothers, and damage posteriors
         // are still settling — full-strength output can contain artifacts.
+        // When gap_mute_active, blend from silence→wet instead of dry→wet.
         let warmup = self.warmup_blend();
+        let gap_mute = self.gap_mute_active;
+        if warmup >= 1.0 && gap_mute {
+            self.gap_mute_active = false; // warmup complete, clear mute flag
+            apo_log!("WARMUP_DONE: gap_mute cleared at frame={}, last_out=({:.6},{:.6})",
+                self.process_frame_count, self.last_output_l, self.last_output_r);
+        }
 
         if ch == 1 {
             // Mono: use L engine only — always process to keep state in sync
@@ -325,7 +383,13 @@ impl PhaselithApo {
                     // Apply warmup blend
                     if warmup >= 1.0 {
                         output[..frames].copy_from_slice(&self.channel_buf_l[..frames]);
+                    } else if gap_mute {
+                        // Gap recovery: fade from silence → wet (mute the pop)
+                        for f in 0..frames {
+                            output[f] = self.channel_buf_l[f] * warmup;
+                        }
                     } else {
+                        // Normal warmup: fade from dry → wet
                         for f in 0..frames {
                             output[f] = input[f] * (1.0 - warmup) + self.channel_buf_l[f] * warmup;
                         }
@@ -397,7 +461,14 @@ impl PhaselithApo {
                         output[f * 2] = self.channel_buf_l[f];
                         output[f * 2 + 1] = self.channel_buf_r[f];
                     }
+                } else if gap_mute {
+                    // Gap recovery: fade from silence → wet (mute the pop)
+                    for f in 0..frames {
+                        output[f * 2] = self.channel_buf_l[f] * warmup;
+                        output[f * 2 + 1] = self.channel_buf_r[f] * warmup;
+                    }
                 } else {
+                    // Normal warmup: fade from dry → wet
                     for f in 0..frames {
                         output[f * 2] = self.dry_lr_saved[f] * (1.0 - warmup) + self.channel_buf_l[f] * warmup;
                         output[f * 2 + 1] = self.dry_lr_saved[frames + f] * (1.0 - warmup) + self.channel_buf_r[f] * warmup;
@@ -405,6 +476,79 @@ impl PhaselithApo {
                 }
             } else {
                 output[..copy_len].copy_from_slice(&input[..copy_len]);
+            }
+        }
+
+        // ═══ Click Gate (universal output safety) ═══
+        // After all output is written, check for boundary discontinuities.
+        // If detected, zero the block and activate gap_mute for smooth recovery.
+        // This catches ALL pop/click sources: engine restart, audio graph changes,
+        // stale OLA state, etc. — same approach as Apogee's output gate.
+        if enabled && !transitioning && self.process_frame_count >= Self::WARMUP_FRAMES {
+            let (first_l, first_r, last_l, last_r) = if ch >= 2 && frames > 0 {
+                (output[0], output[1], output[(frames - 1) * 2], output[(frames - 1) * 2 + 1])
+            } else if frames > 0 {
+                (output[0], 0.0, output[frames - 1], 0.0)
+            } else {
+                (0.0, 0.0, 0.0, 0.0)
+            };
+
+            let boundary_disc = (first_l - self.last_output_l).abs()
+                .max((first_r - self.last_output_r).abs());
+
+            // Adaptive threshold: compare boundary jump to max within-block jump.
+            // A click has a boundary disc much larger than any within-block diff.
+            // This avoids false positives from legitimate musical transients.
+            let mut max_within = 0.0f32;
+            if ch >= 2 {
+                for f in 1..frames {
+                    let dl = (output[f * 2] - output[(f - 1) * 2]).abs();
+                    let dr = (output[f * 2 + 1] - output[(f - 1) * 2 + 1]).abs();
+                    let d = dl.max(dr);
+                    if d > max_within { max_within = d; }
+                }
+            } else {
+                for f in 1..frames {
+                    let d = (output[f] - output[f - 1]).abs();
+                    if d > max_within { max_within = d; }
+                }
+            }
+
+            // Click if boundary exceeds adaptive threshold:
+            // - Must be > 1.5× the largest within-block jump + absolute floor
+            // - Absolute floor (0.05) prevents triggering on near-silence
+            const CLICK_RATIO: f32 = 1.5;
+            const CLICK_FLOOR: f32 = 0.01;
+            if boundary_disc > max_within * CLICK_RATIO + CLICK_FLOOR {
+                // Mute this block — zero output for clean gate
+                apo_log!("CLICK_GATE: disc={:.6}, max_within={:.6}, threshold={:.6}, frame={}",
+                    boundary_disc, max_within, max_within * CLICK_RATIO + CLICK_FLOOR,
+                    self.process_frame_count);
+                output[..copy_len].fill(0.0);
+                self.gap_mute_active = true;
+                self.process_frame_count = 0;
+                // Signal UI via mmap
+                if let Some(ref mmap) = self.mmap {
+                    mmap.status().increment_pop_muted();
+                }
+            }
+
+            // Track last output samples for next block's boundary check
+            if ch >= 2 && frames > 0 {
+                self.last_output_l = output[(frames - 1) * 2];
+                self.last_output_r = output[(frames - 1) * 2 + 1];
+            } else if frames > 0 {
+                self.last_output_l = output[frames - 1];
+                self.last_output_r = 0.0;
+            }
+        } else if frames > 0 {
+            // Track last output even during warmup/transition/disabled
+            if ch >= 2 {
+                self.last_output_l = output[(frames - 1) * 2];
+                self.last_output_r = output[(frames - 1) * 2 + 1];
+            } else {
+                self.last_output_l = output[frames - 1];
+                self.last_output_r = 0.0;
             }
         }
 
