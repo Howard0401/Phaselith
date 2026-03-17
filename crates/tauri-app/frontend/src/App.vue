@@ -120,7 +120,7 @@
       </div>
     </transition>
 
-    <footer>Phaselith v0.1.19</footer>
+    <footer>Phaselith v0.1.20</footer>
   </div>
 </template>
 

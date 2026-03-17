@@ -13,6 +13,48 @@ use crate::mmap_ipc::MmapIpc;
 use phaselith_dsp_core::config::{EngineConfig, PhaseMode, QualityMode, StyleConfig, SynthesisMode};
 use phaselith_dsp_core::engine::{PhaselithEngine, PhaselithEngineBuilder};
 use phaselith_dsp_core::types::CrossChannelContext;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Mutex;
+
+/// Global engine storage — persists engine state across APO instance recreations.
+/// When Windows destroys an APO instance (unlock_for_process), engines are stored here.
+/// When a new instance is created (lock_for_process), it takes the stored engines
+/// instead of building new ones. This preserves OLA buffers, EMA smoothers, and
+/// damage posteriors, eliminating the pop/quality-dip from engine restart.
+struct StoredEngines {
+    engine_l: PhaselithEngine,
+    engine_r: Option<PhaselithEngine>,
+    sample_rate: u32,
+    frame_size: usize,
+    cross_channel_prev: Option<CrossChannelContext>,
+}
+
+/// Recent input audio for priming fresh engines with real audio instead of silence.
+/// Updated on every process() call. When a fresh engine is created (reused=false
+/// because old instance hasn't unlocked yet), these blocks are fed to the engine
+/// so its OLA state matches what a settled engine would have.
+struct StoredPrimeAudio {
+    /// Ring buffer of recent L channel blocks (PRIME_FRAMES entries)
+    blocks_l: Vec<Vec<f32>>,
+    /// Ring buffer of recent R channel blocks (PRIME_FRAMES entries)
+    blocks_r: Vec<Vec<f32>>,
+    /// Write cursor into the ring buffer
+    cursor: usize,
+    /// Number of blocks stored (up to PRIME_FRAMES)
+    count: usize,
+    sample_rate: u32,
+    frame_size: usize,
+}
+
+static STORED_ENGINES: Mutex<Option<StoredEngines>> = Mutex::new(None);
+static STORED_PRIME: Mutex<Option<StoredPrimeAudio>> = Mutex::new(None);
+
+/// Lock-free last output storage — updated by every process() call (RT-safe).
+/// New instances read these to seed their click gate, enabling immediate
+/// boundary discontinuity detection from frame 1 instead of waiting CLICK_GATE_DELAY.
+static LAST_OUTPUT_L_BITS: AtomicU32 = AtomicU32::new(0);
+static LAST_OUTPUT_R_BITS: AtomicU32 = AtomicU32::new(0);
+static LAST_OUTPUT_VALID: AtomicBool = AtomicBool::new(false);
 
 /// The Phaselith APO instance.
 /// Created by ClassFactory, one per audio stream.
@@ -44,15 +86,11 @@ pub struct PhaselithApo {
     last_config_version: u32,
     /// Previous frame's enabled state — used to detect transitions for crossfade.
     prev_enabled: bool,
-    /// Frame counter for warmup phase. Engine output is blended from 0%→100%
-    /// over the first WARMUP_FRAMES to let OLA/EMA/damage posteriors settle.
+    /// Frame counter since lock_for_process. Used for click gate delay.
     process_frame_count: u64,
     /// Shutdown fadeout: when true, process() applies a linear fadeout over
     /// one block and then enters bypass. Set by requesting shutdown.
     shutting_down: bool,
-    /// Count of consecutive silent input frames. Used to detect audio gaps
-    /// (UAC prompts, audio graph reconfiguration) and reset warmup on resume.
-    consecutive_silent_frames: u32,
     /// When true, warmup blend fades from silence→wet instead of dry→wet.
     /// Set by gap detection to mute the output during OLA settling, avoiding
     /// the brief pop that would occur from stale OLA buffer data.
@@ -61,6 +99,10 @@ pub struct PhaselithApo {
     /// boundary discontinuities between consecutive blocks.
     last_output_l: f32,
     last_output_r: f32,
+    /// When true, click gate is armed from frame 1 (skip CLICK_GATE_DELAY).
+    /// Set when last_output is seeded from global atomic storage, meaning
+    /// we have valid reference values for boundary discontinuity detection.
+    click_gate_armed: bool,
 }
 
 impl PhaselithApo {
@@ -82,23 +124,18 @@ impl PhaselithApo {
             prev_enabled: false,
             process_frame_count: 0,
             shutting_down: false,
-            consecutive_silent_frames: 0,
             gap_mute_active: false,
             last_output_l: 0.0,
             last_output_r: 0.0,
+            click_gate_armed: false,
         }
     }
 
-    /// Number of frames to blend from dry→wet on engine startup.
-    /// Lets OLA buffer fill, EMA smoothers converge, and damage posteriors
-    /// accumulate before applying full enhancement.
-    /// At 480 samples/block, 48kHz: 16 frames = ~160ms (covers OLA settling of ~3 blocks).
-    const WARMUP_FRAMES: u64 = 32;
-
-    /// Cooldown frames after warmup before GAP_DETECT can re-trigger.
-    /// Prevents rapid GAP→WARMUP→GAP cycling (e.g. YY Voice join/leave).
-    /// 64 frames ≈ 700ms at 528/48k — enough to ride out audio graph turbulence.
-    const GAP_COOLDOWN: u64 = 64;
+    /// Number of frames to delay click gate activation after instance start
+    /// or click gate recovery. During this window, output is full wet with no
+    /// blending — PRIME_FRAMES already settle the OLA buffer. The delay prevents
+    /// false click-gate triggers because last_output_l/r starts at 0.0.
+    const CLICK_GATE_DELAY: u64 = 6;
 
     /// Number of silent frames to prime engines during lock_for_process().
     /// This fills the OLA buffer so the first real audio block doesn't start
@@ -118,17 +155,16 @@ impl PhaselithApo {
         true
     }
 
-    /// Compute the blend factor for warmup phase.
-    /// Returns 0.0 at frame 0, rises to 1.0 at WARMUP_FRAMES.
-    /// Uses a smooth S-curve (smoothstep) instead of linear ramp for
-    /// a more natural-sounding fade-in that avoids audible ramp artifacts.
+    /// Compute the blend factor for click gate recovery.
+    /// Returns 1.0 normally (full wet output, no warmup blend).
+    /// Only returns < 1.0 when gap_mute_active is true (click gate recovery):
+    /// smoothstep from 0→1 over CLICK_GATE_DELAY frames.
     #[inline]
-    fn warmup_blend(&self) -> f32 {
-        if self.process_frame_count >= Self::WARMUP_FRAMES {
+    fn recovery_blend(&self) -> f32 {
+        if !self.gap_mute_active || self.process_frame_count >= Self::CLICK_GATE_DELAY {
             1.0
         } else {
-            let t = self.process_frame_count as f32 / Self::WARMUP_FRAMES as f32;
-            // smoothstep: 3t² - 2t³
+            let t = self.process_frame_count as f32 / Self::CLICK_GATE_DELAY as f32;
             t * t * (3.0 - 2.0 * t)
         }
     }
@@ -173,85 +209,152 @@ impl PhaselithApo {
     pub fn lock_for_process(&mut self, frame_size: usize) {
         self.frame_size = frame_size;
 
-        // Load config from mmap, or use defaults
-        let config = self.load_config();
-        let fft_size = config.quality_mode.core_fft_size();
+        // Pre-allocate scratch buffers (no allocation in hot path)
+        self.channel_buf_l = vec![0.0f32; frame_size];
+        self.channel_buf_r = vec![0.0f32; frame_size];
+        self.dry_lr_saved = vec![0.0f32; frame_size * 2]; // L dry + R dry
+        self.last_config_version = 0;
+        self.process_frame_count = 0;
+        self.gap_mute_active = false;
+        self.click_gate_armed = false;
 
-        // Dual-engine: each engine processes one mono channel independently.
-        // Aligned with browser WASM bridge architecture (with_channels(1)).
-        // Use frame_size (480) as max_frame_size — NOT fft_size (1024).
-        // Using fft_size caused frame_params.host_block_size=1024 (wrong),
-        // validated.data sized to 1024 (47% wasted/zeroed), and OLA drain
-        // under-serving the actual 480-sample blocks.
-        self.engine_l = Some(
-            PhaselithEngineBuilder::new(self.sample_rate, self.frame_size)
-                .with_config(config)
-                .with_channels(1)
-                .build_default(),
-        );
+        // Try to reuse stored engines from a previous instance.
+        // This preserves OLA buffers, EMA smoothers, and damage posteriors
+        // across APO instance recreations (YY Voice join/leave, etc.),
+        // eliminating the pop/quality-dip from engine restart.
+        let mut reused = false;
+        if let Ok(mut guard) = STORED_ENGINES.lock() {
+            if let Some(stored) = guard.as_ref() {
+                if stored.sample_rate == self.sample_rate && stored.frame_size == frame_size {
+                    let stored = guard.take().unwrap();
+                    self.engine_l = Some(stored.engine_l);
+                    self.engine_r = stored.engine_r;
+                    self.cross_channel_prev = stored.cross_channel_prev;
+                    reused = true;
+                }
+            }
+        }
 
-        if self.channels >= 2 {
-            self.engine_r = Some(
+        if !reused {
+            // Load config from mmap, or use defaults
+            let config = self.load_config();
+
+            // Dual-engine: each engine processes one mono channel independently.
+            self.engine_l = Some(
                 PhaselithEngineBuilder::new(self.sample_rate, self.frame_size)
                     .with_config(config)
                     .with_channels(1)
                     .build_default(),
             );
+
+            if self.channels >= 2 {
+                self.engine_r = Some(
+                    PhaselithEngineBuilder::new(self.sample_rate, self.frame_size)
+                        .with_config(config)
+                        .with_channels(1)
+                        .build_default(),
+                );
+            }
+
+            self.cross_channel_prev = None;
+
+            // Prime engines to fill OLA buffer.
+            // Try to use stored real audio instead of silence — this makes the
+            // fresh engine's OLA state match what a settled engine would have,
+            // eliminating the pop from engine state discontinuity.
+            {
+                let mut used_real_audio = false;
+                if let Ok(mut guard) = STORED_PRIME.lock() {
+                    if let Some(ref prime) = *guard {
+                        if prime.sample_rate == self.sample_rate
+                            && prime.frame_size == frame_size
+                            && prime.count >= Self::PRIME_FRAMES
+                        {
+                            // Feed stored blocks in order (oldest first)
+                            let start = prime.cursor.wrapping_sub(prime.count) % Self::PRIME_FRAMES;
+                            for i in 0..Self::PRIME_FRAMES {
+                                let idx = (start + i) % Self::PRIME_FRAMES;
+                                let mut buf = prime.blocks_l[idx].clone();
+                                if let Some(ref mut engine) = self.engine_l {
+                                    engine.process(&mut buf);
+                                }
+                                if self.channels >= 2 {
+                                    let mut buf_r = prime.blocks_r[idx].clone();
+                                    if let Some(ref mut engine) = self.engine_r {
+                                        engine.process(&mut buf_r);
+                                    }
+                                }
+                            }
+                            used_real_audio = true;
+                            apo_log!("PRIME: used {} blocks of real audio", Self::PRIME_FRAMES);
+                        }
+                    }
+                }
+
+                if !used_real_audio {
+                    // Fallback: prime with silence (first-ever startup)
+                    let mut silent = vec![0.0f32; frame_size];
+                    for _ in 0..Self::PRIME_FRAMES {
+                        if let Some(ref mut engine) = self.engine_l {
+                            engine.process(&mut silent);
+                        }
+                        silent.fill(0.0);
+                    }
+                    if self.channels >= 2 {
+                        let mut silent_r = vec![0.0f32; frame_size];
+                        for _ in 0..Self::PRIME_FRAMES {
+                            if let Some(ref mut engine) = self.engine_r {
+                                engine.process(&mut silent_r);
+                            }
+                            silent_r.fill(0.0);
+                        }
+                    }
+                    apo_log!("PRIME: used silence (no stored audio available)");
+                }
+            }
         }
 
-        // Pre-allocate scratch buffers (no allocation in hot path)
-        self.channel_buf_l = vec![0.0f32; frame_size];
-        self.channel_buf_r = vec![0.0f32; frame_size];
-        self.dry_lr_saved = vec![0.0f32; frame_size * 2]; // L dry + R dry
-        self.cross_channel_prev = None;
-        self.last_config_version = 0;
-        self.process_frame_count = 0;
-        self.consecutive_silent_frames = 0;
-        // Engine was just recreated — use dry→wet fade-in during warmup.
-        // NOT silence→wet (gap_mute) because the previous APO instance was
-        // producing audio — silence would cause an audible dropout when
-        // Windows switches routing from old instance to this one.
-        // gap_mute_active is only for GAP_DETECT (input was already silent).
-        self.gap_mute_active = false;
-        self.last_output_l = 0.0;
-        self.last_output_r = 0.0;
-
-        // Prime engines with silent frames to fill OLA buffer.
-        // Without this, the first real audio block would read from an empty
-        // OLA accumulator, producing zeros that cause a startup pop/click.
-        {
-            let mut silent = vec![0.0f32; frame_size];
-            for _ in 0..Self::PRIME_FRAMES {
-                if let Some(ref mut engine) = self.engine_l {
-                    engine.process(&mut silent);
-                }
-                silent.fill(0.0);
-            }
-            if self.channels >= 2 {
-                let mut silent_r = vec![0.0f32; frame_size];
-                for _ in 0..Self::PRIME_FRAMES {
-                    if let Some(ref mut engine) = self.engine_r {
-                        engine.process(&mut silent_r);
-                    }
-                    silent_r.fill(0.0);
-                }
-            }
+        // Seed last_output from global atomic storage so click gate can detect
+        // boundary discontinuities from frame 1 (instead of waiting CLICK_GATE_DELAY).
+        // Critical for concurrent instances: when Windows switches from instance A
+        // to instance B, B's first output may differ from A's last output → pop.
+        // With seeded last_output, click gate catches this immediately.
+        if LAST_OUTPUT_VALID.load(Ordering::Acquire) {
+            self.last_output_l = f32::from_bits(LAST_OUTPUT_L_BITS.load(Ordering::Relaxed));
+            self.last_output_r = f32::from_bits(LAST_OUTPUT_R_BITS.load(Ordering::Relaxed));
+            self.click_gate_armed = true;
+            apo_log!("SEEDED last_output=({:.6},{:.6})", self.last_output_l, self.last_output_r);
+        } else {
+            self.last_output_l = 0.0;
+            self.last_output_r = 0.0;
         }
 
         self.locked = true;
-        self.last_output_l = 0.0;
-        self.last_output_r = 0.0;
-        apo_log!("lock_for_process done, frame_size={}, gap_mute=false (dry→wet)", frame_size);
+        apo_log!("lock_for_process done, frame_size={}, reused={}", frame_size, reused);
     }
 
     /// Release resources.
+    /// Stores engines in global static for reuse by next instance.
     /// Sets shutting_down flag so the next process() call does a clean passthrough
     /// instead of abruptly cutting from wet to silence.
     pub fn unlock_for_process(&mut self) {
         apo_log!("unlock_for_process, frame_count={}", self.process_frame_count);
         self.shutting_down = true;
         self.locked = false;
-        self.engine_l = None;
+
+        // Store engines for reuse by the next APO instance.
+        // This preserves OLA/EMA/posterior state across instance recreations.
+        if let Some(el) = self.engine_l.take() {
+            if let Ok(mut guard) = STORED_ENGINES.lock() {
+                *guard = Some(StoredEngines {
+                    engine_l: el,
+                    engine_r: self.engine_r.take(),
+                    sample_rate: self.sample_rate,
+                    frame_size: self.frame_size,
+                    cross_channel_prev: self.cross_channel_prev,
+                });
+            }
+        }
         self.engine_r = None;
     }
 
@@ -306,56 +409,18 @@ impl PhaselithApo {
             return;
         }
 
-        // Gap detection: if input was silent for several frames and now has audio,
-        // reset warmup to blend back in smoothly. Handles UAC prompts, audio graph
-        // reconfiguration, and other system events that cause brief audio gaps.
-        // The stale OLA buffer from before the gap would produce artifacts if we
-        // jumped straight to full wet output.
-        {
-            let input_rms = {
-                let mut sum = 0.0f32;
-                let n = copy_len.min(64); // check first 64 samples for speed
-                for i in 0..n {
-                    sum += input[i] * input[i];
-                }
-                (sum / n.max(1) as f32).sqrt()
-            };
-            const SILENCE_THRESHOLD: f32 = 1e-6;
-            const GAP_FRAMES: u32 = 3; // ~33ms at 528/48k per frame
-            if input_rms < SILENCE_THRESHOLD {
-                self.consecutive_silent_frames = self.consecutive_silent_frames.saturating_add(1);
-            } else if self.consecutive_silent_frames >= GAP_FRAMES
-                && self.process_frame_count >= Self::WARMUP_FRAMES + Self::GAP_COOLDOWN
-            {
-                // Audio resumed after gap — reset warmup with dry→wet fade-in.
-                // Using dry→wet (NOT silence→wet) prevents the output from jumping
-                // to zero when warmup resets, which caused pops during rapid gap
-                // cycling (e.g. YY Voice joining channels).
-                // Cooldown prevents rapid GAP→WARMUP→GAP cycling.
-                apo_log!("GAP_DETECT: {} silent frames, rms={:.8}, resetting warmup (dry→wet)",
-                    self.consecutive_silent_frames, input_rms);
-                self.process_frame_count = 0;
-                self.consecutive_silent_frames = 0;
-                // gap_mute_active stays false — use dry→wet like lock_for_process
-            } else {
-                self.consecutive_silent_frames = 0;
-            }
-        }
-
         // Detect enabled state transition for crossfade
         let transitioning = enabled != self.prev_enabled;
         self.prev_enabled = enabled;
         self.process_frame_count += 1;
 
-        // Warmup blend: gradually ramp from dry→wet over WARMUP_FRAMES.
-        // During warmup the OLA buffer, EMA smoothers, and damage posteriors
-        // are still settling — full-strength output can contain artifacts.
-        // When gap_mute_active, blend from silence→wet instead of dry→wet.
-        let warmup = self.warmup_blend();
-        let gap_mute = self.gap_mute_active;
-        if warmup >= 1.0 && gap_mute {
-            self.gap_mute_active = false; // warmup complete, clear mute flag
-            apo_log!("WARMUP_DONE: gap_mute cleared at frame={}, last_out=({:.6},{:.6})",
+        // Recovery blend: normally 1.0 (full wet, no warmup needed — PRIME_FRAMES
+        // already settled the OLA buffer). Only < 1.0 during click gate recovery
+        // (silence→wet fade-in after a detected artifact).
+        let recovery = self.recovery_blend();
+        if recovery >= 1.0 && self.gap_mute_active {
+            self.gap_mute_active = false;
+            apo_log!("CLICK_RECOVERY_DONE: frame={}, last_out=({:.6},{:.6})",
                 self.process_frame_count, self.last_output_l, self.last_output_r);
         }
 
@@ -380,18 +445,14 @@ impl PhaselithApo {
                         output[f] = from * (1.0 - t) + to * t;
                     }
                 } else if enabled {
-                    // Apply warmup blend
-                    if warmup >= 1.0 {
+                    // Full wet output — no warmup blend needed.
+                    // PRIME_FRAMES already settled the OLA buffer during lock_for_process.
+                    // Only scale down during click gate recovery (gap_mute_active).
+                    if recovery >= 1.0 {
                         output[..frames].copy_from_slice(&self.channel_buf_l[..frames]);
-                    } else if gap_mute {
-                        // Gap recovery: fade from silence → wet (mute the pop)
-                        for f in 0..frames {
-                            output[f] = self.channel_buf_l[f] * warmup;
-                        }
                     } else {
-                        // Normal warmup: fade from dry → wet
                         for f in 0..frames {
-                            output[f] = input[f] * (1.0 - warmup) + self.channel_buf_l[f] * warmup;
+                            output[f] = self.channel_buf_l[f] * recovery;
                         }
                     }
                 } else {
@@ -455,23 +516,18 @@ impl PhaselithApo {
                     }
                 }
             } else if enabled {
-                // Apply warmup blend
-                if warmup >= 1.0 {
+                // Full wet output — no warmup blend needed.
+                // PRIME_FRAMES already settled the OLA buffer during lock_for_process.
+                // Only scale down during click gate recovery (gap_mute_active).
+                if recovery >= 1.0 {
                     for f in 0..frames {
                         output[f * 2] = self.channel_buf_l[f];
                         output[f * 2 + 1] = self.channel_buf_r[f];
                     }
-                } else if gap_mute {
-                    // Gap recovery: fade from silence → wet (mute the pop)
-                    for f in 0..frames {
-                        output[f * 2] = self.channel_buf_l[f] * warmup;
-                        output[f * 2 + 1] = self.channel_buf_r[f] * warmup;
-                    }
                 } else {
-                    // Normal warmup: fade from dry → wet
                     for f in 0..frames {
-                        output[f * 2] = self.dry_lr_saved[f] * (1.0 - warmup) + self.channel_buf_l[f] * warmup;
-                        output[f * 2 + 1] = self.dry_lr_saved[frames + f] * (1.0 - warmup) + self.channel_buf_r[f] * warmup;
+                        output[f * 2] = self.channel_buf_l[f] * recovery;
+                        output[f * 2 + 1] = self.channel_buf_r[f] * recovery;
                     }
                 }
             } else {
@@ -484,7 +540,15 @@ impl PhaselithApo {
         // If detected, zero the block and activate gap_mute for smooth recovery.
         // This catches ALL pop/click sources: engine restart, audio graph changes,
         // stale OLA state, etc. — same approach as Apogee's output gate.
-        if enabled && !transitioning && self.process_frame_count >= Self::WARMUP_FRAMES {
+        // Click gate armed from frame 1 when last_output was seeded from global,
+        // otherwise wait CLICK_GATE_DELAY frames (last_output starts at 0.0, which
+        // would cause false positives against non-zero first output).
+        let click_gate_ready = if self.click_gate_armed {
+            self.process_frame_count >= 1
+        } else {
+            self.process_frame_count >= Self::CLICK_GATE_DELAY
+        };
+        if enabled && !transitioning && click_gate_ready {
             let (first_l, first_r, last_l, last_r) = if ch >= 2 && frames > 0 {
                 (output[0], output[1], output[(frames - 1) * 2], output[(frames - 1) * 2 + 1])
             } else if frames > 0 {
@@ -549,6 +613,46 @@ impl PhaselithApo {
             } else {
                 self.last_output_l = output[frames - 1];
                 self.last_output_r = 0.0;
+            }
+        }
+
+        // Update global last_output atomics (lock-free, RT-safe).
+        // Other instances read these during lock_for_process to seed their click gate.
+        if frames > 0 {
+            LAST_OUTPUT_L_BITS.store(self.last_output_l.to_bits(), Ordering::Relaxed);
+            LAST_OUTPUT_R_BITS.store(self.last_output_r.to_bits(), Ordering::Relaxed);
+            LAST_OUTPUT_VALID.store(true, Ordering::Release);
+        }
+
+        // Store recent input audio for priming future fresh engines.
+        // Uses try_lock (non-blocking) — if lock is held, skip this frame.
+        if self.process_frame_count > 0 {
+            if let Ok(mut guard) = STORED_PRIME.try_lock() {
+                let prime = guard.get_or_insert_with(|| StoredPrimeAudio {
+                    blocks_l: (0..Self::PRIME_FRAMES).map(|_| vec![0.0f32; self.frame_size]).collect(),
+                    blocks_r: (0..Self::PRIME_FRAMES).map(|_| vec![0.0f32; self.frame_size]).collect(),
+                    cursor: 0,
+                    count: 0,
+                    sample_rate: self.sample_rate,
+                    frame_size: self.frame_size,
+                });
+                if prime.sample_rate == self.sample_rate && prime.frame_size == self.frame_size {
+                    let idx = prime.cursor % Self::PRIME_FRAMES;
+                    // Store de-interleaved input
+                    if ch >= 2 {
+                        for f in 0..frames {
+                            prime.blocks_l[idx][f] = input[f * 2];
+                            prime.blocks_r[idx][f] = input[f * 2 + 1];
+                        }
+                    } else {
+                        prime.blocks_l[idx][..frames].copy_from_slice(&input[..frames]);
+                        prime.blocks_r[idx].iter_mut().for_each(|v| *v = 0.0);
+                    }
+                    prime.cursor = prime.cursor.wrapping_add(1);
+                    if prime.count < Self::PRIME_FRAMES {
+                        prime.count += 1;
+                    }
+                }
             }
         }
 

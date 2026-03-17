@@ -148,19 +148,56 @@ pub fn get_config() -> ConfigResponse {
     })
 }
 
+/// Resolve the APO DLL path, preferring the release build over debug.
+///
+/// Search order:
+/// 1. `target/release/phaselith_apo.dll` (workspace release build — always up to date)
+/// 2. DLL next to the running executable (fallback for packaged/installed app)
+///
+/// This prevents accidentally installing a stale debug-built DLL when the
+/// Tauri app is running from `target/debug/` during development.
+#[cfg(windows)]
+fn resolve_apo_dll() -> Result<PathBuf, String> {
+    let exe_dir = std::env::current_exe()
+        .map_err(|e| e.to_string())?
+        .parent()
+        .ok_or("No parent dir")?
+        .to_path_buf();
+
+    // In dev mode, exe is at <workspace>/target/{debug,release}/phaselith-tauri.exe
+    // → workspace root = exe_dir / ../../
+    // → release DLL = <workspace>/target/release/phaselith_apo.dll
+    let workspace_release = exe_dir
+        .parent() // target/
+        .and_then(|p| p.parent()) // workspace root
+        .map(|root| root.join("target").join("release").join("phaselith_apo.dll"));
+
+    if let Some(ref release_path) = workspace_release {
+        if release_path.exists() && *release_path != exe_dir.join("phaselith_apo.dll") {
+            eprintln!("APO install: using release DLL at {}", release_path.display());
+            return Ok(release_path.clone());
+        }
+    }
+
+    // Fallback: DLL next to exe (packaged app or release mode)
+    let local_path = exe_dir.join("phaselith_apo.dll");
+    if local_path.exists() {
+        eprintln!("APO install: using local DLL at {}", local_path.display());
+        return Ok(local_path);
+    }
+
+    Err(format!(
+        "APO DLL not found. Checked:\n  - {:?}\n  - {}",
+        workspace_release,
+        exe_dir.join("phaselith_apo.dll").display()
+    ))
+}
+
 #[tauri::command]
 pub fn install_apo() -> Result<String, String> {
     #[cfg(windows)]
     {
-        let dll_path = std::env::current_exe()
-            .map_err(|e| e.to_string())?
-            .parent()
-            .ok_or("No parent dir")?
-            .join("phaselith_apo.dll");
-
-        if !dll_path.exists() {
-            return Err(format!("APO DLL not found at: {}", dll_path.display()));
-        }
+        let dll_path = resolve_apo_dll()?;
 
         // Phase 1: Elevated script for regsvr32 + service restart (needs admin)
         let marker_path = marker_file_path();
@@ -317,11 +354,14 @@ pub fn is_apo_installed() -> bool {
 pub fn uninstall_apo() -> Result<String, String> {
     #[cfg(windows)]
     {
-        let dll_path = std::env::current_exe()
-            .map_err(|e| e.to_string())?
-            .parent()
-            .ok_or("No parent dir")?
-            .join("phaselith_apo.dll");
+        let dll_path = resolve_apo_dll().unwrap_or_else(|_| {
+            // For uninstall, we still need a path for regsvr32 /u even if DLL moved
+            std::env::current_exe()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("phaselith_apo.dll")
+        });
 
         // Write an elevated script that unbinds + unregisters + restarts
         let marker_path = marker_file_path();
