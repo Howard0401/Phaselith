@@ -49,7 +49,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "apo-test-host"
-version = "0.1.0"
+version = "0.1.18"
 dependencies = [
  "windows 0.58.0",
  "windows-core 0.58.0",
@@ -2207,7 +2207,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "phaselith-apo"
-version = "0.1.0"
+version = "0.1.18"
 dependencies = [
  "phaselith-dsp-core",
  "windows 0.58.0",
@@ -2216,7 +2216,7 @@ dependencies = [
 
 [[package]]
 name = "phaselith-dsp-core"
-version = "0.1.0"
+version = "0.1.18"
 dependencies = [
  "approx",
  "num-complex",
@@ -2226,7 +2226,7 @@ dependencies = [
 
 [[package]]
 name = "phaselith-tauri"
-version = "0.1.0"
+version = "0.1.18"
 dependencies = [
  "phaselith-dsp-core",
  "serde",
@@ -2239,7 +2239,7 @@ dependencies = [
 
 [[package]]
 name = "phaselith-wasm-bridge"
-version = "0.1.0"
+version = "0.1.18"
 dependencies = [
  "phaselith-dsp-core",
 ]

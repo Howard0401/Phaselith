@@ -112,7 +112,7 @@
       </div>
     </section>
 
-    <footer>Phaselith v0.1.2</footer>
+    <footer>Phaselith v0.1.18</footer>
   </div>
 </template>
 
