@@ -99,7 +99,7 @@ pub const DEVICE_PROPERTY_SAFETY_OFFSET: u32 = 0x73616674;   // 'saft'
 pub const DEVICE_PROPERTY_NOMINAL_SAMPLE_RATE: u32 = 0x6E737274; // 'nsrt'
 pub const DEVICE_PROPERTY_AVAILABLE_SAMPLE_RATES: u32 = 0x6E737223; // 'nsr#'
 pub const DEVICE_PROPERTY_ICON: u32 = 0x69636F6E;            // 'icon'
-pub const DEVICE_PROPERTY_HIDDEN: u32 = 0x68696468;          // 'hidn'
+pub const DEVICE_PROPERTY_HIDDEN: u32 = 0x6869646E;          // 'hidn'
 pub const DEVICE_PROPERTY_PREFERRED_CHANNELS: u32 = 0x64636832; // 'dch2'
 pub const DEVICE_PROPERTY_ZERO_TIME_STAMP_PERIOD: u32 = 0x72747023; // 'rtp#'
 

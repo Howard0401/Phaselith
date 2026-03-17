@@ -316,15 +316,51 @@ mod tests {
     }
 
     #[test]
-    fn config_status_layout_matches_apo() {
-        // SharedConfig and SharedStatus MUST have identical layout to APO's version.
-        // If either struct changes, both crates must be updated in sync.
-        // This test documents the expected sizes as a guard.
-        let config_size = mem::size_of::<SharedConfig>();
-        let status_size = mem::size_of::<SharedStatus>();
-        // These assertions lock in the current layout.
-        // Update both crates if changing the struct.
-        assert_eq!(config_size, mem::size_of::<SharedConfig>());
-        assert_eq!(status_size, mem::size_of::<SharedStatus>());
+    fn config_status_exact_layout() {
+        // SharedConfig and SharedStatus MUST have identical byte layout to APO's version.
+        // These exact sizes are locked in — if either crate changes the struct,
+        // both must be updated together. Mismatched layout = corrupted IPC.
+        assert_eq!(mem::size_of::<SharedConfig>(), 52,
+            "SharedConfig size changed! Update APO crate to match.");
+        assert_eq!(mem::align_of::<SharedConfig>(), 4);
+        assert_eq!(mem::size_of::<SharedStatus>(), 32,
+            "SharedStatus size changed! Update APO crate to match.");
+        assert_eq!(mem::align_of::<SharedStatus>(), 8);
+    }
+
+    #[test]
+    fn shared_config_field_count() {
+        // Canary: if fields are added/removed, this constructor will fail to compile.
+        // Both APO and CoreAudio must declare identical fields.
+        let _ = SharedConfig {
+            version: AtomicU32::new(0),
+            enabled: AtomicBool::new(false),
+            compensation_strength_u32: AtomicU32::new(0),
+            hf_reconstruction_u32: AtomicU32::new(0),
+            dynamics_restoration_u32: AtomicU32::new(0),
+            transient_repair_u32: AtomicU32::new(0),
+            phase_mode: AtomicU8::new(0),
+            quality_preset: AtomicU8::new(0),
+            synthesis_mode: AtomicU8::new(0),
+            filter_style: AtomicU8::new(0),
+            warmth_u32: AtomicU32::new(0),
+            air_brightness_u32: AtomicU32::new(0),
+            smoothness_u32: AtomicU32::new(0),
+            spatial_spread_u32: AtomicU32::new(0),
+            impact_gain_u32: AtomicU32::new(0),
+            body_u32: AtomicU32::new(0),
+        };
+    }
+
+    #[test]
+    fn shared_status_field_count() {
+        let _ = SharedStatus {
+            frame_count: AtomicU64::new(0),
+            current_cutoff_u32: AtomicU32::new(0),
+            current_quality_tier: AtomicU8::new(0),
+            current_clipping_u32: AtomicU32::new(0),
+            processing_load_u32: AtomicU32::new(0),
+            wet_dry_diff_db_u32: AtomicU32::new(0),
+        };
     }
 }
