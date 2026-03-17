@@ -15,6 +15,7 @@ use phaselith_dsp_core::engine::{PhaselithEngine, PhaselithEngineBuilder};
 use phaselith_dsp_core::types::CrossChannelContext;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
+use std::time::Instant;
 
 /// Global engine storage — persists engine state across APO instance recreations.
 /// When Windows destroys an APO instance (unlock_for_process), engines are stored here.
@@ -121,6 +122,16 @@ pub struct PhaselithApo {
     /// When > 0 and real audio resumes, crossfade from silence into engine output
     /// to prevent boundary discontinuity at the zero→audio transition.
     zero_blocks_count: u32,
+    /// Timestamp of last process() call — used to detect DPC latency spikes.
+    /// If the gap between calls exceeds expected_period × DPC_SPIKE_RATIO,
+    /// the audio thread was starved (buffer underrun) and we apply a crossfade
+    /// to smooth the resulting discontinuity.
+    last_process_time: Option<Instant>,
+    /// When true, the previous frame had a DPC spike — apply crossfade on this frame.
+    dpc_spike_recovery: bool,
+    /// Saved last output before DPC spike for crossfade source.
+    dpc_saved_l: f32,
+    dpc_saved_r: f32,
 }
 
 impl PhaselithApo {
@@ -149,6 +160,10 @@ impl PhaselithApo {
             crossfade_from: None,
             crossfade_frames_left: 0,
             zero_blocks_count: 0,
+            last_process_time: None,
+            dpc_spike_recovery: false,
+            dpc_saved_l: 0.0,
+            dpc_saved_r: 0.0,
         }
     }
 
@@ -174,6 +189,12 @@ impl PhaselithApo {
     /// Windows sends 1-3 zero blocks during audio graph reconfiguration.
     /// Protection covers these plus the first real audio block after zeros.
     const STARTUP_GUARD_FRAMES: u64 = 8;
+
+    /// DPC latency spike detection: if the gap between consecutive process()
+    /// calls exceeds expected_period × DPC_SPIKE_RATIO, the audio thread was
+    /// starved by another driver (network, GPU, USB). We crossfade to smooth
+    /// the resulting buffer underrun discontinuity.
+    const DPC_SPIKE_RATIO: f32 = 1.8;
 
     /// Check a buffer for NaN/Inf values. Returns true if the buffer is clean.
     #[inline]
@@ -451,6 +472,28 @@ impl PhaselithApo {
         let transitioning = enabled != self.prev_enabled;
         self.prev_enabled = enabled;
         self.process_frame_count += 1;
+
+        // ═══ DPC latency spike detection ═══
+        // Measure time between consecutive process() calls. Normal interval is
+        // frame_size / sample_rate (e.g., 528/48000 = 11ms). If the gap is much
+        // larger, the audio thread was starved by a DPC spike (network, GPU, USB
+        // driver hogging CPU). The DAC ran out of samples → buffer underrun →
+        // audible pop. We detect this and crossfade the next block to smooth it.
+        {
+            let now = Instant::now();
+            if let Some(last_time) = self.last_process_time {
+                let elapsed_us = now.duration_since(last_time).as_micros() as f32;
+                let expected_us = (frames as f32 / self.sample_rate as f32) * 1_000_000.0;
+                if elapsed_us > expected_us * Self::DPC_SPIKE_RATIO && self.process_frame_count > 3 {
+                    apo_log!("DPC_SPIKE: elapsed={:.0}us, expected={:.0}us, ratio={:.2}, frame={}",
+                        elapsed_us, expected_us, elapsed_us / expected_us, self.process_frame_count);
+                    self.dpc_spike_recovery = true;
+                    self.dpc_saved_l = self.last_output_l;
+                    self.dpc_saved_r = self.last_output_r;
+                }
+            }
+            self.last_process_time = Some(now);
+        }
 
         // Diagnostic: log input boundary on first 3 frames of fresh engine.
         // If input itself has a discontinuity, the pop is from the system audio
@@ -742,6 +785,31 @@ impl PhaselithApo {
             }
             apo_log!("POST_ZERO_CROSSFADE: frame={}, from ({:.6},{:.6})",
                 self.process_frame_count, saved_l, saved_r);
+        }
+
+        // ═══ DPC spike recovery crossfade ═══
+        // After a detected DPC latency spike, crossfade from the last known good
+        // output into the current engine output. This smooths the discontinuity
+        // caused by buffer underrun (DAC played silence/stale samples while the
+        // audio thread was starved).
+        if self.dpc_spike_recovery {
+            self.dpc_spike_recovery = false;
+            if ch >= 2 && frames > 0 {
+                for f in 0..frames {
+                    let t = (f as f32 + 1.0) / frames as f32;
+                    let smooth = t * t * (3.0 - 2.0 * t);
+                    output[f * 2] = self.dpc_saved_l * (1.0 - smooth) + output[f * 2] * smooth;
+                    output[f * 2 + 1] = self.dpc_saved_r * (1.0 - smooth) + output[f * 2 + 1] * smooth;
+                }
+            } else if frames > 0 {
+                for f in 0..frames {
+                    let t = (f as f32 + 1.0) / frames as f32;
+                    let smooth = t * t * (3.0 - 2.0 * t);
+                    output[f] = self.dpc_saved_l * (1.0 - smooth) + output[f] * smooth;
+                }
+            }
+            apo_log!("DPC_RECOVERY: crossfade from ({:.6},{:.6})",
+                self.dpc_saved_l, self.dpc_saved_r);
         }
 
         // ═══ Click Gate (universal output safety) ═══
