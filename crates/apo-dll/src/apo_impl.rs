@@ -299,10 +299,14 @@ impl PhaselithApo {
             let config = self.load_config();
 
             // Dual-engine: each engine processes one mono channel independently.
+            // hop_size=120 (4x STFT analysis per 480-sample frame)
+            // sub-block=1 (per-sample OLA readout — maximum analog smoothness)
+            const APO_SUB_BLOCK: usize = 1;
             self.engine_l = Some(
                 PhaselithEngineBuilder::new(self.sample_rate, self.frame_size)
                     .with_config(config)
                     .with_channels(1)
+                    .with_max_sub_block(APO_SUB_BLOCK)
                     .build_default(),
             );
 
@@ -311,6 +315,7 @@ impl PhaselithApo {
                     PhaselithEngineBuilder::new(self.sample_rate, self.frame_size)
                         .with_config(config)
                         .with_channels(1)
+                        .with_max_sub_block(APO_SUB_BLOCK)
                         .build_default(),
                 );
             }

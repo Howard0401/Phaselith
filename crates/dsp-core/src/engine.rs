@@ -10,6 +10,12 @@ use crate::modules;
 pub struct PhaselithEngine {
     modules: Vec<Box<dyn PhaselithModule>>,
     context: ProcessContext,
+    /// Maximum sub-block size for process() splitting.
+    /// Defaults to hop_size (256 for Standard). APO can override to 120
+    /// for finer temporal resolution (480 / 120 = 4 even sub-blocks).
+    /// Chrome AudioWorklet (128 samples) is unaffected — it takes the
+    /// fast path when block_size <= max_sub_block.
+    max_sub_block: usize,
 }
 
 impl PhaselithEngine {
@@ -26,22 +32,23 @@ impl PhaselithEngine {
             return; // bypass
         }
 
-        let hop = self.context.config.quality_mode.hop_size();
+        let max_block = self.max_sub_block;
 
         // Reset timing accumulator before processing (both paths use +=)
         self.context.processing_time_us = 0.0;
 
-        if samples.len() <= hop {
-            // Fast path: block ≤ hop (Chrome/WASM block=128, hop=256).
-            // No splitting needed, zero overhead.
+        if samples.len() <= max_block {
+            // Fast path: block ≤ max_sub_block.
+            // Chrome/WASM (128 samples) always takes this path.
             self.process_sub_block(samples);
         } else {
-            // APO path: block > hop (e.g., 528 > 256). Split into sub-blocks
+            // APO path: block > max_sub_block. Split into sub-blocks
             // so each sub-block triggers at most one hop boundary in M0's
             // FrameClock, ensuring M2 analysis and M5 OLA stay 1:1.
+            // With max_sub_block=120, APO 480 → 4×120 (even split).
             let mut offset = 0;
             while offset < samples.len() {
-                let sub_len = hop.min(samples.len() - offset);
+                let sub_len = max_block.min(samples.len() - offset);
                 self.process_sub_block(&mut samples[offset..offset + sub_len]);
                 offset += sub_len;
             }
@@ -139,6 +146,7 @@ pub struct PhaselithEngineBuilder {
     sample_rate: u32,
     channels: u16,
     max_frame_size: usize,
+    max_sub_block: Option<usize>,
     config: EngineConfig,
     modules: Vec<Box<dyn PhaselithModule>>,
 }
@@ -149,6 +157,7 @@ impl PhaselithEngineBuilder {
             sample_rate,
             channels: 2,
             max_frame_size,
+            max_sub_block: None,
             config: EngineConfig::default(),
             modules: Vec::new(),
         }
@@ -161,6 +170,16 @@ impl PhaselithEngineBuilder {
 
     pub fn with_channels(mut self, channels: u16) -> Self {
         self.channels = channels;
+        self
+    }
+
+    /// Override the maximum sub-block size for process() splitting.
+    /// Use 120 for APO (480 / 120 = 4 even sub-blocks) to match
+    /// Chrome AudioWorklet's temporal resolution (~2.5ms per block).
+    /// Chrome (128 samples) is unaffected — it stays below the default
+    /// hop_size (256) and takes the fast path.
+    pub fn with_max_sub_block(mut self, size: usize) -> Self {
+        self.max_sub_block = Some(size);
         self
     }
 
@@ -220,9 +239,13 @@ impl PhaselithEngineBuilder {
             module.init(self.max_frame_size, self.sample_rate);
         }
 
+        let max_sub_block = self.max_sub_block
+            .unwrap_or_else(|| self.config.quality_mode.hop_size());
+
         PhaselithEngine {
             modules: self.modules,
             context,
+            max_sub_block,
         }
     }
 }

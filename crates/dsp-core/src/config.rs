@@ -312,8 +312,16 @@ impl QualityMode {
     }
 
     /// Hop size (core lattice) for this quality mode.
+    /// Aligned to factors of 480 (Windows APO frame size @ 48kHz)
+    /// so STFT analysis boundaries divide evenly into the host frame.
     pub fn hop_size(&self) -> usize {
-        self.core_fft_size() / 4
+        match self {
+            QualityMode::Light => 120,       // 512/4≈128 → 120 (480/120=4)
+            QualityMode::Standard => 120,    // 1024/4=256 → 120 (480/120=4)
+            QualityMode::Ultra => 120,       // 2048/4=512 → 120 (480/120=4)
+            QualityMode::Extreme => 120,     // 4096/4=1024 → 120 (480/120=4)
+            QualityMode::UltraExtreme => 120,// 8192/4=2048 → 120 (480/120=4)
+        }
     }
 
     /// Maximum reprojection iterations allowed.
