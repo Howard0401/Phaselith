@@ -85,13 +85,14 @@ pub fn register_server() -> HRESULT {
     let _ = set_registry_value(HKEY_LOCAL_MACHINE, &apo_key_path, "Copyright", "Phaselith Project");
     let _ = set_registry_dword(HKEY_LOCAL_MACHINE, &apo_key_path, "MajorVersion", 1);
     let _ = set_registry_dword(HKEY_LOCAL_MACHINE, &apo_key_path, "MinorVersion", 0);
-    // APO_FLAG_DEFAULT (0x0E) = SFX + MFX
+    // APO_FLAG_DEFAULT (0x0E) = format matching constraints (samples/frame/bits must match)
     let _ = set_registry_dword(HKEY_LOCAL_MACHINE, &apo_key_path, "Flags", 0x0E);
     let _ = set_registry_dword(HKEY_LOCAL_MACHINE, &apo_key_path, "MinInputConnections", 1);
     let _ = set_registry_dword(HKEY_LOCAL_MACHINE, &apo_key_path, "MaxInputConnections", 1);
     let _ = set_registry_dword(HKEY_LOCAL_MACHINE, &apo_key_path, "MinOutputConnections", 1);
     let _ = set_registry_dword(HKEY_LOCAL_MACHINE, &apo_key_path, "MaxOutputConnections", 1);
-    let _ = set_registry_dword(HKEY_LOCAL_MACHINE, &apo_key_path, "MaxInstances", 0xFFFFFFFF);
+    // EFX: single instance per endpoint
+    let _ = set_registry_dword(HKEY_LOCAL_MACHINE, &apo_key_path, "MaxInstances", 1);
     let _ = set_registry_dword(HKEY_LOCAL_MACHINE, &apo_key_path, "NumAPOInterfaces", 1);
     // IAudioProcessingObject IID
     let _ = set_registry_value(
@@ -221,9 +222,13 @@ fn delete_registry_tree(root: HKEY, subkey: &str) -> Result<(), ()> {
 // Endpoint binding: write APO CLSID to audio device FxProperties
 // ---------------------------------------------------------------------------
 
-/// PKEY_CompositeFX_StreamEffectClsid = {d04e05a6-594b-4fb6-a80d-01af5eed7d1d},13
-/// This is the correct key for writing APO CLSIDs.
-/// NOTE: {d3993a3f...},5 is PKEY_SFX_ProcessingModes (mode GUIDs, NOT CLSIDs!)
+/// PKEY_CompositeFX_EndpointEffectClsid = {d04e05a6-594b-4fb6-a80d-01af5eed7d1d},15
+/// Endpoint effect (EFX): single instance processes the final mixed signal
+/// before DAC. Avoids per-stream instance races that SFX (,13) causes.
+const PKEY_FX_ENDPOINT_EFFECT_CLSID_NAME: &str =
+    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},15";
+
+/// Old SFX key — used only during unbind to clean up legacy registrations.
 const PKEY_FX_STREAM_EFFECT_CLSID_NAME: &str =
     "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},13";
 
@@ -231,9 +236,10 @@ const PKEY_FX_STREAM_EFFECT_CLSID_NAME: &str =
 const MMDEVICES_RENDER_PATH: &str =
     "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\MMDevices\\Audio\\Render";
 
-/// Bind our APO to all render audio endpoints.
+/// Bind our APO to all render audio endpoints as an Endpoint Effect (EFX).
 /// Called from Tauri app after DllRegisterServer succeeds.
-/// Writes PKEY_FX_StreamEffectClsid to each endpoint's FxProperties.
+/// Writes PKEY_FX_EndpointEffectClsid to each endpoint's FxProperties.
+/// Also removes any legacy SFX registration to prevent dual-loading.
 pub fn bind_to_all_render_endpoints() -> std::result::Result<u32, String> {
     let guid_str = guid_to_string(&CLSID_PHASELITH_APO);
     let mut bound_count = 0u32;
@@ -275,11 +281,18 @@ pub fn bind_to_all_render_endpoints() -> std::result::Result<u32, String> {
             let endpoint_name = String::from_utf16_lossy(&name_buf[..name_len as usize]);
             let fx_path = format!("{}\\{}\\FxProperties", MMDEVICES_RENDER_PATH, endpoint_name);
 
-            // Write our APO CLSID as the stream effect
-            if set_registry_value(
+            // Remove legacy SFX registration if present (prevents dual-loading)
+            let _ = delete_registry_value(
                 HKEY_LOCAL_MACHINE,
                 &fx_path,
                 PKEY_FX_STREAM_EFFECT_CLSID_NAME,
+            );
+
+            // Write our APO CLSID as the endpoint effect (EFX)
+            if set_registry_value(
+                HKEY_LOCAL_MACHINE,
+                &fx_path,
+                PKEY_FX_ENDPOINT_EFFECT_CLSID_NAME,
                 &guid_str,
             ).is_ok() {
                 bound_count += 1;
@@ -299,7 +312,7 @@ pub fn bind_to_all_render_endpoints() -> std::result::Result<u32, String> {
 }
 
 /// Unbind our APO from all render audio endpoints.
-/// Removes PKEY_FX_StreamEffectClsid from each endpoint's FxProperties.
+/// Removes both EFX and legacy SFX CLSID values from each endpoint's FxProperties.
 pub fn unbind_from_all_render_endpoints() -> std::result::Result<u32, String> {
     let mut unbound_count = 0u32;
 
@@ -338,14 +351,20 @@ pub fn unbind_from_all_render_endpoints() -> std::result::Result<u32, String> {
             let endpoint_name = String::from_utf16_lossy(&name_buf[..name_len as usize]);
             let fx_path = format!("{}\\{}\\FxProperties", MMDEVICES_RENDER_PATH, endpoint_name);
 
-            // Delete the stream effect CLSID value
+            // Delete EFX CLSID value
             if delete_registry_value(
                 HKEY_LOCAL_MACHINE,
                 &fx_path,
-                PKEY_FX_STREAM_EFFECT_CLSID_NAME,
+                PKEY_FX_ENDPOINT_EFFECT_CLSID_NAME,
             ).is_ok() {
                 unbound_count += 1;
             }
+            // Also remove legacy SFX CLSID if present
+            let _ = delete_registry_value(
+                HKEY_LOCAL_MACHINE,
+                &fx_path,
+                PKEY_FX_STREAM_EFFECT_CLSID_NAME,
+            );
 
             index += 1;
         }

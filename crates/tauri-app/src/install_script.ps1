@@ -6,10 +6,13 @@ $log = @()
 # ============================================================
 # Key facts:
 # - audiodg.exe runs as LocalService → cannot access user dirs
-# - {d04e05a6...},13 = PKEY_CompositeFX_StreamEffectClsid (CLSIDs)
-# - {d04e05a6...},5  = PKEY_FX_StreamEffectClsid V1 (single CLSID)
+# - {d04e05a6...},15 = PKEY_CompositeFX_EndpointEffectClsid (EFX CLSIDs)
+# - {d04e05a6...},7  = PKEY_FX_EndpointEffectClsid V1 (single EFX CLSID)
+# - {d04e05a6...},13 = PKEY_CompositeFX_StreamEffectClsid (legacy SFX)
+# - {d04e05a6...},5  = PKEY_FX_StreamEffectClsid V1 (legacy SFX)
 # - {d3993a3f...},5  = PKEY_SFX_ProcessingModes (modes, NOT CLSIDs!)
 # - FxProperties keys are owned by TrustedInstaller
+# - EFX = single instance per endpoint, avoids multi-stream race conditions
 # ============================================================
 
 $dllSource = '__DLL_PATH__'
@@ -18,9 +21,12 @@ $apoClsid = '__APO_CLSID__'
 $renderBase = '__RENDER_BASE__'
 $renderPath = "HKLM:\$renderBase"
 
-# Property key for CompositeFX Stream Effect CLSIDs
+# Property key for CompositeFX Endpoint Effect CLSIDs (EFX)
+$pkeyCompositeEfx = '{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},15'
+# Property key for V1 Endpoint Effect CLSID (single EFX)
+$pkeyV1Efx = '{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},7'
+# Legacy SFX keys — cleaned up during install to prevent dual-loading
 $pkeyCompositeSfx = '{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},13'
-# Property key for V1 Stream Effect CLSID (single)
 $pkeyV1Sfx = '{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},5'
 
 # ---- Step 0: Set permissions on Phaselith data dir for LocalService (audiodg) ----
@@ -314,87 +320,86 @@ if ($renderKey) {
         $fxKey.Close()
 
         $bound = $false
+        $owned = Take-Ownership -SubKeyPath $fxSubKey
 
-        # Step 4b: Try CompositeFX SFX first (takes priority over V1)
+        # Step 4a: Clean up legacy SFX registrations (prevents dual-loading)
+        if ($owned) {
+            try {
+                # Remove from CompositeFX SFX (,13)
+                $cfxInfo = Get-RegValue -SubKey $fxSubKey -Name $pkeyCompositeSfx
+                if ($cfxInfo -and $cfxInfo.Value) {
+                    $cfxVal = @($cfxInfo.Value)
+                    $cleanList = @($cfxVal | Where-Object { $_ -ine $apoClsid })
+                    if ($cleanList.Count -lt $cfxVal.Count) {
+                        if ($cleanList.Count -gt 0) {
+                            Set-RegMultiString -SubKey $fxSubKey -Name $pkeyCompositeSfx -Values $cleanList | Out-Null
+                        }
+                        $details += "${epGuid}: cleaned-SFX-composite"
+                    }
+                }
+                # Remove from V1 SFX (,5) — only if it's our CLSID
+                $v1Info = Get-RegValue -SubKey $fxSubKey -Name $pkeyV1Sfx
+                if ($v1Info -and $v1Info.Value -is [string] -and $v1Info.Value -ieq $apoClsid) {
+                    # Restore original SFX CLSID if we replaced it, otherwise clear
+                    Set-RegSzValue -SubKey $fxSubKey -Name $pkeyV1Sfx -Value '' | Out-Null
+                    $details += "${epGuid}: cleaned-SFX-v1"
+                }
+            } catch {
+                $details += "${epGuid}: sfx-cleanup-err=$_"
+            }
+        }
+
+        # Step 4b: Try CompositeFX EFX first (,15)
         try {
-            $cfxInfo = Get-RegValue -SubKey $fxSubKey -Name $pkeyCompositeSfx
-            if ($cfxInfo -and $cfxInfo.Value -and $cfxInfo.Kind -eq 'MultiString') {
-                $cfxVal = @($cfxInfo.Value)
-                if ($cfxVal.Count -gt 0) {
-                    $already = $false
-                    foreach ($s in $cfxVal) { if ($s -ieq $apoClsid) { $already = $true; break } }
-                    if ($already) {
-                        $details += "${epGuid}: CompositeFX(already)"
+            $efxInfo = Get-RegValue -SubKey $fxSubKey -Name $pkeyCompositeEfx
+            if ($efxInfo -and $efxInfo.Value -and $efxInfo.Kind -eq 'MultiString') {
+                $efxVal = @($efxInfo.Value)
+                $already = $false
+                foreach ($s in $efxVal) { if ($s -ieq $apoClsid) { $already = $true; break } }
+                if ($already) {
+                    $details += "${epGuid}: EFX-composite(already)"
+                    $bound = $true
+                    $boundCount++
+                } elseif ($owned) {
+                    $newList = $efxVal + @($apoClsid)
+                    Set-RegMultiString -SubKey $fxSubKey -Name $pkeyCompositeEfx -Values $newList | Out-Null
+                    $verifyInfo = Get-RegValue -SubKey $fxSubKey -Name $pkeyCompositeEfx
+                    $verified = $false
+                    if ($verifyInfo -and $verifyInfo.Value) {
+                        foreach ($v in @($verifyInfo.Value)) { if ($v -ieq $apoClsid) { $verified = $true; break } }
+                    }
+                    if ($verified) {
+                        $details += "${epGuid}: EFX-composite(bound,verified)"
                         $bound = $true
                         $boundCount++
                     } else {
-                        $owned = Take-Ownership -SubKeyPath $fxSubKey
-                        if ($owned) {
-                            $newList = $cfxVal + @($apoClsid)
-                            $writeOk = Set-RegMultiString -SubKey $fxSubKey -Name $pkeyCompositeSfx -Values $newList
-                            # Verify the write persisted
-                            $verifyInfo = Get-RegValue -SubKey $fxSubKey -Name $pkeyCompositeSfx
-                            $verified = $false
-                            if ($verifyInfo -and $verifyInfo.Value) {
-                                foreach ($v in @($verifyInfo.Value)) { if ($v -ieq $apoClsid) { $verified = $true; break } }
-                            }
-                            if ($verified) {
-                                $details += "${epGuid}: CompositeFX(bound,verified)"
-                                $bound = $true
-                                $boundCount++
-                            } else {
-                                $details += "${epGuid}: CompositeFX(WRITE-FAILED)"
-                            }
-                        } else {
-                            $details += "${epGuid}: CompositeFX(own-fail)"
-                        }
+                        $details += "${epGuid}: EFX-composite(WRITE-FAILED)"
                     }
                 }
             }
         } catch {
-            $details += "${epGuid}: CompositeFX-err=$_"
+            $details += "${epGuid}: EFX-composite-err=$_"
         }
 
-        # Step 4c: If no CompositeFX, try V1 SFX
-        if (-not $bound) {
+        # Step 4c: If no CompositeFX EFX, try V1 EFX (,7)
+        if (-not $bound -and $owned) {
             try {
-                $v1Info = Get-RegValue -SubKey $fxSubKey -Name $pkeyV1Sfx
-                if ($v1Info -and $v1Info.Value -and $v1Info.Value -is [string]) {
-                    $v1Val = $v1Info.Value
-                    if ($v1Val -ine $apoClsid -and $v1Val.Length -gt 0) {
-                        # V1 has another CLSID — upgrade to CompositeFX with original + ours
-                        $owned = Take-Ownership -SubKeyPath $fxSubKey
-                        if ($owned) {
-                            $newList = @($v1Val, $apoClsid)
-                            $writeOk = Set-RegMultiString -SubKey $fxSubKey -Name $pkeyCompositeSfx -Values $newList
-                            $verifyInfo = Get-RegValue -SubKey $fxSubKey -Name $pkeyCompositeSfx
-                            $verified = $false
-                            if ($verifyInfo -and $verifyInfo.Value) {
-                                foreach ($v in @($verifyInfo.Value)) { if ($v -ieq $apoClsid) { $verified = $true; break } }
-                            }
-                            if ($verified) {
-                                $details += "${epGuid}: V1->CompositeFX(bound,verified)"
-                                $bound = $true
-                                $boundCount++
-                            } else {
-                                $details += "${epGuid}: V1->CompositeFX(WRITE-FAILED)"
-                            }
-                        } else {
-                            $details += "${epGuid}: V1(own-fail)"
-                        }
-                    } elseif ($v1Val -ieq $apoClsid) {
-                        $details += "${epGuid}: V1(already)"
-                        $bound = $true
-                        $boundCount++
-                    }
+                Set-RegSzValue -SubKey $fxSubKey -Name $pkeyV1Efx -Value $apoClsid | Out-Null
+                $verifyInfo = Get-RegValue -SubKey $fxSubKey -Name $pkeyV1Efx
+                if ($verifyInfo -and $verifyInfo.Value -ieq $apoClsid) {
+                    $details += "${epGuid}: EFX-v1(bound,verified)"
+                    $bound = $true
+                    $boundCount++
+                } else {
+                    $details += "${epGuid}: EFX-v1(WRITE-FAILED)"
                 }
             } catch {
-                $details += "${epGuid}: V1-err=$_"
+                $details += "${epGuid}: EFX-v1-err=$_"
             }
         }
 
         if (-not $bound) {
-            $details += "${epGuid}: no-sfx-keys"
+            $details += "${epGuid}: no-efx-bound"
         }
     }
     $renderKey.Close()

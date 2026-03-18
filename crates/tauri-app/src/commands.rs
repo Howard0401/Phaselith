@@ -405,7 +405,7 @@ pub fn uninstall_apo() -> Result<String, String> {
 }
 
 /// Build the PowerShell uninstall script content.
-/// Removes APO CLSID from CompositeFX-SFX ({d04e05a6...},13) and V1-SFX ({d04e05a6...},5).
+/// Removes APO CLSID from all FxProperties values (EFX, SFX, V1, V2).
 /// Also unregisters COM and removes installed DLL.
 #[cfg(windows)]
 fn build_uninstall_script(_dll_path: &std::path::Path, marker_path: &std::path::Path) -> String {

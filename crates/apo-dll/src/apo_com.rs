@@ -86,7 +86,7 @@ impl IAudioProcessingObject_Impl for PhaselithApoCom_Impl {
     }
 
     fn GetLatency(&self) -> Result<i64> {
-        // SFX APO adds no latency (processes in-place, same frame count)
+        // EFX APO adds no latency (processes in-place, same frame count)
         Ok(0)
     }
 
@@ -103,7 +103,7 @@ impl IAudioProcessingObject_Impl for PhaselithApoCom_Impl {
 
             let props = &mut *ptr;
             props.clsid = CLSID_PHASELITH_APO;
-            props.Flags = APO_FLAG(0x0E); // APO_FLAG_DEFAULT = SFX + MFX
+            props.Flags = APO_FLAG(0x0E); // APO_FLAG_DEFAULT (format matching constraints)
             // Copy friendly name
             let name_wide: Vec<u16> = APO_FRIENDLY_NAME
                 .encode_utf16()

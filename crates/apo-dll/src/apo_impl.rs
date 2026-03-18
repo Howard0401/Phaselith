@@ -18,10 +18,13 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 /// Global engine storage — persists engine state across APO instance recreations.
-/// When Windows destroys an APO instance (unlock_for_process), engines are stored here.
+/// When Windows destroys the APO instance (unlock_for_process), engines are stored here.
 /// When a new instance is created (lock_for_process), it takes the stored engines
 /// instead of building new ones. This preserves OLA buffers, EMA smoothers, and
 /// damage posteriors, eliminating the pop/quality-dip from engine restart.
+///
+/// SAFETY: As an EFX (endpoint effect), only one instance exists per endpoint,
+/// so these globals are never accessed concurrently by multiple instances.
 struct StoredEngines {
     engine_l: PhaselithEngine,
     engine_r: Option<PhaselithEngine>,
@@ -67,7 +70,8 @@ static LAST_OUTPUT_R_BITS: AtomicU32 = AtomicU32::new(0);
 static LAST_OUTPUT_VALID: AtomicBool = AtomicBool::new(false);
 
 /// The Phaselith APO instance.
-/// Created by ClassFactory, one per audio stream.
+/// Registered as EFX (endpoint effect): single instance per audio endpoint,
+/// processes the final mixed signal from all streams before DAC output.
 ///
 /// Dual-engine architecture (aligned with browser WASM bridge):
 /// - Two independent mono engines (L/R) with no state contamination
@@ -192,9 +196,9 @@ impl PhaselithApo {
 
     /// DPC latency spike detection: if the gap between consecutive process()
     /// calls exceeds expected_period × DPC_SPIKE_RATIO, the audio thread was
-    /// starved by another driver (network, GPU, USB). We crossfade to smooth
-    /// the resulting buffer underrun discontinuity.
-    const DPC_SPIKE_RATIO: f32 = 1.8;
+    /// starved by another driver (network, GPU, USB). We mute the block to
+    /// avoid outputting stale/discontinuous audio (crossfade sounds robotic).
+    const DPC_SPIKE_RATIO: f32 = 2.5;
 
     /// Check a buffer for NaN/Inf values. Returns true if the buffer is clean.
     #[inline]
@@ -787,28 +791,17 @@ impl PhaselithApo {
                 self.process_frame_count, saved_l, saved_r);
         }
 
-        // ═══ DPC spike recovery crossfade ═══
-        // After a detected DPC latency spike, crossfade from the last known good
-        // output into the current engine output. This smooths the discontinuity
-        // caused by buffer underrun (DAC played silence/stale samples while the
-        // audio thread was starved).
+        // ═══ DPC spike recovery: mute ═══
+        // After a detected DPC latency spike, mute the block. The engine output
+        // after a spike contains stale OLA data that sounds robotic/mechanical.
+        // A brief silence is far less noticeable than corrupted audio.
+        // The click gate will then handle smooth fade-in on the next block.
         if self.dpc_spike_recovery {
             self.dpc_spike_recovery = false;
-            if ch >= 2 && frames > 0 {
-                for f in 0..frames {
-                    let t = (f as f32 + 1.0) / frames as f32;
-                    let smooth = t * t * (3.0 - 2.0 * t);
-                    output[f * 2] = self.dpc_saved_l * (1.0 - smooth) + output[f * 2] * smooth;
-                    output[f * 2 + 1] = self.dpc_saved_r * (1.0 - smooth) + output[f * 2 + 1] * smooth;
-                }
-            } else if frames > 0 {
-                for f in 0..frames {
-                    let t = (f as f32 + 1.0) / frames as f32;
-                    let smooth = t * t * (3.0 - 2.0 * t);
-                    output[f] = self.dpc_saved_l * (1.0 - smooth) + output[f] * smooth;
-                }
-            }
-            apo_log!("DPC_RECOVERY: crossfade from ({:.6},{:.6})",
+            output[..copy_len].fill(0.0);
+            self.gap_mute_active = true;
+            self.process_frame_count = 0;
+            apo_log!("DPC_RECOVERY: muted block, last_out=({:.6},{:.6})",
                 self.dpc_saved_l, self.dpc_saved_r);
         }
 

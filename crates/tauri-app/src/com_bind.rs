@@ -1,9 +1,12 @@
 // COM-based APO binding via IPropertyStore.
 //
 // Uses IMMDeviceEnumerator → IMMDevice → IPropertyStore to write
-// CompositeFX SFX properties. This bypasses TrustedInstaller registry
-// restrictions because AudioEndpointBuilder's property store has
-// the necessary privileges (same approach as Equalizer APO).
+// EndpointEffect (EFX) properties. EFX = single instance per endpoint,
+// processes the final mixed signal before DAC. This avoids per-stream
+// instance races that SFX causes with multi-stream playback.
+//
+// Bypasses TrustedInstaller registry restrictions because
+// AudioEndpointBuilder's property store has the necessary privileges.
 
 use windows::core::{imp, GUID, PWSTR};
 use windows::Win32::Media::Audio::*;
@@ -17,19 +20,27 @@ const VT_LPWSTR: u16 = 31;
 const VT_VECTOR: u16 = 0x1000;
 const VT_BLOB: u16 = 65;
 
-// PKEY_CompositeFX_StreamEffectClsid = {d04e05a6-594b-4fb6-a80d-01af5eed7d1d},13
+// PKEY_CompositeFX_EndpointEffectClsid = {d04e05a6-594b-4fb6-a80d-01af5eed7d1d},15
+const PKEY_COMPOSITEFX_EFX: PROPERTYKEY = PROPERTYKEY {
+    fmtid: GUID::from_u128(0xd04e05a6_594b_4fb6_a80d_01af5eed7d1d),
+    pid: 15,
+};
+
+// PKEY_FX_EndpointEffectClsid (V1) = {d04e05a6-594b-4fb6-a80d-01af5eed7d1d},7
+const PKEY_FX_EFX_V1: PROPERTYKEY = PROPERTYKEY {
+    fmtid: GUID::from_u128(0xd04e05a6_594b_4fb6_a80d_01af5eed7d1d),
+    pid: 7,
+};
+
+// Legacy SFX keys — used only during unbind to clean up old registrations
 const PKEY_COMPOSITEFX_SFX: PROPERTYKEY = PROPERTYKEY {
     fmtid: GUID::from_u128(0xd04e05a6_594b_4fb6_a80d_01af5eed7d1d),
     pid: 13,
 };
-
-// PKEY_FX_StreamEffectClsid (V2) = {d3993a3f-99c2-4402-b5ec-a92a0367664b},5
 const PKEY_FX_SFX_V2: PROPERTYKEY = PROPERTYKEY {
     fmtid: GUID::from_u128(0xd3993a3f_99c2_4402_b5ec_a92a0367664b),
     pid: 5,
 };
-
-// PKEY_FX_StreamEffectClsid (V1) = {d04e05a6-594b-4fb6-a80d-01af5eed7d1d},5
 const PKEY_FX_SFX_V1: PROPERTYKEY = PROPERTYKEY {
     fmtid: GUID::from_u128(0xd04e05a6_594b_4fb6_a80d_01af5eed7d1d),
     pid: 5,
@@ -88,10 +99,14 @@ unsafe fn bind_single_endpoint(device: &IMMDevice, device_id: &str) -> std::resu
         .OpenPropertyStore(STGM_READWRITE)
         .map_err(|e| format!("OpenPropertyStore(READWRITE): {e}"))?;
 
-    // Strategy: try CompositeFX first, then V2, then V1
-    let bound = try_append_to_property(&store, PKEY_COMPOSITEFX_SFX, "CompositeFX-SFX")
-        .or_else(|_| try_append_to_property(&store, PKEY_FX_SFX_V2, "V2-SFX"))
-        .or_else(|_| try_set_single_property(&store, PKEY_FX_SFX_V1, "V1-SFX"));
+    // First, clean up any legacy SFX registrations to prevent dual-loading
+    let _ = remove_from_property(&store, PKEY_COMPOSITEFX_SFX);
+    let _ = remove_from_property(&store, PKEY_FX_SFX_V2);
+    let _ = remove_from_property(&store, PKEY_FX_SFX_V1);
+
+    // Strategy: try CompositeFX EFX first, then V1 EFX
+    let bound = try_append_to_property(&store, PKEY_COMPOSITEFX_EFX, "CompositeFX-EFX")
+        .or_else(|_| try_set_single_property(&store, PKEY_FX_EFX_V1, "V1-EFX"));
 
     match bound {
         Ok(key_name) => {
@@ -183,6 +198,23 @@ unsafe fn try_set_single_property(
     std::mem::forget(pv);
 
     Ok(key_name.to_string())
+}
+
+/// Remove our CLSID from a property (for cleaning up legacy SFX keys during bind).
+unsafe fn remove_from_property(store: &IPropertyStore, key: PROPERTYKEY) -> std::result::Result<(), String> {
+    let pv = store.GetValue(&key).map_err(|e| format!("GetValue: {e}"))?;
+    let mut vals = read_multi_sz_from_propvariant(&pv);
+    let before = vals.len();
+    vals.retain(|v| v.to_uppercase() != APO_CLSID_STR.to_uppercase());
+    if vals.len() < before {
+        if vals.is_empty() {
+            let _ = store.SetValue(&key, &windows::core::PROPVARIANT::default());
+        } else if let Ok(new_pv) = create_multi_sz_propvariant(&vals) {
+            let _ = store.SetValue(&key, &new_pv);
+        }
+        let _ = store.Commit();
+    }
+    Ok(())
 }
 
 /// Read strings from a PROPVARIANT (handles VT_LPWSTR, VT_VECTOR|VT_LPWSTR, VT_BLOB).
@@ -320,11 +352,13 @@ pub fn unbind_via_com() -> std::result::Result<(u32, Vec<String>), String> {
                 }
             };
 
-            // Remove from CompositeFX, V2, and V1
+            // Remove from all EFX and legacy SFX keys
             for (key, _name) in [
-                (PKEY_COMPOSITEFX_SFX, "CompositeFX"),
-                (PKEY_FX_SFX_V2, "V2"),
-                (PKEY_FX_SFX_V1, "V1"),
+                (PKEY_COMPOSITEFX_EFX, "CompositeFX-EFX"),
+                (PKEY_FX_EFX_V1, "V1-EFX"),
+                (PKEY_COMPOSITEFX_SFX, "CompositeFX-SFX"),
+                (PKEY_FX_SFX_V2, "V2-SFX"),
+                (PKEY_FX_SFX_V1, "V1-SFX"),
             ] {
                 if let Ok(pv) = store.GetValue(&key) {
                     let mut vals = read_multi_sz_from_propvariant(&pv);
