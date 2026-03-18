@@ -26,6 +26,8 @@ mod format_negotiate;
 mod mmap_ipc;
 #[cfg(windows)]
 mod registry;
+#[cfg(windows)]
+mod audio_dump;
 
 #[cfg(windows)]
 use windows::core::HRESULT;

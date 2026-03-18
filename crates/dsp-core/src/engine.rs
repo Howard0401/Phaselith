@@ -202,10 +202,10 @@ impl PhaselithEngineBuilder {
         );
         context.dry_buffer = vec![0.0; self.max_frame_size];
 
-        // native-rt: pre-allocate ALL context fields to max sizes so modules
-        // never allocate on the hot path. Without this, M3/M4/M5 allocate on
-        // first process() call when they see empty/mismatched field sizes.
-        #[cfg(feature = "native-rt")]
+        // Pre-allocate ALL context fields to max sizes so modules never allocate
+        // on the hot path. Also ensures native-rt and non-native-rt paths start
+        // with identical context state (prevents FP divergence from lazy allocation
+        // sizing differences during sub-block processing).
         {
             use crate::types::{CORE_FFT_SIZE, StructuredFields, ResidualCandidate, ValidatedResidual};
             let core_bins = CORE_FFT_SIZE / 2 + 1;

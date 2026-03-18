@@ -325,6 +325,9 @@ impl IAudioProcessingObjectRT_Impl for PhaselithApoCom_Impl {
 
             self.inner.borrow_mut().process(input, output);
 
+            // Audio dump: observe input/output for A/B analysis (no DSP impact)
+            crate::audio_dump::record(input, output);
+
             output_prop.u32ValidFrameCount = frames as u32;
             output_prop.u32BufferFlags = APO_BUFFER_FLAGS(1); // BUFFER_VALID
         }));

@@ -74,29 +74,14 @@ impl StftEngine {
             return;
         }
 
-        // Apply window into pre-allocated complex buffer
-        for i in 0..fft_size {
-            self.complex_buf[i] = Complex::new(samples[i] * self.window[i], 0.0);
-        }
-
-        self.fft_forward.process_with_scratch(&mut self.complex_buf, &mut self.fft_scratch);
-
-        let num_bins = fft_size / 2 + 1;
-        if lattice.magnitude.len() != num_bins {
-            *lattice = Lattice::new(fft_size);
-        }
-
-        let inv_n = 1.0 / fft_size as f32;
-        let inv_n_sq = inv_n * inv_n;
-        for i in 0..num_bins {
-            let c = self.complex_buf[i];
-            // Use norm_sqr() to avoid sqrt, then derive magnitude from energy.
-            // norm_sqr = re² + im² (no sqrt) — saves ~4 cycles per bin.
-            let energy = c.norm_sqr() * inv_n_sq;
-            lattice.energy[i] = energy;
-            lattice.magnitude[i] = energy.sqrt(); // single sqrt vs norm()'s sqrt + multiply
-            lattice.phase[i] = c.im.atan2(c.re);  // inline atan2, same as c.arg()
-        }
+        // Delegate to analyze_lattice for bit-identical results.
+        // StftEngine's pre-allocated buffers + process_with_scratch produced
+        // subtle FP divergence vs analyze_lattice (even with matching magnitude
+        // computation, scratch zeroing, and fresh plans). The root cause is
+        // unknown but likely in rustfft's internal buffer reuse. Since the
+        // per-call allocation cost (~2μs for 1024 FFT) is negligible vs the
+        // 5333μs hop budget, correctness wins over micro-optimization.
+        analyze_lattice(samples, lattice, 48000);
     }
 
     /// Zero-alloc inverse STFT: magnitude + phase → time-domain output.

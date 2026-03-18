@@ -8,6 +8,10 @@ members = [
     "crates/tauri-app",
     "crates/core-audio",
 ]
+exclude = [
+    "tools/audio_recorder",
+    "tools/audio_analysis",
+]
 
 [workspace.package]
 version = "0.1.21"
