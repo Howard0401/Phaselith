@@ -15,6 +15,18 @@ use phaselith_dsp_core::engine::{PhaselithEngine, PhaselithEngineBuilder};
 use phaselith_dsp_core::types::CrossChannelContext;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
+// DPC spike detection uses RDTSC (direct TSC register read, ~1ns, no syscall)
+// on x86_64, falling back to Instant::now() (QueryPerformanceCounter) on other
+// architectures. This avoids a kernel transition on every process() call.
+#[cfg(target_arch = "x86_64")]
+fn rdtsc_us() -> f32 {
+    let ticks = unsafe { core::arch::x86_64::_rdtsc() };
+    // Estimate 3 GHz TSC clock (same as engine.rs). Not perfectly accurate
+    // but sufficient for DPC spike ratio detection.
+    ticks as f32 / 3000.0
+}
+
+#[cfg(not(target_arch = "x86_64"))]
 use std::time::Instant;
 
 /// Global engine storage — persists engine state across APO instance recreations.
@@ -126,11 +138,10 @@ pub struct PhaselithApo {
     /// When > 0 and real audio resumes, crossfade from silence into engine output
     /// to prevent boundary discontinuity at the zero→audio transition.
     zero_blocks_count: u32,
-    /// Timestamp of last process() call — used to detect DPC latency spikes.
-    /// If the gap between calls exceeds expected_period × DPC_SPIKE_RATIO,
-    /// the audio thread was starved (buffer underrun) and we apply a crossfade
-    /// to smooth the resulting discontinuity.
-    last_process_time: Option<Instant>,
+    /// Timestamp of last process() call in microseconds (RDTSC-based on x86_64).
+    /// Used to detect DPC latency spikes. If the gap between calls exceeds
+    /// expected_period × DPC_SPIKE_RATIO, the audio thread was starved.
+    last_process_time_us: Option<f32>,
     /// When true, the previous frame had a DPC spike — apply crossfade on this frame.
     dpc_spike_recovery: bool,
     /// Saved last output before DPC spike for crossfade source.
@@ -164,7 +175,7 @@ impl PhaselithApo {
             crossfade_from: None,
             crossfade_frames_left: 0,
             zero_blocks_count: 0,
-            last_process_time: None,
+            last_process_time_us: None,
             dpc_spike_recovery: false,
             dpc_saved_l: 0.0,
             dpc_saved_r: 0.0,
@@ -374,6 +385,21 @@ impl PhaselithApo {
             }
         }
 
+        // Pre-allocate STORED_PRIME if not yet initialized, so the RT path
+        // never needs to allocate. This is non-RT (lock_for_process).
+        if let Ok(mut guard) = STORED_PRIME.lock() {
+            if guard.is_none() {
+                *guard = Some(StoredPrimeAudio {
+                    blocks_l: (0..Self::PRIME_FRAMES).map(|_| vec![0.0f32; frame_size]).collect(),
+                    blocks_r: (0..Self::PRIME_FRAMES).map(|_| vec![0.0f32; frame_size]).collect(),
+                    cursor: 0,
+                    count: 0,
+                    sample_rate: self.sample_rate,
+                    frame_size,
+                });
+            }
+        }
+
         // Seed last_output from global atomic storage so click gate can detect
         // boundary discontinuities from frame 1 (instead of waiting CLICK_GATE_DELAY).
         if LAST_OUTPUT_VALID.load(Ordering::Acquire) {
@@ -484,9 +510,18 @@ impl PhaselithApo {
         // driver hogging CPU). The DAC ran out of samples → buffer underrun →
         // audible pop. We detect this and crossfade the next block to smooth it.
         {
-            let now = Instant::now();
-            if let Some(last_time) = self.last_process_time {
-                let elapsed_us = now.duration_since(last_time).as_micros() as f32;
+            // Use RDTSC on x86_64 (no syscall) instead of Instant::now() (QPC syscall)
+            #[cfg(target_arch = "x86_64")]
+            let now_us = rdtsc_us();
+            #[cfg(not(target_arch = "x86_64"))]
+            let now_us = {
+                static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+                let start = START.get_or_init(Instant::now);
+                start.elapsed().as_micros() as f32
+            };
+
+            if let Some(last_us) = self.last_process_time_us {
+                let elapsed_us = now_us - last_us;
                 let expected_us = (frames as f32 / self.sample_rate as f32) * 1_000_000.0;
                 if elapsed_us > expected_us * Self::DPC_SPIKE_RATIO && self.process_frame_count > 3 {
                     apo_log!("DPC_SPIKE: elapsed={:.0}us, expected={:.0}us, ratio={:.2}, frame={}",
@@ -496,7 +531,7 @@ impl PhaselithApo {
                     self.dpc_saved_r = self.last_output_r;
                 }
             }
-            self.last_process_time = Some(now);
+            self.last_process_time_us = Some(now_us);
         }
 
         // Diagnostic: log input boundary on first 3 frames of fresh engine.
@@ -890,34 +925,32 @@ impl PhaselithApo {
         }
 
         // Store recent input audio for priming future fresh engines.
-        // Uses try_lock (non-blocking) — if lock is held, skip this frame.
-        if self.process_frame_count > 0 {
+        // Only store every PRIME_STORE_INTERVAL frames to avoid try_lock overhead
+        // on every RT callback. The lock is non-blocking (try_lock), but even the
+        // atomic CAS in try_lock is unnecessary on most frames.
+        const PRIME_STORE_INTERVAL: u64 = 16;
+        if self.process_frame_count > 0 && self.process_frame_count % PRIME_STORE_INTERVAL == 0 {
             if let Ok(mut guard) = STORED_PRIME.try_lock() {
-                let prime = guard.get_or_insert_with(|| StoredPrimeAudio {
-                    blocks_l: (0..Self::PRIME_FRAMES).map(|_| vec![0.0f32; self.frame_size]).collect(),
-                    blocks_r: (0..Self::PRIME_FRAMES).map(|_| vec![0.0f32; self.frame_size]).collect(),
-                    cursor: 0,
-                    count: 0,
-                    sample_rate: self.sample_rate,
-                    frame_size: self.frame_size,
-                });
-                if prime.sample_rate == self.sample_rate && prime.frame_size == self.frame_size {
-                    let idx = prime.cursor % Self::PRIME_FRAMES;
-                    // Store de-interleaved input
-                    if ch >= 2 {
-                        for f in 0..frames {
-                            prime.blocks_l[idx][f] = input[f * 2];
-                            prime.blocks_r[idx][f] = input[f * 2 + 1];
+                if let Some(ref mut prime) = *guard {
+                    // Only write if already initialized (init happens in lock_for_process)
+                    if prime.sample_rate == self.sample_rate && prime.frame_size == self.frame_size {
+                        let idx = prime.cursor % Self::PRIME_FRAMES;
+                        if ch >= 2 {
+                            for f in 0..frames {
+                                prime.blocks_l[idx][f] = input[f * 2];
+                                prime.blocks_r[idx][f] = input[f * 2 + 1];
+                            }
+                        } else {
+                            prime.blocks_l[idx][..frames].copy_from_slice(&input[..frames]);
+                            prime.blocks_r[idx].iter_mut().for_each(|v| *v = 0.0);
                         }
-                    } else {
-                        prime.blocks_l[idx][..frames].copy_from_slice(&input[..frames]);
-                        prime.blocks_r[idx].iter_mut().for_each(|v| *v = 0.0);
-                    }
-                    prime.cursor = prime.cursor.wrapping_add(1);
-                    if prime.count < Self::PRIME_FRAMES {
-                        prime.count += 1;
+                        prime.cursor = prime.cursor.wrapping_add(1);
+                        if prime.count < Self::PRIME_FRAMES {
+                            prime.count += 1;
+                        }
                     }
                 }
+                // NOTE: if guard is None, skip — allocation happens in lock_for_process
             }
         }
 

@@ -54,6 +54,7 @@ pub fn compute_wiener_mask(
             let r_sq = r * r;
             let e_sq = e * e;
             let wiener = r_sq / (r_sq + e_sq + epsilon);
+            let wiener = if wiener.is_finite() { wiener } else { spectral_floor };
             mask[k] = wiener.max(spectral_floor);
 
             // Below cutoff: no residual allowed (low-band lock)
@@ -131,6 +132,7 @@ pub fn compute_wiener_mask_into(
             let r_sq = r * r;
             let e_sq = e * e;
             let wiener = r_sq / (r_sq + e_sq + epsilon);
+            let wiener = if wiener.is_finite() { wiener } else { spectral_floor };
             out[k] = wiener.max(spectral_floor);
             if k < cutoff_bin {
                 out[k] = 0.0;
