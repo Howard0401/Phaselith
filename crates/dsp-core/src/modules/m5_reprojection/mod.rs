@@ -390,8 +390,9 @@ impl PhaselithModule for SelfReprojectionValidator {
                         if self.ola_drain.len() < needed {
                             self.ola_drain = vec![0.0; needed];
                         } else {
-                            let clear_end = self.ola_drain_pos.min(self.ola_drain.len());
-                            self.ola_drain[..clear_end].fill(0.0);
+                            // Clear entire buffer — stale data beyond ola_drain_pos
+                            // leaks through OLA synthesis during sub-block splitting
+                            self.ola_drain.fill(0.0);
                         }
                         self.ola_buffer = overlap_add::OverlapAddBuffer::new(fft_size, hop_size);
                         self.ola_drain_pos = 0;

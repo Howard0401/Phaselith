@@ -15,18 +15,6 @@ use phaselith_dsp_core::engine::{PhaselithEngine, PhaselithEngineBuilder};
 use phaselith_dsp_core::types::CrossChannelContext;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
-// DPC spike detection uses RDTSC (direct TSC register read, ~1ns, no syscall)
-// on x86_64, falling back to Instant::now() (QueryPerformanceCounter) on other
-// architectures. This avoids a kernel transition on every process() call.
-#[cfg(target_arch = "x86_64")]
-fn rdtsc_us() -> f32 {
-    let ticks = unsafe { core::arch::x86_64::_rdtsc() };
-    // Estimate 3 GHz TSC clock (same as engine.rs). Not perfectly accurate
-    // but sufficient for DPC spike ratio detection.
-    ticks as f32 / 3000.0
-}
-
-#[cfg(not(target_arch = "x86_64"))]
 use std::time::Instant;
 
 /// Global engine storage — persists engine state across APO instance recreations.
@@ -138,10 +126,10 @@ pub struct PhaselithApo {
     /// When > 0 and real audio resumes, crossfade from silence into engine output
     /// to prevent boundary discontinuity at the zero→audio transition.
     zero_blocks_count: u32,
-    /// Timestamp of last process() call in microseconds (RDTSC-based on x86_64).
-    /// Used to detect DPC latency spikes. If the gap between calls exceeds
-    /// expected_period × DPC_SPIKE_RATIO, the audio thread was starved.
-    last_process_time_us: Option<f32>,
+    /// Timestamp of last process() call — used to detect DPC latency spikes.
+    /// If the gap between calls exceeds expected_period × DPC_SPIKE_RATIO,
+    /// the audio thread was starved (buffer underrun).
+    last_process_time: Option<Instant>,
     /// When true, the previous frame had a DPC spike — apply crossfade on this frame.
     dpc_spike_recovery: bool,
     /// Saved last output before DPC spike for crossfade source.
@@ -175,7 +163,7 @@ impl PhaselithApo {
             crossfade_from: None,
             crossfade_frames_left: 0,
             zero_blocks_count: 0,
-            last_process_time_us: None,
+            last_process_time: None,
             dpc_spike_recovery: false,
             dpc_saved_l: 0.0,
             dpc_saved_r: 0.0,
@@ -510,18 +498,9 @@ impl PhaselithApo {
         // driver hogging CPU). The DAC ran out of samples → buffer underrun →
         // audible pop. We detect this and crossfade the next block to smooth it.
         {
-            // Use RDTSC on x86_64 (no syscall) instead of Instant::now() (QPC syscall)
-            #[cfg(target_arch = "x86_64")]
-            let now_us = rdtsc_us();
-            #[cfg(not(target_arch = "x86_64"))]
-            let now_us = {
-                static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
-                let start = START.get_or_init(Instant::now);
-                start.elapsed().as_micros() as f32
-            };
-
-            if let Some(last_us) = self.last_process_time_us {
-                let elapsed_us = now_us - last_us;
+            let now = Instant::now();
+            if let Some(last_time) = self.last_process_time {
+                let elapsed_us = now.duration_since(last_time).as_micros() as f32;
                 let expected_us = (frames as f32 / self.sample_rate as f32) * 1_000_000.0;
                 if elapsed_us > expected_us * Self::DPC_SPIKE_RATIO && self.process_frame_count > 3 {
                     apo_log!("DPC_SPIKE: elapsed={:.0}us, expected={:.0}us, ratio={:.2}, frame={}",
@@ -531,7 +510,7 @@ impl PhaselithApo {
                     self.dpc_saved_r = self.last_output_r;
                 }
             }
-            self.last_process_time_us = Some(now_us);
+            self.last_process_time = Some(now);
         }
 
         // Diagnostic: log input boundary on first 3 frames of fresh engine.
