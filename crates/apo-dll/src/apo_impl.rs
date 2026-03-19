@@ -135,6 +135,15 @@ pub struct PhaselithApo {
     /// Saved last output before DPC spike for crossfade source.
     dpc_saved_l: f32,
     dpc_saved_r: f32,
+    /// Adaptive DPC threshold: tracks recent spike count to auto-switch
+    /// between normal mode (2.5) and high-latency mode (15.0).
+    dpc_spike_recent_count: u32,
+    /// Frame counter for DPC spike window — resets every DPC_ADAPTIVE_WINDOW frames.
+    dpc_window_frame_count: u64,
+    /// Whether we're currently in high-latency DPC mode.
+    dpc_high_latency_mode: bool,
+    /// Frames since last spike in high-latency mode — used to auto-recover.
+    dpc_calm_frame_count: u64,
 }
 
 impl PhaselithApo {
@@ -167,6 +176,10 @@ impl PhaselithApo {
             dpc_spike_recovery: false,
             dpc_saved_l: 0.0,
             dpc_saved_r: 0.0,
+            dpc_spike_recent_count: 0,
+            dpc_window_frame_count: 0,
+            dpc_high_latency_mode: false,
+            dpc_calm_frame_count: 0,
         }
     }
 
@@ -193,11 +206,17 @@ impl PhaselithApo {
     /// Protection covers these plus the first real audio block after zeros.
     const STARTUP_GUARD_FRAMES: u64 = 8;
 
-    /// DPC latency spike detection: if the gap between consecutive process()
-    /// calls exceeds expected_period × DPC_SPIKE_RATIO, the audio thread was
-    /// starved by another driver (network, GPU, USB). We mute the block to
-    /// avoid outputting stale/discontinuous audio (crossfade sounds robotic).
-    const DPC_SPIKE_RATIO: f32 = 2.5;
+    /// DPC latency spike detection thresholds.
+    /// Normal mode: sensitive detection, mute on small spikes for best quality.
+    /// High-latency mode: only mute on severe spikes to avoid frequent interruptions.
+    const DPC_SPIKE_RATIO_NORMAL: f32 = 2.5;
+    const DPC_SPIKE_RATIO_HIGH_LATENCY: f32 = 15.0;
+    /// Number of spikes within the adaptive window to trigger high-latency mode.
+    const DPC_ADAPTIVE_SPIKE_THRESHOLD: u32 = 3;
+    /// Window size in frames for counting spikes (~30 seconds at 480 samples/10ms).
+    const DPC_ADAPTIVE_WINDOW: u64 = 3000;
+    /// Frames without spike to recover from high-latency mode (~60 seconds).
+    const DPC_CALM_RECOVERY: u64 = 6000;
 
     /// Check a buffer for NaN/Inf values. Returns true if the buffer is clean.
     #[inline]
@@ -504,12 +523,58 @@ impl PhaselithApo {
         // audible pop. We detect this and crossfade the next block to smooth it.
         {
             let now = Instant::now();
+
+            // Adaptive DPC window: reset spike counter every DPC_ADAPTIVE_WINDOW frames
+            self.dpc_window_frame_count += 1;
+            if self.dpc_window_frame_count >= Self::DPC_ADAPTIVE_WINDOW {
+                self.dpc_window_frame_count = 0;
+                self.dpc_spike_recent_count = 0;
+            }
+
+            // Select threshold based on current mode
+            let threshold = if self.dpc_high_latency_mode {
+                Self::DPC_SPIKE_RATIO_HIGH_LATENCY
+            } else {
+                Self::DPC_SPIKE_RATIO_NORMAL
+            };
+
             if let Some(last_time) = self.last_process_time {
                 let elapsed_us = now.duration_since(last_time).as_micros() as f32;
                 let expected_us = (frames as f32 / self.sample_rate as f32) * 1_000_000.0;
-                if elapsed_us > expected_us * Self::DPC_SPIKE_RATIO && self.process_frame_count > 3 {
-                    apo_log!("DPC_SPIKE: elapsed={:.0}us, expected={:.0}us, ratio={:.2}, frame={}",
-                        elapsed_us, expected_us, elapsed_us / expected_us, self.process_frame_count);
+                let ratio = elapsed_us / expected_us;
+
+                // Count spikes at normal threshold regardless of current mode
+                if ratio > Self::DPC_SPIKE_RATIO_NORMAL && self.process_frame_count > 3 {
+                    self.dpc_spike_recent_count += 1;
+                    self.dpc_calm_frame_count = 0;
+                } else {
+                    self.dpc_calm_frame_count += 1;
+                }
+
+                // Auto-switch to high-latency mode
+                if !self.dpc_high_latency_mode
+                    && self.dpc_spike_recent_count >= Self::DPC_ADAPTIVE_SPIKE_THRESHOLD
+                {
+                    self.dpc_high_latency_mode = true;
+                    apo_log!("DPC_ADAPTIVE: switched to HIGH LATENCY mode ({} spikes in window)",
+                        self.dpc_spike_recent_count);
+                }
+
+                // Auto-recover to normal mode
+                if self.dpc_high_latency_mode
+                    && self.dpc_calm_frame_count >= Self::DPC_CALM_RECOVERY
+                {
+                    self.dpc_high_latency_mode = false;
+                    self.dpc_spike_recent_count = 0;
+                    apo_log!("DPC_ADAPTIVE: recovered to NORMAL mode (calm for {} frames)",
+                        self.dpc_calm_frame_count);
+                }
+
+                // Mute only if ratio exceeds current threshold
+                if ratio > threshold && self.process_frame_count > 3 {
+                    apo_log!("DPC_SPIKE: elapsed={:.0}us, expected={:.0}us, ratio={:.2}, frame={}, mode={}",
+                        elapsed_us, expected_us, ratio, self.process_frame_count,
+                        if self.dpc_high_latency_mode { "HIGH_LATENCY" } else { "NORMAL" });
                     self.dpc_spike_recovery = true;
                     self.dpc_saved_l = self.last_output_l;
                     self.dpc_saved_r = self.last_output_r;
