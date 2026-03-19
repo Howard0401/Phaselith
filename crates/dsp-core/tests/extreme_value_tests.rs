@@ -105,22 +105,22 @@ fn subblock_exact_multiple_of_hop() {
 
 #[test]
 fn subblock_non_multiple_of_hop() {
-    // 528 samples (APO real-world). 528 / 256 = 2 full + 16 remainder = 3 sub-blocks.
+    // 528 samples (APO real-world). 528 / 128 = 4 full + 16 remainder = 5 sub-blocks.
     let mut engine = build_engine(48000, 1024);
     let mut buf = sine_signal(440.0, 48000, 528);
     engine.process(&mut buf);
     assert!(is_finite_buffer(&buf));
-    assert_eq!(engine.context().frame_index, 3); // 256 + 256 + 16
+    assert_eq!(engine.context().frame_index, 5); // 4×128 + 16
 }
 
 #[test]
 fn subblock_480_chrome_like() {
-    // 480 samples (Chrome-like). 480 / 256 = 1 full + 224 remainder = 2 sub-blocks.
+    // 480 samples (Chrome-like). 480 / 128 = 3 full + 96 remainder = 4 sub-blocks.
     let mut engine = build_engine(48000, 1024);
     let mut buf = sine_signal(440.0, 48000, 480);
     engine.process(&mut buf);
     assert!(is_finite_buffer(&buf));
-    assert_eq!(engine.context().frame_index, 2); // 256 + 224
+    assert_eq!(engine.context().frame_index, 4); // 3×128 + 96
 }
 
 #[test]
@@ -136,19 +136,19 @@ fn subblock_128_wasm() {
 #[test]
 fn subblock_consistency_across_splits() {
     // Process 1024 samples in different chunk patterns, verify frame_index.
-    // Pattern A: one 1024-sample block → 4 sub-blocks
+    // Pattern A: one 1024-sample block → 8 sub-blocks (hop=128)
     let mut engine_a = build_engine(48000, 1024);
     let mut buf_a = sine_signal(440.0, 48000, 1024);
     engine_a.process(&mut buf_a);
-    assert_eq!(engine_a.context().frame_index, 4);
+    assert_eq!(engine_a.context().frame_index, 8);
 
-    // Pattern B: four 256-sample blocks → 4 × 1 sub-block
+    // Pattern B: eight 128-sample blocks → 8 × 1 sub-block
     let mut engine_b = build_engine(48000, 1024);
-    for _ in 0..4 {
-        let mut buf_b = sine_signal(440.0, 48000, 256);
+    for _ in 0..8 {
+        let mut buf_b = sine_signal(440.0, 48000, 128);
         engine_b.process(&mut buf_b);
     }
-    assert_eq!(engine_b.context().frame_index, 4);
+    assert_eq!(engine_b.context().frame_index, 8);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -724,15 +724,15 @@ fn subblock_ultra_mode_hop_512() {
 }
 
 #[test]
-fn subblock_extreme_mode_hop_1024() {
-    // Extreme mode: hop=1024. Block 1024 = hop → fast path, 1 sub-block.
+fn subblock_extreme_mode_hop_128() {
+    // Extreme mode: hop=128 (all modes now use hop=128). Block 1024 → 8 sub-blocks.
     let mut config = EngineConfig::default();
     config.quality_mode = QualityMode::Extreme;
     let mut engine = build_engine_with_config(48000, 4096, config);
     let mut buf = sine_signal(440.0, 48000, 1024);
     engine.process(&mut buf);
     assert!(is_finite_buffer(&buf));
-    assert_eq!(engine.context().frame_index, 1);
+    assert_eq!(engine.context().frame_index, 8);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -922,18 +922,18 @@ fn regression_cause3_subblock_guarantees_single_hop() {
         .add_module(Box::new(RecordingModule::new("M0", call_log.clone())))
         .build();
 
-    // 528 samples with Standard hop=256 → 3 sub-blocks
+    // 528 samples with Standard hop=128 → 5 sub-blocks (4×128 + 16)
     let mut buf = vec![0.0f32; 528];
     engine.process(&mut buf);
 
     let log = call_log.lock().unwrap();
     assert_eq!(
         log.len(),
-        3,
-        "Cause 3 regression: 528-sample block should produce 3 sub-blocks, got {}",
+        5,
+        "Cause 3 regression: 528-sample block should produce 5 sub-blocks, got {}",
         log.len()
     );
-    assert_eq!(engine.context().frame_index, 3);
+    assert_eq!(engine.context().frame_index, 5);
 }
 
 /// Regression: Cause 4 — APO block > hop structural constraint.

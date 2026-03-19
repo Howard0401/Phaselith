@@ -17,8 +17,8 @@ fn engine_executes_modules_in_order() {
         .add_module(Box::new(RecordingModule::new("M7", call_log.clone())))
         .build();
 
-    // Use block ≤ hop_size (256) so sub-block splitting doesn't multiply calls.
-    let mut buf = vec![0.0f32; 256];
+    // Use block ≤ hop_size (128) so sub-block splitting doesn't multiply calls.
+    let mut buf = vec![0.0f32; 128];
     engine.process(&mut buf);
 
     let log = call_log.lock().unwrap();
@@ -116,8 +116,8 @@ fn update_config_propagates_to_context() {
 #[test]
 fn frame_index_increments_each_process() {
     let mut engine = PhaselithEngineBuilder::new(48000, 1024).build_default();
-    // Use block ≤ hop_size so each process() = 1 sub-block = 1 frame_index increment
-    let mut buf = vec![0.0f32; 256];
+    // Use block ≤ hop_size (128) so each process() = 1 sub-block = 1 frame_index increment
+    let mut buf = vec![0.0f32; 128];
 
     assert_eq!(engine.context().frame_index, 0);
     engine.process(&mut buf);
@@ -134,14 +134,14 @@ fn dry_buffer_captures_input() {
         .add_module(Box::new(RecordingModule::new("M0", call_log.clone())))
         .build();
 
-    // Use block ≤ hop_size so dry_buffer captures the full input in one sub-block
-    let mut buf: Vec<f32> = (0..256).map(|i| i as f32 * 0.001).collect();
+    // Use block ≤ hop_size (128) so dry_buffer captures the full input in one sub-block
+    let mut buf: Vec<f32> = (0..128).map(|i| i as f32 * 0.001).collect();
     let original = buf.clone();
     engine.process(&mut buf);
 
     // Dry buffer should contain the original input
-    let dry = &engine.context().dry_buffer[..256];
-    for i in 0..256 {
+    let dry = &engine.context().dry_buffer[..128];
+    for i in 0..128 {
         assert!(
             (dry[i] - original[i]).abs() < f32::EPSILON,
             "dry_buffer[{i}] mismatch"
@@ -158,20 +158,20 @@ fn sub_block_splitting_runs_modules_per_sub_block() {
         .add_module(Box::new(RecordingModule::new("M6", call_log.clone())))
         .build();
 
-    // 1024 samples with hop=256 → 4 sub-blocks → 4 × 2 module calls
+    // 1024 samples with hop=128 → 8 sub-blocks → 8 × 2 module calls
     let mut buf = vec![0.0f32; 1024];
     engine.process(&mut buf);
 
     let log = call_log.lock().unwrap();
-    assert_eq!(log.len(), 8); // 4 sub-blocks × 2 modules
-    assert_eq!(engine.context().frame_index, 4);
+    assert_eq!(log.len(), 16); // 8 sub-blocks × 2 modules
+    assert_eq!(engine.context().frame_index, 8);
 }
 
 #[test]
 fn multiple_process_calls_accumulate_frame_index() {
     let mut engine = PhaselithEngineBuilder::new(48000, 512).build_default();
-    // Use block ≤ hop_size so each process() = 1 sub-block
-    let mut buf = vec![0.0f32; 256];
+    // Use block ≤ hop_size (128) so each process() = 1 sub-block
+    let mut buf = vec![0.0f32; 128];
 
     for _ in 0..10 {
         engine.process(&mut buf);

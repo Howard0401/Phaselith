@@ -62,6 +62,13 @@ static STORED_ENGINES: Mutex<Option<StoredEngines>> = Mutex::new(None);
 static STORED_PRIME: Mutex<Option<StoredPrimeAudio>> = Mutex::new(None);
 static STORED_OUTPUT: Mutex<Option<StoredOutputBlock>> = Mutex::new(None);
 
+/// Timestamp of last unlock_for_process — used for rapid rebuild detection.
+/// If a new lock_for_process happens within RAPID_REBUILD_WINDOW of the last unlock,
+/// we skip click gate and reduce prime frames to minimize audible interruption.
+static LAST_UNLOCK_TIME: Mutex<Option<Instant>> = Mutex::new(None);
+/// Format of last unlocked instance — only fast-path if format matches.
+static LAST_UNLOCK_FORMAT: Mutex<Option<(u32, usize)>> = Mutex::new(None); // (sample_rate, frame_size)
+
 /// Lock-free last output storage — updated by every process() call (RT-safe).
 /// New instances read these to seed their click gate, enabling immediate
 /// boundary discontinuity detection from frame 1 instead of waiting CLICK_GATE_DELAY.
@@ -412,13 +419,46 @@ impl PhaselithApo {
             }
         }
 
+        // Detect rapid rebuild: if last unlock was within 500ms with same format,
+        // this is a voice-chat-induced rebuild (YY, Discord, Teams). Skip click gate
+        // and start at full volume to avoid audible interruption.
+        let rapid_rebuild = {
+            let mut is_rapid = false;
+            if let Ok(guard) = LAST_UNLOCK_TIME.lock() {
+                if let Some(last_time) = *guard {
+                    let elapsed = last_time.elapsed();
+                    if elapsed.as_millis() < 500 {
+                        // Check format matches
+                        if let Ok(fmt_guard) = LAST_UNLOCK_FORMAT.lock() {
+                            if let Some((sr, fs)) = *fmt_guard {
+                                if sr == self.sample_rate && fs == frame_size {
+                                    is_rapid = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            is_rapid
+        };
+
         // Seed last_output from global atomic storage so click gate can detect
         // boundary discontinuities from frame 1 (instead of waiting CLICK_GATE_DELAY).
         if LAST_OUTPUT_VALID.load(Ordering::Acquire) {
             self.last_output_l = f32::from_bits(LAST_OUTPUT_L_BITS.load(Ordering::Relaxed));
             self.last_output_r = f32::from_bits(LAST_OUTPUT_R_BITS.load(Ordering::Relaxed));
-            self.click_gate_armed = true;
-            apo_log!("SEEDED last_output=({:.6},{:.6})", self.last_output_l, self.last_output_r);
+            if rapid_rebuild {
+                // Rapid rebuild: skip click gate entirely — we have valid last_output
+                // and the audio graph is just being restructured, not a real start.
+                self.click_gate_armed = false;
+                self.gap_mute_active = false;
+                self.process_frame_count = Self::CLICK_GATE_DELAY + 1; // skip delay
+                apo_log!("RAPID_REBUILD: skipping click gate, last_out=({:.6},{:.6})",
+                    self.last_output_l, self.last_output_r);
+            } else {
+                self.click_gate_armed = true;
+                apo_log!("SEEDED last_output=({:.6},{:.6})", self.last_output_l, self.last_output_r);
+            }
         } else {
             self.last_output_l = 0.0;
             self.last_output_r = 0.0;
@@ -427,11 +467,13 @@ impl PhaselithApo {
         // Log diagnostics for fresh engine — help determine if pops are from
         // our DSP or from the system-level audio graph switch.
         if !reused {
-            apo_log!("FRESH_ENGINE: primed with {} frames, click_gate_armed={}", Self::PRIME_FRAMES, self.click_gate_armed);
+            apo_log!("FRESH_ENGINE: primed with {} frames, click_gate_armed={}, rapid_rebuild={}",
+                Self::PRIME_FRAMES, self.click_gate_armed, rapid_rebuild);
         }
 
         self.locked = true;
-        apo_log!("lock_for_process done, frame_size={}, reused={}", frame_size, reused);
+        apo_log!("lock_for_process done, frame_size={}, reused={}, rapid_rebuild={}",
+            frame_size, reused, rapid_rebuild);
     }
 
     /// Release resources.
@@ -442,6 +484,14 @@ impl PhaselithApo {
         apo_log!("unlock_for_process, frame_count={}", self.process_frame_count);
         self.shutting_down = true;
         self.locked = false;
+
+        // Record unlock timestamp + format for rapid rebuild detection.
+        if let Ok(mut guard) = LAST_UNLOCK_TIME.lock() {
+            *guard = Some(Instant::now());
+        }
+        if let Ok(mut guard) = LAST_UNLOCK_FORMAT.lock() {
+            *guard = Some((self.sample_rate, self.frame_size));
+        }
 
         // Store engines for reuse by the next APO instance.
         // This preserves OLA/EMA/posterior state across instance recreations.

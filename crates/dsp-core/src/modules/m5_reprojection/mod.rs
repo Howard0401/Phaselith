@@ -1105,7 +1105,8 @@ mod tests {
 
     #[test]
     fn pilot_ola_drains_across_blocks() {
-        // Simulate 2-block-per-hop scenario (Standard mode: hop=256, block=128)
+        // With hop=128 = block=128, each hop is fully drained in one block.
+        // Validate: no-hop block → zeros, hop block → energy, no-hop block → zeros.
         let mut m5 = SelfReprojectionValidator::new();
         m5.init(128, 48000);
         let mut config = EngineConfig::default();
@@ -1138,7 +1139,7 @@ mod tests {
         m5.process(&mut samples2, &mut ctx2);
         let energy2: f32 = ctx2.validated.data.iter().map(|s| s * s).sum();
 
-        // Block 3: no hop (draining second half of hop output)
+        // Block 3: no hop — with hop=block, entire hop drained in Block 2
         let mut ctx3 = ProcessContext::new(48000, 2, config);
         ctx3.synthesis_mode = crate::frame::SynthesisMode::FftOlaPilot;
         ctx3.lattice = TriLattice::new();
@@ -1153,10 +1154,10 @@ mod tests {
 
         // Block 1: no hop, no prior data → zeros
         assert!(energy1 < 1e-10, "Block 1 (no hop): should be zero, got {energy1}");
-        // Block 2: hop boundary → first half of hop drained
+        // Block 2: hop boundary → full hop drained in one block
         assert!(energy2 > 0.0, "Block 2 (hop): should have energy, got {energy2}");
-        // Block 3: no hop, draining second half
-        assert!(energy3 > 0.0, "Block 3 (drain): should have energy, got {energy3}");
+        // Block 3: no hop, nothing left to drain (hop=block, fully consumed)
+        assert!(energy3 < 1e-10, "Block 3 (no hop): should be zero with hop=block, got {energy3}");
     }
 
     #[test]

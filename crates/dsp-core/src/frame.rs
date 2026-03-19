@@ -133,9 +133,9 @@ mod tests {
     fn frame_params_standard() {
         let fp = FrameParams::new(128, 48000, QualityMode::Standard);
         assert_eq!(fp.core_fft_size, 1024);
-        assert_eq!(fp.hop_size, 256);
-        assert_eq!(fp.blocks_per_hop(), 2); // 256 / 128
-        assert_eq!(fp.hops_per_block(), 0); // 128 < 256
+        assert_eq!(fp.hop_size, 128);
+        assert_eq!(fp.blocks_per_hop(), 1); // 128 / 128
+        assert_eq!(fp.hops_per_block(), 1); // 128 / 128
         assert_eq!(fp.core_bins(), 513);
         assert!((fp.core_bin_hz() - 46.875).abs() < 0.01);
     }
@@ -151,10 +151,10 @@ mod tests {
 
     #[test]
     fn frame_params_large_block() {
-        // APO-style: 480-sample block, Standard mode (hop=256)
+        // APO-style: 480-sample block, Standard mode (hop=128)
         let fp = FrameParams::new(480, 48000, QualityMode::Standard);
-        assert_eq!(fp.blocks_per_hop(), 0); // 256/480 = 0
-        assert_eq!(fp.hops_per_block(), 1); // 480/256 = 1
+        assert_eq!(fp.blocks_per_hop(), 0); // 128/480 = 0
+        assert_eq!(fp.hops_per_block(), 3); // 480/128 = 3
     }
 
     #[test]

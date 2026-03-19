@@ -162,11 +162,11 @@ fn engine_reset_allows_clean_restart() {
     engine.reset();
 
     // Should be able to process again without issues
-    // 1024 samples / hop 256 = 4 sub-blocks → frame_index = 4
+    // 1024 samples / hop 128 = 8 sub-blocks → frame_index = 8
     let mut buf = sine_440(48000, 1024);
     engine.process(&mut buf);
     assert!(buf.iter().all(|s| s.is_finite()));
-    assert_eq!(engine.context().frame_index, 4);
+    assert_eq!(engine.context().frame_index, 8);
 }
 
 #[test]
