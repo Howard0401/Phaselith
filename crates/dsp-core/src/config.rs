@@ -316,11 +316,11 @@ impl QualityMode {
     /// so STFT analysis boundaries divide evenly into the host frame.
     pub fn hop_size(&self) -> usize {
         match self {
-            QualityMode::Light => 120,       // 512/4≈128 → 120 (480/120=4)
-            QualityMode::Standard => 120,    // 1024/4=256 → 120 (480/120=4)
-            QualityMode::Ultra => 120,       // 2048/4=512 → 120 (480/120=4)
-            QualityMode::Extreme => 120,     // 4096/4=1024 → 120 (480/120=4)
-            QualityMode::UltraExtreme => 120,// 8192/4=2048 → 120 (480/120=4)
+            QualityMode::Light => 128,       // 512/4=128, COLA-safe with Hann
+            QualityMode::Standard => 128,    // 1024/8=128, COLA-safe with Hann
+            QualityMode::Ultra => 128,       // 2048/16=128, COLA-safe with Hann
+            QualityMode::Extreme => 128,     // 4096/32=128, COLA-safe with Hann
+            QualityMode::UltraExtreme => 128,// 8192/64=128, COLA-safe with Hann
         }
     }
 
@@ -369,8 +369,8 @@ mod tests {
     #[test]
     fn quality_mode_hop_sizes() {
         assert_eq!(QualityMode::Light.hop_size(), 128);
-        assert_eq!(QualityMode::Standard.hop_size(), 256);
-        assert_eq!(QualityMode::Ultra.hop_size(), 512);
+        assert_eq!(QualityMode::Standard.hop_size(), 128);
+        assert_eq!(QualityMode::Ultra.hop_size(), 128);
     }
 
     #[test]
