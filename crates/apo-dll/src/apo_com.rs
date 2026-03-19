@@ -278,6 +278,19 @@ impl IAudioProcessingObjectRT_Impl for PhaselithApoCom_Impl {
         self.process_call_count.set(count + 1);
         if count == 0 {
             apo_log!("APOProcess: first call! ch={} locked={}", self.channels.get(), self.locked.get());
+            // Register this thread with MMCSS at highest priority ("Pro Audio")
+            // to minimize scheduling latency from other threads.
+            // Won't prevent kernel-level DPC spikes but helps with thread-level contention.
+            unsafe {
+                use windows::Win32::System::Threading::AvSetMmThreadCharacteristicsW;
+                use windows::core::w;
+                let mut task_index: u32 = 0;
+                let handle = AvSetMmThreadCharacteristicsW(w!("Pro Audio"), &mut task_index);
+                match handle {
+                    Ok(h) => apo_log!("MMCSS: registered as 'Pro Audio', task_index={}, handle={:?}", task_index, h),
+                    Err(e) => apo_log!("MMCSS: failed to register: {:?}", e),
+                }
+            }
         }
         // catch_unwind: a panic here would kill audiodg.exe.
         // On panic, we MUST still produce valid output (passthrough dry signal)
