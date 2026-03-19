@@ -64,7 +64,7 @@ fn build_engine(sample_rate: u32, config: EngineConfig) -> PhaselithEngine {
     PhaselithEngineBuilder::new(sample_rate, 1024)
         .with_channels(1) // Each engine processes one deinterleaved mono channel
         .with_config(config)
-        .with_max_sub_block(1) // Per-sample OLA readout for maximum smoothness
+        .with_max_sub_block(1) // per-sample OLA readout: smoothest output
         .build_default()
 }
 

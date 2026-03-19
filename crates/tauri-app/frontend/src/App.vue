@@ -13,11 +13,17 @@
       <div v-if="status" class="status-info">
         <span class="stat-cell">{{ smoothed.cutoff > 100 ? (Math.round(smoothed.cutoff / 500) * 500 / 1000).toFixed(1) + ' kHz' : 'Lossless' }}</span>
         <span class="stat-cell">CPU {{ (smoothed.load / cpuCores).toFixed(2) }}%</span>
-        <span class="stat-cell" :class="{ 'algo-active': smoothed.diff > -60 }">
-          {{ smoothed.diff > -60 ? 'DSP ' + (smoothed.diff > 0 ? '+' : '') + smoothed.diff.toFixed(1) + ' dB' : 'DSP off' }}
+        <span class="stat-cell" :class="{ 'algo-active': smoothed.diff > -80 }">
+          {{ smoothed.diff > -80 ? 'DSP ' + (smoothed.diff > 0 ? '+' : '') + smoothed.diff.toFixed(1) + ' dB' : 'DSP off' }}
         </span>
       </div>
     </section>
+
+    <!-- DPC latency warning banner -->
+    <div v-if="dpcWarning" class="dpc-warning" :class="dpcWarning.level">
+      <span class="dpc-icon">{{ dpcWarning.icon }}</span>
+      <span>{{ dpcWarning.text }}</span>
+    </div>
 
     <section class="controls" :class="{ disabled: !apoInstalled }">
       <div class="toggle-row">
@@ -112,14 +118,6 @@
       </div>
     </section>
 
-    <!-- Pop mute toast notification -->
-    <transition name="toast">
-      <div v-if="popToastVisible" class="pop-toast">
-        <span class="pop-icon">🔇</span>
-        <span>Audio artifact detected — muted</span>
-      </div>
-    </transition>
-
     <footer>Phaselith v0.1.21</footer>
   </div>
 </template>
@@ -174,6 +172,16 @@ const isProcessing = computed(() =>
   status.value && config.value.enabled && status.value.processing_load > 0
 );
 
+// DPC latency warning — shows when system has DPC issues (Docker, Hyper-V, bad drivers)
+const dpcWarning = computed(() => {
+  if (!status.value) return null;
+  const mode = status.value.dpc_mode;
+  if (mode === 0) return { level: 'profiling', icon: '...', text: 'Measuring system latency...' };
+  if (mode === 2) return { level: 'warn', icon: '!', text: 'DPC latency detected — audio quality may be reduced' };
+  if (mode === 3) return { level: 'severe', icon: '!!', text: 'Severe DPC latency — close Docker/VMs for best quality' };
+  return null; // mode 1 = NORMAL, no warning
+});
+
 // Smoothed display values — EMA to prevent jumpy numbers
 const smoothed = ref({ cutoff: 0, load: 0, diff: -Infinity });
 const EMA_ALPHA = 0.08; // lower = smoother, higher = more responsive
@@ -217,7 +225,7 @@ async function pollStatus() {
     if (s) {
       smoothed.value.cutoff = ema(smoothed.value.cutoff, s.cutoff_freq);
       smoothed.value.load = ema(smoothed.value.load, s.processing_load);
-      smoothed.value.diff = s.wet_dry_diff_db > -60
+      smoothed.value.diff = s.wet_dry_diff_db > -80
         ? ema(isFinite(smoothed.value.diff) ? smoothed.value.diff : s.wet_dry_diff_db, s.wet_dry_diff_db)
         : -Infinity;
 
@@ -538,6 +546,39 @@ input:checked + .slider::before { transform: translateX(20px); }
 .toast-leave-active { transition: all 0.3s ease; }
 .toast-enter-from { opacity: 0; transform: translateX(-50%) translateY(20px); }
 .toast-leave-to { opacity: 0; transform: translateX(-50%) translateY(20px); }
+
+/* DPC latency warning banner */
+.dpc-warning {
+  border-radius: 8px;
+  padding: 8px 14px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.dpc-warning.profiling {
+  background: #1a1a2e;
+  border: 1px solid #3a3a5a;
+  color: #888;
+}
+.dpc-warning.warn {
+  background: #facc1510;
+  border: 1px solid #facc1544;
+  color: #facc15;
+}
+.dpc-warning.severe {
+  background: #ef444410;
+  border: 1px solid #ef444444;
+  color: #ef4444;
+}
+.dpc-icon {
+  font-weight: 800;
+  font-size: 13px;
+  min-width: 20px;
+  text-align: center;
+}
 
 footer {
   text-align: center;

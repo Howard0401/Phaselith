@@ -101,6 +101,11 @@ pub struct SharedStatus {
     /// Cumulative count of blocks where the click gate detected an artifact
     /// and muted the output. Tauri watches for increments to show notifications.
     pub pop_muted_count: AtomicU32,
+    /// DPC latency mode determined after startup profiling.
+    /// 0=PROFILING (still measuring), 1=NORMAL (clean environment),
+    /// 2=HIGH_LATENCY (some DPC issues), 3=EXTREME (severe DPC issues).
+    /// UI should show a warning when mode >= 2.
+    pub dpc_mode: AtomicU8,
 }
 
 impl SharedStatus {
@@ -127,6 +132,10 @@ impl SharedStatus {
 
     pub fn increment_pop_muted(&self) {
         self.pop_muted_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn set_dpc_mode(&self, mode: u8) {
+        self.dpc_mode.store(mode, Ordering::Relaxed);
     }
 }
 
@@ -394,6 +403,7 @@ mod tests {
             processing_load_u32: AtomicU32::new(0),
             wet_dry_diff_db_u32: AtomicU32::new(0),
             pop_muted_count: AtomicU32::new(0),
+            dpc_mode: AtomicU8::new(0),
         };
 
         status.increment_frames();

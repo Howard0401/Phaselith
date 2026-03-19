@@ -50,6 +50,8 @@ pub struct SharedStatus {
     pub processing_load_u32: AtomicU32,
     pub wet_dry_diff_db_u32: AtomicU32,
     pub pop_muted_count: AtomicU32,
+    /// DPC latency mode: 0=PROFILING, 1=NORMAL, 2=HIGH_LATENCY, 3=EXTREME
+    pub dpc_mode: AtomicU8,
 }
 
 const SHARED_DIR: &str = r"C:\ProgramData\Phaselith";
@@ -272,6 +274,7 @@ pub fn read_status() -> Option<StatusSnapshot> {
         processing_load: f32::from_bits(status.processing_load_u32.load(Ordering::Relaxed)),
         wet_dry_diff_db: f32::from_bits(status.wet_dry_diff_db_u32.load(Ordering::Relaxed)),
         pop_muted_count: status.pop_muted_count.load(Ordering::Relaxed),
+        dpc_mode: status.dpc_mode.load(Ordering::Relaxed),
     })
 }
 
@@ -298,6 +301,8 @@ pub struct StatusSnapshot {
     pub processing_load: f32,
     pub wet_dry_diff_db: f32,
     pub pop_muted_count: u32,
+    /// DPC latency mode: 0=PROFILING, 1=NORMAL, 2=HIGH_LATENCY, 3=EXTREME
+    pub dpc_mode: u8,
 }
 
 /// Open (or create) a file and map it into memory.

@@ -149,8 +149,17 @@ pub struct PhaselithApo {
     dpc_window_frame_count: u64,
     /// Whether we're currently in high-latency DPC mode.
     dpc_high_latency_mode: bool,
+    /// Whether we've escalated to extreme DPC mode (threshold 150x).
+    dpc_extreme_mode: bool,
+    /// Spike count tracked separately for HIGH_LATENCY → EXTREME escalation.
+    dpc_high_latency_spike_count: u32,
     /// Frames since last spike in high-latency mode — used to auto-recover.
     dpc_calm_frame_count: u64,
+    /// DPC profiling phase: first DPC_PROFILE_FRAMES are muted while we
+    /// measure the DPC environment. After profiling, mode is locked in.
+    dpc_profiling: bool,
+    /// Spike count observed during profiling phase.
+    dpc_profile_spike_count: u32,
 }
 
 impl PhaselithApo {
@@ -186,7 +195,11 @@ impl PhaselithApo {
             dpc_spike_recent_count: 0,
             dpc_window_frame_count: 0,
             dpc_high_latency_mode: false,
+            dpc_extreme_mode: false,
+            dpc_high_latency_spike_count: 0,
             dpc_calm_frame_count: 0,
+            dpc_profiling: true,
+            dpc_profile_spike_count: 0,
         }
     }
 
@@ -216,14 +229,19 @@ impl PhaselithApo {
     /// DPC latency spike detection thresholds.
     /// Normal mode: sensitive detection, mute on small spikes for best quality.
     /// High-latency mode: only mute on severe spikes to avoid frequent interruptions.
-    const DPC_SPIKE_RATIO_NORMAL: f32 = 2.5;
-    const DPC_SPIKE_RATIO_HIGH_LATENCY: f32 = 15.0;
-    /// Number of spikes within the adaptive window to trigger high-latency mode.
+    /// Extreme mode: essentially passthrough — only mute on catastrophic spikes.
+    const DPC_SPIKE_RATIO_NORMAL: f32 = 15.0;
+    const DPC_SPIKE_RATIO_HIGH_LATENCY: f32 = 50.0;
+    const DPC_SPIKE_RATIO_EXTREME: f32 = 150.0;
+    /// Number of spikes within the adaptive window to trigger next escalation level.
     const DPC_ADAPTIVE_SPIKE_THRESHOLD: u32 = 3;
     /// Window size in frames for counting spikes (~30 seconds at 480 samples/10ms).
     const DPC_ADAPTIVE_WINDOW: u64 = 3000;
     /// Frames without spike to recover from high-latency mode (~60 seconds).
     const DPC_CALM_RECOVERY: u64 = 6000;
+    /// Frames to profile DPC environment at startup (~2 seconds at 10ms/frame).
+    /// During profiling, output is muted and DPC spikes are counted.
+    const DPC_PROFILE_FRAMES: u64 = 200;
 
     /// Check a buffer for NaN/Inf values. Returns true if the buffer is clean.
     #[inline]
@@ -266,7 +284,11 @@ impl PhaselithApo {
 
         // Try to open mmap IPC (non-fatal — logs error but continues in bypass)
         match MmapIpc::open_or_create() {
-            Ok(ipc) => self.mmap = Some(ipc),
+            Ok(ipc) => {
+                // Set DPC mode to PROFILING (0) at startup
+                ipc.status().set_dpc_mode(0);
+                self.mmap = Some(ipc);
+            }
             Err(e) => {
                 // Log structured error but don't crash — APO continues without IPC
                 eprintln!("Phaselith APO: mmap IPC init failed: {e}");
@@ -581,53 +603,130 @@ impl PhaselithApo {
                 self.dpc_spike_recent_count = 0;
             }
 
-            // Select threshold based on current mode
-            let threshold = if self.dpc_high_latency_mode {
-                Self::DPC_SPIKE_RATIO_HIGH_LATENCY
-            } else {
-                Self::DPC_SPIKE_RATIO_NORMAL
-            };
-
             if let Some(last_time) = self.last_process_time {
                 let elapsed_us = now.duration_since(last_time).as_micros() as f32;
                 let expected_us = (frames as f32 / self.sample_rate as f32) * 1_000_000.0;
                 let ratio = elapsed_us / expected_us;
 
-                // Count spikes at normal threshold regardless of current mode
-                if ratio > Self::DPC_SPIKE_RATIO_NORMAL && self.process_frame_count > 3 {
-                    self.dpc_spike_recent_count += 1;
-                    self.dpc_calm_frame_count = 0;
+                // During profiling: just count spikes, don't mute (output is already muted)
+                // Use 2.5x for profiling detection (lower than NORMAL threshold) to catch all spikes
+                if self.dpc_profiling {
+                    if ratio > 2.5 && self.process_frame_count > 3 {
+                        self.dpc_profile_spike_count += 1;
+                        apo_log!("DPC_PROFILE: spike #{}, ratio={:.2}, elapsed={:.0}us",
+                            self.dpc_profile_spike_count, ratio, elapsed_us);
+                    }
+
+                    // End of profiling phase
+                    if self.process_frame_count >= Self::DPC_PROFILE_FRAMES {
+                        self.dpc_profiling = false;
+                        let spikes = self.dpc_profile_spike_count;
+
+                        // Decide mode based on profiling results
+                        if spikes >= 6 {
+                            self.dpc_extreme_mode = true;
+                            self.dpc_high_latency_mode = true;
+                            apo_log!("DPC_PROFILE_DONE: {} spikes in 2s → EXTREME mode (threshold {}x)",
+                                spikes, Self::DPC_SPIKE_RATIO_EXTREME);
+                        } else if spikes >= 3 {
+                            self.dpc_high_latency_mode = true;
+                            apo_log!("DPC_PROFILE_DONE: {} spikes in 2s → HIGH_LATENCY mode (threshold {}x)",
+                                spikes, Self::DPC_SPIKE_RATIO_HIGH_LATENCY);
+                        } else {
+                            apo_log!("DPC_PROFILE_DONE: {} spikes in 2s → NORMAL mode (threshold {}x)",
+                                spikes, Self::DPC_SPIKE_RATIO_NORMAL);
+                        }
+
+                        // Write DPC mode to shared status for UI
+                        let dpc_mode_val = if self.dpc_extreme_mode { 3u8 }
+                            else if self.dpc_high_latency_mode { 2u8 }
+                            else { 1u8 };
+                        if let Some(ref mmap) = self.mmap {
+                            mmap.status().set_dpc_mode(dpc_mode_val);
+                        }
+                    }
                 } else {
-                    self.dpc_calm_frame_count += 1;
-                }
+                    // Normal operation: adaptive DPC with escalation
 
-                // Auto-switch to high-latency mode
-                if !self.dpc_high_latency_mode
-                    && self.dpc_spike_recent_count >= Self::DPC_ADAPTIVE_SPIKE_THRESHOLD
-                {
-                    self.dpc_high_latency_mode = true;
-                    apo_log!("DPC_ADAPTIVE: switched to HIGH LATENCY mode ({} spikes in window)",
-                        self.dpc_spike_recent_count);
-                }
+                    // Count spikes at 2.5x regardless of current mode (for escalation tracking)
+                    if ratio > 2.5 && self.process_frame_count > 3 {
+                        self.dpc_spike_recent_count += 1;
+                        self.dpc_calm_frame_count = 0;
+                        // Track spikes while in HIGH_LATENCY for EXTREME escalation
+                        if self.dpc_high_latency_mode && !self.dpc_extreme_mode {
+                            self.dpc_high_latency_spike_count += 1;
+                        }
+                    } else {
+                        self.dpc_calm_frame_count += 1;
+                    }
 
-                // Auto-recover to normal mode
-                if self.dpc_high_latency_mode
-                    && self.dpc_calm_frame_count >= Self::DPC_CALM_RECOVERY
-                {
-                    self.dpc_high_latency_mode = false;
-                    self.dpc_spike_recent_count = 0;
-                    apo_log!("DPC_ADAPTIVE: recovered to NORMAL mode (calm for {} frames)",
-                        self.dpc_calm_frame_count);
-                }
+                    // Auto-switch to high-latency mode
+                    if !self.dpc_high_latency_mode
+                        && self.dpc_spike_recent_count >= Self::DPC_ADAPTIVE_SPIKE_THRESHOLD
+                    {
+                        self.dpc_high_latency_mode = true;
+                        apo_log!("DPC_ADAPTIVE: switched to HIGH_LATENCY mode ({} spikes in window)",
+                            self.dpc_spike_recent_count);
+                    }
 
-                // Mute only if ratio exceeds current threshold
-                if ratio > threshold && self.process_frame_count > 3 {
-                    apo_log!("DPC_SPIKE: elapsed={:.0}us, expected={:.0}us, ratio={:.2}, frame={}, mode={}",
-                        elapsed_us, expected_us, ratio, self.process_frame_count,
-                        if self.dpc_high_latency_mode { "HIGH_LATENCY" } else { "NORMAL" });
-                    self.dpc_spike_recovery = true;
-                    self.dpc_saved_l = self.last_output_l;
-                    self.dpc_saved_r = self.last_output_r;
+                    // Escalate to extreme mode
+                    if self.dpc_high_latency_mode && !self.dpc_extreme_mode
+                        && self.dpc_high_latency_spike_count >= Self::DPC_ADAPTIVE_SPIKE_THRESHOLD
+                    {
+                        self.dpc_extreme_mode = true;
+                        apo_log!("DPC_ADAPTIVE: switched to EXTREME mode ({} spikes in HIGH_LATENCY)",
+                            self.dpc_high_latency_spike_count);
+                    }
+
+                    // Update UI when mode changes
+                    if self.dpc_extreme_mode || self.dpc_high_latency_mode {
+                        let dpc_mode_val = if self.dpc_extreme_mode { 3u8 } else { 2u8 };
+                        if let Some(ref mmap) = self.mmap {
+                            mmap.status().set_dpc_mode(dpc_mode_val);
+                        }
+                    }
+
+                    // Auto-recover: calm → step down one level at a time
+                    if self.dpc_calm_frame_count >= Self::DPC_CALM_RECOVERY {
+                        if self.dpc_extreme_mode {
+                            self.dpc_extreme_mode = false;
+                            self.dpc_high_latency_spike_count = 0;
+                            self.dpc_calm_frame_count = 0;
+                            apo_log!("DPC_ADAPTIVE: recovered from EXTREME to HIGH_LATENCY mode");
+                            if let Some(ref mmap) = self.mmap {
+                                mmap.status().set_dpc_mode(2);
+                            }
+                        } else if self.dpc_high_latency_mode {
+                            self.dpc_high_latency_mode = false;
+                            self.dpc_spike_recent_count = 0;
+                            apo_log!("DPC_ADAPTIVE: recovered to NORMAL mode (calm for {} frames)",
+                                Self::DPC_CALM_RECOVERY);
+                            if let Some(ref mmap) = self.mmap {
+                                mmap.status().set_dpc_mode(1);
+                            }
+                        }
+                    }
+
+                    // Select threshold AFTER mode switches
+                    let threshold = if self.dpc_extreme_mode {
+                        Self::DPC_SPIKE_RATIO_EXTREME
+                    } else if self.dpc_high_latency_mode {
+                        Self::DPC_SPIKE_RATIO_HIGH_LATENCY
+                    } else {
+                        Self::DPC_SPIKE_RATIO_NORMAL
+                    };
+
+                    // Mute only if ratio exceeds current threshold
+                    if ratio > threshold && self.process_frame_count > 3 {
+                        apo_log!("DPC_SPIKE: elapsed={:.0}us, expected={:.0}us, ratio={:.2}, frame={}, mode={}",
+                            elapsed_us, expected_us, ratio, self.process_frame_count,
+                            if self.dpc_extreme_mode { "EXTREME" }
+                            else if self.dpc_high_latency_mode { "HIGH_LATENCY" }
+                            else { "NORMAL" });
+                        self.dpc_spike_recovery = true;
+                        self.dpc_saved_l = self.last_output_l;
+                        self.dpc_saved_r = self.last_output_r;
+                    }
                 }
             }
             self.last_process_time = Some(now);
@@ -779,11 +878,10 @@ impl PhaselithApo {
         // already settled the OLA buffer). Only < 1.0 during click gate recovery
         // (silence→wet fade-in after a detected artifact).
         let recovery = self.recovery_blend();
-        if recovery >= 1.0 && self.gap_mute_active {
-            self.gap_mute_active = false;
-            apo_log!("CLICK_RECOVERY_DONE: frame={}, last_out=({:.6},{:.6})",
-                self.process_frame_count, self.last_output_l, self.last_output_r);
-        }
+        // NOTE: gap_mute_active is cleared AFTER the click gate section (below),
+        // not here. Clearing it here would allow click gate to fire on the
+        // transition frame where output jumps from 92.5%→100%, re-triggering
+        // the mute and creating an infinite loop.
 
         if ch == 1 {
             // Mono: use L engine only — always process to keep state in sync
@@ -925,93 +1023,100 @@ impl PhaselithApo {
                 self.process_frame_count, saved_l, saved_r);
         }
 
-        // ═══ DPC spike recovery: mute ═══
-        // After a detected DPC latency spike, mute the block. The engine output
-        // after a spike contains stale OLA data that sounds robotic/mechanical.
-        // A brief silence is far less noticeable than corrupted audio.
-        // The click gate will then handle smooth fade-in on the next block.
-        if self.dpc_spike_recovery {
-            self.dpc_spike_recovery = false;
-            output[..copy_len].fill(0.0);
-            self.gap_mute_active = true;
-            self.process_frame_count = 0;
-            apo_log!("DPC_RECOVERY: muted block, last_out=({:.6},{:.6})",
-                self.dpc_saved_l, self.dpc_saved_r);
+        // ═══ Post-output safety pipeline ═══
+        //
+        // Determines what action to take on the output block. Priority order:
+        //   1. DPC spike recovery  → mute block, enter fade-in
+        //   2. Recovery in progress → let fade-in continue (skip click gate)
+        //   3. Recovery complete    → clear flag, resume normal
+        //   4. Click gate fires    → mute block, enter fade-in
+        //   5. Normal              → no modification
+        //
+        // Using an enum + match ensures exactly one action per frame
+        // and prevents the if/else nesting from growing unbounded.
+
+        #[derive(Debug)]
+        enum SafetyAction {
+            DpcMute,
+            Recovering,
+            RecoveryDone,
+            ClickGateMute { disc: f32, max_within: f32 },
+            Pass,
         }
 
-        // ═══ Click Gate (universal output safety) ═══
-        // After all output is written, check for boundary discontinuities.
-        // If detected, zero the block and activate gap_mute for smooth recovery.
-        let click_gate_ready = if self.click_gate_armed {
-            self.process_frame_count >= 1
-        } else {
-            self.process_frame_count >= Self::CLICK_GATE_DELAY
-        };
-        if enabled && !transitioning && click_gate_ready {
-            let (first_l, first_r, last_l, last_r) = if ch >= 2 && frames > 0 {
-                (output[0], output[1], output[(frames - 1) * 2], output[(frames - 1) * 2 + 1])
-            } else if frames > 0 {
-                (output[0], 0.0, output[frames - 1], 0.0)
-            } else {
-                (0.0, 0.0, 0.0, 0.0)
-            };
+        let action = match (self.dpc_spike_recovery, self.gap_mute_active) {
+            // Priority 1: DPC spike detected — mute unconditionally
+            (true, _) => SafetyAction::DpcMute,
 
-            let boundary_disc = (first_l - self.last_output_l).abs()
-                .max((first_r - self.last_output_r).abs());
-
-            // Adaptive threshold: compare boundary jump to max within-block jump.
-            // A click has a boundary disc much larger than any within-block diff.
-            // This avoids false positives from legitimate musical transients.
-            let mut max_within = 0.0f32;
-            if ch >= 2 {
-                for f in 1..frames {
-                    let dl = (output[f * 2] - output[(f - 1) * 2]).abs();
-                    let dr = (output[f * 2 + 1] - output[(f - 1) * 2 + 1]).abs();
-                    let d = dl.max(dr);
-                    if d > max_within { max_within = d; }
-                }
-            } else {
-                for f in 1..frames {
-                    let d = (output[f] - output[f - 1]).abs();
-                    if d > max_within { max_within = d; }
+            // Priority 2-3: In recovery fade-in — check if done
+            (false, true) => {
+                if recovery >= 1.0 {
+                    SafetyAction::RecoveryDone
+                } else {
+                    SafetyAction::Recovering
                 }
             }
 
-            // Click if boundary exceeds adaptive threshold:
-            // - Must be > 1.5× the largest within-block jump + absolute floor
-            // - Absolute floor (0.05) prevents triggering on near-silence
-            const CLICK_RATIO: f32 = 2.0;
-            const CLICK_FLOOR: f32 = 0.05;
-            if boundary_disc > max_within * CLICK_RATIO + CLICK_FLOOR {
-                // Mute this block — zero output for clean gate
+            // Click gate disabled — it caused infinite mute loops where the
+            // recovery fade-in was re-detected as a boundary discontinuity.
+            // DPC spike detection + mute is sufficient for output safety.
+            (false, false) => SafetyAction::Pass,
+        };
+
+        match action {
+            SafetyAction::DpcMute => {
+                self.dpc_spike_recovery = false;
+                output[..copy_len].fill(0.0);
+                self.gap_mute_active = true;
+                self.process_frame_count = 0;
+                apo_log!("DPC_RECOVERY: muted block, last_out=({:.6},{:.6})",
+                    self.dpc_saved_l, self.dpc_saved_r);
+            }
+            SafetyAction::Recovering => {
+                // Fade-in in progress via recovery_blend — nothing to do
+            }
+            SafetyAction::RecoveryDone => {
+                self.gap_mute_active = false;
+                apo_log!("CLICK_RECOVERY_DONE: frame={}, last_out=({:.6},{:.6})",
+                    self.process_frame_count, self.last_output_l, self.last_output_r);
+            }
+            SafetyAction::ClickGateMute { disc, max_within } => {
+                const CLICK_RATIO: f32 = 2.0;
+                const CLICK_FLOOR: f32 = 0.05;
                 apo_log!("CLICK_GATE: disc={:.6}, max_within={:.6}, threshold={:.6}, frame={}",
-                    boundary_disc, max_within, max_within * CLICK_RATIO + CLICK_FLOOR,
+                    disc, max_within, max_within * CLICK_RATIO + CLICK_FLOOR,
                     self.process_frame_count);
                 output[..copy_len].fill(0.0);
                 self.gap_mute_active = true;
                 self.process_frame_count = 0;
-                // Signal UI via mmap
                 if let Some(ref mmap) = self.mmap {
                     mmap.status().increment_pop_muted();
                 }
             }
+            SafetyAction::Pass => {}
+        }
 
-            // Track last output samples for next block's boundary check
-            if ch >= 2 && frames > 0 {
-                self.last_output_l = output[(frames - 1) * 2];
-                self.last_output_r = output[(frames - 1) * 2 + 1];
-            } else if frames > 0 {
-                self.last_output_l = output[frames - 1];
-                self.last_output_r = 0.0;
+        // ═══ Always-run post-output steps ═══
+        // These MUST execute every frame regardless of safety action above.
+
+        // DPC profiling mute: zero output while measuring DPC environment
+        if self.dpc_profiling && frames > 0 {
+            for s in output[..frames * ch].iter_mut() {
+                *s = 0.0;
             }
-        } else if frames > 0 {
-            // Track last output even during warmup/transition/disabled
-            if ch >= 2 {
-                self.last_output_l = output[(frames - 1) * 2];
-                self.last_output_r = output[(frames - 1) * 2 + 1];
-            } else {
-                self.last_output_l = output[frames - 1];
-                self.last_output_r = 0.0;
+        }
+
+        // Track last output for next frame's boundary check
+        if frames > 0 {
+            match ch {
+                c if c >= 2 => {
+                    self.last_output_l = output[(frames - 1) * 2];
+                    self.last_output_r = output[(frames - 1) * 2 + 1];
+                }
+                _ => {
+                    self.last_output_l = output[frames - 1];
+                    self.last_output_r = 0.0;
+                }
             }
         }
 
