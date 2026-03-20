@@ -2,254 +2,119 @@
 
 ## Purpose
 
-This document defines how Phaselith should be introduced on the Chrome Web Store during the early product phase, how Early Access should be communicated, and how future paid unlocking should be announced without confusing users.
+This document defines how Phaselith should be introduced on the Chrome Web Store, how Early Access transitions to paid, and the pricing model.
 
-The goal is:
+## Strategy
 
-1. ship early
-2. collect real listening feedback and reviews
-3. avoid pretending the product is already a finished commercial release
-4. prepare users for future paid unlocking without damaging trust
+Use **one Chrome Web Store listing** throughout all phases.
 
-## Recommended Strategy
+### Phase 1 — Early Access (Current)
 
-Use **one Chrome Web Store listing**.
+- Public Early Access
+- Free tier: Strength capped at 50%, Reference preset only
+- Pro tier: Full strength (0-100%), all 7 presets, full HF/dynamics control
+- Pricing: **$4.99/month or $39.99/year**
 
-Do not split the browser product into separate free and paid listings unless there is a later platform-level reason to do so.
+### Phase 2 — Mature Product
 
-Recommended rollout:
+- Same listing, accumulated reviews and installs
+- Pricing adjustments based on market feedback
+- Desktop APO remains a separate higher-tier product line
 
-1. `Phase 1`
-   - public Early Access
-   - full functionality
-   - free during the initial validation period
-2. `Phase 2`
-   - same listing remains live
-   - free tier becomes limited
-   - paid unlock is introduced through the official Phaselith licensing flow
-3. `Phase 3`
-   - browser `Pro` unlock is sold at the target product price
-   - desktop remains a separate higher-tier product line
+## Pricing Model
 
-This keeps:
+### Chrome Extension
 
-1. installs concentrated in one listing
-2. reviews concentrated in one listing
-3. user confusion low
-4. future upsell cleaner
+| Tier | Price | Features |
+|------|-------|----------|
+| Free | $0 | Strength ≤50%, Reference preset only, all audio sources |
+| Pro | $4.99/month or $39.99/year | Full strength, all 7 presets, full controls |
+
+### Desktop APO (separate product)
+
+| Tier | Price | Features |
+|------|-------|----------|
+| TBD | TBD | Full system-wide audio restoration |
 
 ## Product Positioning
 
-Phaselith should not be described as:
+**Marketing tagline:**
+
+> ☕ One coffee a month — turn your YouTube and Spotify into studio-quality audio through your existing headphones.
+
+Phaselith should be described as:
+
+1. a real-time audio restoration engine (not an EQ or bass booster)
+2. a way to get DAC-quality improvement without buying new hardware
+3. a self-validating system that only applies mathematically verified repairs
+4. affordable premium audio for everyone
+
+Phaselith should NOT be described as:
 
 1. a simple EQ
 2. a bass booster
-3. a louder button
-4. a fake 3D effect
+3. a loudness enhancer
+4. a fake 3D / virtual surround effect
 
-It should be described as:
+## Free vs Pro Messaging
 
-1. a real-time audio restoration and playback optimization engine
-2. a way to reduce haze, masking, and roughness in browser playback
-3. a tool that improves source focus, center image, and front placement
-4. a premium-system presentation layer for everyday playback
+### In-Extension (Popup UI)
 
-## Store Name
+When free user hits a Pro-only feature:
 
-Recommended:
+> Unlock full strength and all style presets — $4.99/month or $39.99/year.
 
-`Phaselith`
+### Store Listing Copy
 
-Optional longer variants if needed:
+**Short Description (max 132 chars):**
 
-1. `Phaselith Audio`
-2. `Phaselith for Chrome`
-3. `Phaselith Browser`
+> One coffee a month — turn your YouTube and Spotify into studio-quality audio through your existing headphones.
 
-## Short Description Options
+**Free tier description:**
 
-Use one of the following as the Chrome Web Store short description.
+> Try Phaselith free with Reference preset at up to 50% strength. Hear the difference immediately — upgrade to Pro for the full experience.
 
-### Option A
+**Pro tier description:**
 
-`Real-time audio restoration and focus enhancement for browser playback.`
+> Phaselith Pro unlocks full strength control (0-100%), all 7 style presets (Reference, Grand, Smooth, Vocal, Punch, Air, Night), and complete HF reconstruction and dynamics control.
 
-### Option B
-
-`Reduce haze, improve center image, and make browser audio feel more front-focused.`
-
-### Option C
-
-`Premium-system presentation for everyday browser audio without acting like a simple EQ.`
-
-Recommended default:
-
-`Real-time audio restoration and focus enhancement for browser playback.`
-
-## Full Description Draft
-
-Use the following as the base long-form listing copy.
-
----
-
-`Phaselith is a real-time audio restoration and playback optimization engine for browser media.`
-
-`Instead of acting like a fixed EQ curve, Phaselith analyzes the playback signal and helps reduce masking, haze, roughness, and image instability so voices and instruments feel more focused, more intelligible, and more physically placed in front of the listener.`
-
-`It is designed for real-world listening: streaming media, video platforms, compressed audio, laptop speakers, ordinary headphones, and everyday browser playback.`
-
-### What Phaselith is designed to improve
-
-- reduce fog, harshness, and codec-like roughness
-- improve center image and front-focused source placement
-- make speech and vocals feel more physically locked in place
-- preserve listenability instead of turning everything into an exaggerated effect
-
-### What Phaselith is not
-
-- not a conventional EQ
-- not a simple widening effect
-- not just a loudness enhancer
-- not a fake reverb or “make everything huge” processor
-
-### Best use cases
-
-- YouTube and browser video
-- compressed or underwhelming streaming playback
-- laptop speakers
-- everyday headphones and desktop listening
-
-### Current release status
-
-`This release is part of the Phaselith Early Access phase.`
-
-`The goal of Early Access is to collect real listening feedback, validate use cases, and refine the product before formal paid unlocking begins.`
-
-`Features, tuning, and product packaging may evolve over time.`
-
----
-
-## Early Access Notice
-
-This text should appear both:
-
-1. in the Chrome Store description
-2. in the extension popup or onboarding UI
-
-Recommended copy:
-
-`Phaselith is currently in Early Access.`
-
-`During this phase, the browser version is available for evaluation while we collect listening feedback, stabilize the experience, and refine the final product tiers.`
-
-`This is not the final commercial packaging of Phaselith.`
-
-## Future Paid Unlock Notice
-
-The goal is to be honest without creating fear or backlash.
-
-Recommended copy:
-
-`Phaselith is currently available during its Early Access period.`
-
-`In a future release, Phaselith browser features will move to a Lite + Pro model.`
-
-`The current Early Access release is intended to gather real-world feedback before paid unlocking begins.`
-
-`Pricing and feature tiers will be announced in advance inside the extension and on official Phaselith pages.`
-
-## Recommended Pricing Messaging
-
-Do not announce aggressive monetization on day one.
-
-Recommended sequence:
-
-1. launch as free Early Access
-2. state clearly that a future Lite + Pro structure is planned
-3. only announce the specific browser price once the product feels stable
-
-Current intended product direction:
-
-1. `Phaselith Browser Pro`
-   - target price: `USD 49`
-2. `Phaselith Desktop`
-   - target price: `USD 199`
-
-Do not put both numbers in the initial public store copy unless you are ready to support them.
-
-## Recommended User-Facing FAQ Copy
+## User-Facing FAQ
 
 ### Is Phaselith free?
 
-`Phaselith is currently available as an Early Access release.`
+Phaselith has a free tier that lets you experience the core restoration engine with Reference preset at up to 50% strength. Pro unlocks full controls for $4.99/month or $39.99/year.
 
-`A future Lite + Pro model is planned, but paid unlocking has not started yet in this release phase.`
+### Why not just make it free?
 
-### Will Phaselith become paid later?
+Building a real-time audio restoration engine that runs in a browser required years of R&D in signal processing, WebAssembly optimization, and psychoacoustic tuning. $4.99/month — less than a cup of coffee — supports continued development and new features.
 
-`Yes.`
+### Can I cancel anytime?
 
-`The browser product is planned to move to a Lite + Pro structure after the Early Access phase.`
+Yes. Cancel anytime. Your subscription continues until the end of the billing period, then reverts to the free tier.
 
-### Why release it free first?
+### Is there a lifetime option?
 
-`Because Phaselith is a listening-first product.`
-
-`The Early Access phase helps us validate real-world listening results, improve stability, and refine the final feature set before formal paid unlocking begins.`
-
-## Extension Popup Copy
-
-Use this in-product text for the Early Access phase:
-
-`Early Access`
-
-`Phaselith is currently available for evaluation while we refine the product and gather listening feedback.`
-
-`Future releases will introduce Lite and Pro tiers.`
-
-## Later In-Product Upgrade Copy
-
-Use this once paid unlocking is ready:
-
-`Phaselith Pro unlock`
-
-`The Early Access phase has ended.`
-
-`Continue using Phaselith Lite for essential playback improvement, or unlock Phaselith Pro for the full browser experience.`
+Not currently. We may introduce a lifetime license in the future based on user feedback.
 
 ## Tone Rules
 
-When writing any public-facing Chrome Store text:
+When writing any public-facing text:
 
-1. do not oversell it as proven “lossless recovery”
-2. do not claim impossible technical guarantees
-3. do emphasize focus, clarity, front placement, and premium presentation
-4. do state that the product is still evolving
-5. do keep the copy consistent with the real current browser runtime
+1. Do not oversell — say "restoration" not "lossless recovery"
+2. Do not claim impossible guarantees
+3. Do emphasize the coffee price analogy — it's relatable and disarming
+4. Do emphasize the DAC comparison — it gives users a mental anchor for value
+5. Do keep technical claims backed by real properties (idempotent, scale-invariant)
 
-## Internal Launch Checklist
+## Who Is This For
 
-Before public launch:
-
-1. confirm permissions text is accurate
-2. confirm tab-follow behavior is stable enough for normal use
-3. confirm volume no longer feels obviously disadvantaged
-4. confirm the extension explains Early Access clearly
-5. confirm future paid unlocking language is present but not hostile
+- 🎵 Music listeners who want richer sound from YouTube, Spotify, browser playback
+- 🎙️ Podcast listeners who want clearer, more natural voices
+- 🎧 Headphone users who want DAC-quality improvement without new hardware
+- 💻 Anyone who notices browser audio sounds flat compared to dedicated players
 
 ## Strategic Note
 
-The most important thing to validate first is not payment infrastructure.
+The free tier exists to let users **hear the difference before paying**. The 50% strength cap is enough to notice improvement but not enough to feel satisfied — creating natural upgrade motivation without artificial annoyance.
 
-It is whether real users repeatedly hear the same thing the current internal listening process hears:
-
-1. stronger center image
-2. more front-focused placement
-3. less haze and roughness
-4. a premium-system presentation effect on ordinary playback
-
-That is why the preferred launch order is:
-
-1. public Early Access
-2. listening validation and product tightening
-3. paid unlocking
+The key conversion metric is: does the user hear a difference within 30 seconds of enabling the extension? If yes, the upgrade path sells itself.

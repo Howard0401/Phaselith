@@ -1,91 +1,99 @@
 ## Short Description (manifest, max 132 chars)
 
-> Real-time browser audio optimization that reduces haze, improves focus, and strengthens center image.
+> One coffee a month — turn your YouTube and Spotify into studio-quality audio through your existing headphones.
 
 ---
 
 ## Detailed Description (Store listing)
 
-Phaselith is a real-time browser audio optimization engine powered by Phaselith. It analyzes playback in real time and helps reduce haze, roughness, and image instability so voices and instruments feel more focused, more intelligible, and more physically placed in front of the listener.
+☕ One coffee a month. Turn your YouTube and Spotify into studio-quality audio through your existing headphones.
 
-Unlike EQ plugins or sound enhancers that apply fixed tonal curves, Phaselith uses a multi-stage signal analysis pipeline to detect degradation patterns, generate candidate repairs, and mix only bounded, validated changes back into the signal.
+Phaselith is a real-time audio restoration engine that runs directly in your browser. It analyzes playback in real time and recovers lost harmonics, air, and detail that compression destroys — making voices clearer, instruments more vivid, and the soundstage wider and more natural.
+
+This is not an EQ or bass booster. Phaselith uses a 6-stage signal analysis pipeline with self-validation: it detects what compression damaged, generates candidate repairs, and only applies changes that pass a mathematical consistency check. If a repair doesn't improve the signal, it's rejected automatically.
 
 ### How It Works
 
-Phaselith processes audio through a 6-stage restoration pipeline:
+1. **Damage Detection** — Identifies codec cutoff frequency, clipping artifacts, dynamic compression, and stereo collapse.
+2. **Signal Decomposition** — Separates audio into harmonic, air, transient, and spatial components.
+3. **Residual Synthesis** — Generates candidate repairs using physical models (not neural networks).
+4. **Self-Validation** — Repairs are checked against a consistency model. Failed repairs are reduced or rejected before mixing.
+5. **Perceptual Mixing** — Validated repairs are mixed at safe levels with loudness compensation and peak protection.
+6. **Ambience Preservation** — Reverb tails and spatial cues are preserved, not destroyed.
 
-1. Damage Detection — Identifies codec cutoff frequency, clipping artifacts, dynamic compression, and stereo collapse.
-2. Signal Decomposition — Separates the audio into harmonic, air, transient, and spatial components.
-3. Residual Synthesis — Generates candidate repairs for each damaged component using physical models (not neural networks).
-4. Self-Validation — Candidate repairs are checked against a consistency model. Repairs that fail the check are reduced or rejected before mixing.
-5. Perceptual Mixing — Validated repairs are mixed back at safe levels with loudness compensation and peak protection.
-6. Ambience Preservation — Reverb tails and spatial cues are preserved, not destroyed.
+### Free vs Pro
 
-### Key Features
+**Free** — Experience the difference immediately:
+- Strength capped at 50%
+- Reference style preset only
+- All audio sources supported
+- No account needed, no data collected
 
-- Low-latency real-time processing for browser playback
-- Works on any browser audio: music, podcasts, video calls, and more
-- 7 style presets: Reference, Grand, Smooth, Vocal, Punch, Air, Night
-- Adjustable strength, HF reconstruction, and dynamics controls
-- Dual-mono stereo processing (independent L/R channels)
-- Runs entirely on CPU via WebAssembly — no GPU required
-- Zero data collection, no account needed
-
-### What Makes Phaselith Different
-
-Most audio enhancers add bass boost, virtual surround, or EQ curves on top of your audio. Phaselith instead analyzes degradation patterns and apply bounded, validated repair candidates rather than a fixed tonal recipe.
+**Pro ($4.99/month or $39.99/year)** — Unlock the full experience:
+- Full strength control (0-100%)
+- All 7 style presets: Reference, Grand, Smooth, Vocal, Punch, Air, Night
+- Full HF reconstruction and dynamics control
+- Priority support and early access to new features
 
 ### Who Is This For
 
-- Music listeners who want richer sound from browser playback
-- Podcast listeners who want clearer, more natural voices
-- Headphone users who want to get more from their existing gear
-- Anyone who notices that browser audio sounds flat compared to dedicated players
+- 🎵 Music listeners who want richer sound from YouTube, Spotify, and browser playback
+- 🎙️ Podcast listeners who want clearer, more natural voices
+- 🎧 Headphone users who want DAC-quality improvement without buying new hardware
+- 💻 Anyone who notices browser audio sounds flat compared to dedicated players
 
-### Early Access
+### What Makes Phaselith Different
 
-Phaselith is currently in Early Access. The core Phaselith engine is stable and producing strong results, but we're actively refining presets and adding features based on user feedback.
+Most audio enhancers add bass boost, virtual surround, or EQ curves on top of your audio. Phaselith analyzes degradation patterns and applies bounded, validated repairs — not a fixed tonal recipe. The result: your music sounds like the original master, not like it went through a filter.
+
+### The Math Behind It
+
+Phaselith's self-validation is idempotent and scale-invariant. Apply it once or ten times — same result. Change the volume — same repair quality. This means stacking multiple audio processing layers never degrades quality, and the engine needs no AGC or normalization. These are mathematical properties, not marketing claims.
 
 ---
 
-即時瀏覽器音訊優化 — 降低霧感、提升焦點，並強化中心結像。
+## 繁體中文 Store Listing
 
-Phaselith 是一個搭載 Phaselith 的即時瀏覽器音訊優化引擎。它會即時分析播放內容，並協助降低霧感、粗糙感與結像不穩定，讓人聲與樂器更聚焦、更容易理解，也更像實際位於聆聽者前方發聲。
+☕ 每月一杯咖啡，讓你的 YouTube 和 Spotify 在現有耳機上聽出專業 DAC 的質感。
 
-與套用固定音調曲線的 EQ 插件或音效增強器不同，Phaselith 使用多階段訊號分析管線來偵測退化模式、生成候選修復，並只把有界、通過驗證的變更混回訊號。
+Phaselith 是一個直接在瀏覽器中運行的即時音訊修復引擎。它即時分析播放內容，還原壓縮所破壞的諧波、空氣感與細節——讓人聲更清晰、樂器更鮮活、音場更寬廣自然。
+
+這不是 EQ 或低音增強器。Phaselith 使用帶有自我驗證的 6 階段訊號分析管線：偵測壓縮造成的損傷、生成候選修復，並且只套用通過數學一致性檢查的修正。如果修復無法改善訊號，會自動被拒絕。
 
 ### 運作原理
 
-Phaselith 透過 6 階段修復管線處理音訊：
+1. **損傷偵測** — 識別編解碼器截止頻率、削波失真、動態壓縮和立體聲塌縮。
+2. **訊號分解** — 將音訊分離為諧波、空氣感、瞬態和空間成分。
+3. **殘差合成** — 使用物理模型（非神經網路）生成候選修復。
+4. **自我驗證** — 候選修復經過一致性檢查。未通過的修復在混音前被縮小或拒絕。
+5. **感知混合** — 已驗證的修復以安全音量混合回去，搭配響度補償和峰值保護。
+6. **氛圍保留** — 殘響尾音和空間線索被保留，不會被破壞。
 
-1. 損傷偵測 — 識別編解碼器截止頻率、削波失真、動態壓縮和立體聲塌縮。
-2. 訊號分解 — 將音訊分離為諧波、空氣感、瞬態和空間成分。
-3. 殘差合成 — 使用物理模型（非神經網路）為每個受損成分生成候選修復。
-4. 自我驗證 — 候選修復會經過一致性檢查。未通過的修復會在混音前被縮小或拒絕。
-5. 感知混合 — 已驗證的修復以安全音量混合回去，搭配響度補償和峰值保護。
-6. 氛圍保留 — 殘響尾音和空間線索被保留，不會被破壞。
+### 免費版 vs 專業版
 
-### 主要特色
+**免費版** — 立即體驗差異：
+- 強度上限 50%
+- 僅限 Reference 參考風格預設
+- 支援所有音訊來源
+- 無需帳號，零資料收集
 
-- 低延遲的即時瀏覽器播放處理
-- 適用於任何瀏覽器音訊：音樂、播客、視訊通話等
-- 7 種風格預設：參考、磅礡、溫潤、人聲、力道、空氣感、夜間
-- 可調整強度、高頻重建和動態控制
-- 雙單聲道立體聲處理（獨立左右聲道）
-- 完全透過 WebAssembly 在 CPU 上運行 — 不需要 GPU
-- 零資料收集，無需帳號
-
-### Phaselith 的獨特之處
-
-大多數音訊增強器會在音訊上疊加低音增強、虛擬環繞或 EQ 曲線。Phaselith 的做法不同：它分析退化模式，並加入有界、經過驗證的候選修復，而不是套用固定的音色配方。
+**專業版（$4.99/月 或 $39.99/年）** — 解鎖完整體驗：
+- 完整強度控制（0-100%）
+- 全部 7 種風格預設：參考、磅礡、溫潤、人聲、力道、空氣感、夜間
+- 完整高頻重建與動態控制
+- 優先支援與新功能搶先體驗
 
 ### 適合誰
 
-- 想從瀏覽器播放中獲得更豐富音質的音樂聽眾
-- 想要更清晰、更自然聲音的播客聽眾
-- 想從現有設備獲得更多的耳機使用者
-- 任何注意到瀏覽器音訊聽起來比專用播放器平淡的人
+- 🎵 想從 YouTube、Spotify 和瀏覽器播放中獲得更豐富音質的音樂聽眾
+- 🎙️ 想要更清晰、更自然聲音的播客聽眾
+- 🎧 想要 DAC 等級提升但不想買新硬體的耳機使用者
+- 💻 任何注意到瀏覽器音訊聽起來比專用播放器平淡的人
 
-### 早期預覽
+### Phaselith 的獨特之處
 
-Phaselith 目前處於早期預覽階段。核心 Phaselith 引擎已穩定並產出強勁結果，我們正在根據用戶回饋積極改進預設和新增功能。
+大多數音訊增強器會在音訊上疊加低音增強、虛擬環繞或 EQ 曲線。Phaselith 分析退化模式，套用有界、經過驗證的修復——不是固定的音色配方。結果：你的音樂聽起來像原始母帶，而不是經過濾鏡處理。
+
+### 背後的數學
+
+Phaselith 的自我驗證是冪等且尺度不變的。套用一次或十次——結果相同。改變音量——修復品質不變。這意味著疊加多層音訊處理永遠不會降低品質，引擎不需要 AGC 或歸一化。這些是數學性質，不是行銷話術。

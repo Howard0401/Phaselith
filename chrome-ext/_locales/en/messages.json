@@ -1,6 +1,6 @@
 {
   "appName": { "message": "Phaselith" },
-  "appDesc": { "message": "Real-time audio restoration engine \u2014 recovers lost harmonics, air, and detail from compressed browser audio." },
+  "appDesc": { "message": "One coffee a month \u2014 turn your YouTube and Spotify into studio-quality audio through your existing headphones." },
   "statusActive": { "message": "Active" },
   "statusInactive": { "message": "Inactive" },
   "enableEnhancement": { "message": "Enable Enhancement" },

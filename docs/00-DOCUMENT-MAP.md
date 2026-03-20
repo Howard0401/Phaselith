@@ -25,7 +25,7 @@ This directory is organized by function and reading order.
 10. [10-DEFENSIVE-PUBLICATION.md](10-DEFENSIVE-PUBLICATION.md)
    Defensive-publication-style disclosure of the Phaselith technical idea space.
 11. [11-CHROME-STORE-LAUNCH-AND-MONETIZATION.md](11-CHROME-STORE-LAUNCH-AND-MONETIZATION.md)
-   Chrome Web Store launch copy, Early Access messaging, and future Lite + Pro monetization plan.
+   Chrome Web Store launch copy, Free/Pro tier definition, and $4.99/month subscription pricing model.
 12. [12-PUBLIC-V0.1-OPEN-SOURCE-PACKAGING.md](12-PUBLIC-V0.1-OPEN-SOURCE-PACKAGING.md)
    Public-release checklist, packaging rules, and what should or should not be included in the first open-source launch.
 13. [13-BROWSER-TRANSIENT-REPAIR-AND-MACOS-FIX.md](13-BROWSER-TRANSIENT-REPAIR-AND-MACOS-FIX.md)

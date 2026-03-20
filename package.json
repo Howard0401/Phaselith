@@ -1,5 +1,8 @@
 {
   "devDependencies": {
     "sharp": "^0.34.5"
+  },
+  "dependencies": {
+    "opencc-js": "^1.0.5"
   }
 }
