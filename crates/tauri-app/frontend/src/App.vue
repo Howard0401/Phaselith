@@ -321,6 +321,15 @@ body {
   max-width: 420px;
   margin: 0 auto;
   padding: 20px;
+  height: 100vh;
+  overflow-y: auto;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+}
+
+.app .controls {
+  flex: 1;
 }
 
 header {
