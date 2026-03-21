@@ -38,6 +38,7 @@
         label="Compensation Strength"
         v-model="config.strength"
         :disabled="!apoInstalled"
+        :max="licenseTier === 'Pro' ? 1.0 : 0.5"
         @update:modelValue="applyConfig"
       />
       <SliderControl
@@ -69,14 +70,14 @@
             v-for="(style, idx) in filterStyles"
             :key="idx"
             class="pill"
-            :class="{ active: config.filter_style === idx, disabled: !apoInstalled }"
-            :disabled="!apoInstalled"
+            :class="{ active: config.filter_style === idx, disabled: !apoInstalled || (licenseTier !== 'Pro' && idx !== 0) }"
+            :disabled="!apoInstalled || (licenseTier !== 'Pro' && idx !== 0)"
             @click="selectPreset(idx)"
           >{{ style }}</button>
           <button
             class="pill"
-            :class="{ active: config.filter_style === 3, disabled: !apoInstalled }"
-            :disabled="!apoInstalled"
+            :class="{ active: config.filter_style === 3, disabled: !apoInstalled || licenseTier !== 'Pro' }"
+            :disabled="!apoInstalled || licenseTier !== 'Pro'"
             @click="config.filter_style = 3; applyConfig()"
           >Custom</button>
         </div>
@@ -97,6 +98,40 @@
         <SliderControl label="Body" v-model="config.body" :disabled="!apoInstalled" @update:modelValue="onAxisChange" />
       </div>
 
+    </section>
+
+    <!-- License -->
+    <section class="license-section">
+      <div class="mode-header">
+        <label>License</label>
+        <span class="mode-badge" :class="licenseTier === 'Pro' ? 'system' : 'browser'">
+          {{ licenseTier }}
+        </span>
+      </div>
+      <div v-if="licenseTier === 'Pro'" class="license-pro-info">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span style="font-size:11px; color:#555; font-family:monospace;">{{ maskedKey }}</span>
+          <span style="font-size:10px; color:#555;">{{ licenseExpiry }}</span>
+        </div>
+        <div style="margin-top:6px; text-align:right;">
+          <button class="btn uninstall" style="padding:6px 12px; font-size:11px;" @click="deactivateLicense">Deactivate</button>
+        </div>
+      </div>
+      <div v-else class="license-free">
+        <div style="display:flex; gap:6px; margin-bottom:6px;">
+          <input
+            type="text"
+            v-model="licenseKeyInput"
+            placeholder="PHSL-SY-..."
+            class="license-input"
+          >
+          <button class="btn install" style="padding:6px 14px; font-size:11px; flex-shrink:0;" @click="activateLicense" :disabled="licenseLoading">
+            {{ licenseLoading ? '...' : 'Activate' }}
+          </button>
+        </div>
+        <div v-if="licenseError" style="font-size:10px; color:#f87171; margin-bottom:4px;">{{ licenseError }}</div>
+        <p class="mode-hint">Free: Strength capped at 50%, Reference preset only</p>
+      </div>
     </section>
 
     <section class="mode-section">
@@ -167,6 +202,15 @@ const popToastVisible = ref(false);
 let lastPopMutedCount = 0;
 let popToastTimeout = null;
 
+// License state
+const licenseTier = ref('Free');
+const licenseKeyInput = ref('');
+const licenseError = ref('');
+const licenseLoading = ref(false);
+const maskedKey = ref('');
+const licenseExpiry = ref('');
+const REVALIDATE_MS = 7 * 86400000; // 7 days
+
 // Processing = APO connected + enhancement enabled + audio flowing
 const isProcessing = computed(() =>
   status.value && config.value.enabled && status.value.processing_load > 0
@@ -190,9 +234,12 @@ function ema(prev, next, alpha = EMA_ALPHA) {
 }
 
 onMounted(async () => {
+  await loadLicense();
+
   try {
     const saved = await invoke('get_config');
     Object.assign(config.value, saved);
+    enforceLicenseLimits();
   } catch (e) {
     console.warn('Failed to load config:', e);
   }
@@ -273,7 +320,85 @@ function onAxisChange() {
   applyConfig();
 }
 
+// ── License enforcement ──
+
+function enforceLicenseLimits() {
+  if (licenseTier.value !== 'Pro') {
+    if (config.value.strength > 0.5) {
+      config.value.strength = 0.5;
+    }
+    if (config.value.filter_style !== 0) {
+      config.value.filter_style = 0;
+      if (presetValues[0]) Object.assign(config.value, presetValues[0]);
+    }
+  }
+}
+
+async function loadLicense() {
+  try {
+    const cached = await invoke('license_get_cached');
+    if (cached) {
+      const expiresAt = new Date(cached.expires_at).getTime();
+      if (expiresAt > Date.now()) {
+        licenseTier.value = 'Pro';
+        maskedKey.value = cached.license_key.substring(0, 11) + '...' + cached.license_key.substring(cached.license_key.length - 4);
+        licenseExpiry.value = '→ ' + new Date(cached.expires_at).toLocaleDateString();
+
+        // Background revalidate if stale
+        const age = Date.now() - (cached.validated_at || 0);
+        if (age > REVALIDATE_MS) {
+          invoke('license_validate').catch(() => {});
+        }
+      }
+    }
+  } catch {
+    // No cached license
+  }
+  enforceLicenseLimits();
+}
+
+async function activateLicense() {
+  const key = licenseKeyInput.value.trim();
+  if (!key) return;
+  if (!/^PHSL-SY-[A-Za-z0-9]{24}$/.test(key)) {
+    licenseError.value = 'Invalid key format (expected PHSL-SY-...)';
+    return;
+  }
+
+  licenseLoading.value = true;
+  licenseError.value = '';
+
+  try {
+    const res = await invoke('license_activate', { key });
+    if (res.valid) {
+      licenseTier.value = 'Pro';
+      maskedKey.value = key.substring(0, 11) + '...' + key.substring(key.length - 4);
+      licenseExpiry.value = res.expires_at ? '→ ' + new Date(res.expires_at).toLocaleDateString() : '';
+      licenseKeyInput.value = '';
+    } else {
+      licenseError.value = res.error || 'Activation failed';
+    }
+  } catch (e) {
+    licenseError.value = String(e);
+  } finally {
+    licenseLoading.value = false;
+  }
+}
+
+async function deactivateLicense() {
+  try {
+    await invoke('license_deactivate');
+  } catch {
+    // Deactivate locally even if network fails
+  }
+  licenseTier.value = 'Free';
+  maskedKey.value = '';
+  enforceLicenseLimits();
+  applyConfig();
+}
+
 async function applyConfig() {
+  enforceLicenseLimits();
   try {
     await invoke('set_config', { config: config.value });
   } catch (e) {
@@ -587,6 +712,35 @@ input:checked + .slider::before { transform: translateX(20px); }
   font-size: 13px;
   min-width: 20px;
   text-align: center;
+}
+
+/* License section */
+.license-section {
+  background: #1a1a2e;
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.license-pro {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 8px;
+}
+.license-free { margin-top: 8px; }
+.license-input {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid #3a3a5a;
+  border-radius: 8px;
+  padding: 7px 10px;
+  color: #e0e0e0;
+  font-size: 11px;
+  font-family: monospace;
+  outline: none;
+}
+.license-input:focus {
+  border-color: #00d4ff66;
 }
 
 footer {

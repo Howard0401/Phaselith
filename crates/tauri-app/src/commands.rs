@@ -4,6 +4,177 @@ use crate::ipc_bridge;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+// ─── License API ───
+
+const LICENSE_API: &str = "http://localhost:8787"; // dev; production: https://license.phaselith.com
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct LicenseCache {
+    pub license_key: String,
+    pub device_id: String,
+    pub tier: String,
+    pub expires_at: String,
+    pub validated_at: u64, // millis since epoch
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ActivateResponse {
+    pub valid: bool,
+    pub tier: Option<String>,
+    pub product: Option<String>,
+    pub expires_at: Option<String>,
+    pub devices_used: Option<u32>,
+    pub devices_max: Option<u32>,
+    pub error: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ValidateResponse {
+    pub valid: bool,
+    pub tier: Option<String>,
+    pub expires_at: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct DeactivateResponse {
+    pub success: bool,
+    pub devices_used: Option<u32>,
+    pub devices_max: Option<u32>,
+    pub error: Option<String>,
+}
+
+fn license_cache_path() -> PathBuf {
+    let dir = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("C:\\ProgramData"))
+        .join("Phaselith");
+    let _ = std::fs::create_dir_all(&dir);
+    dir.join("license.json")
+}
+
+fn device_id_path() -> PathBuf {
+    let dir = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("C:\\ProgramData"))
+        .join("Phaselith");
+    let _ = std::fs::create_dir_all(&dir);
+    dir.join("device_id.txt")
+}
+
+fn get_or_create_device_id() -> String {
+    let path = device_id_path();
+    if let Ok(id) = std::fs::read_to_string(&path) {
+        let id = id.trim().to_string();
+        if !id.is_empty() {
+            return id;
+        }
+    }
+    let id = uuid::Uuid::new_v4().to_string();
+    let _ = std::fs::write(&path, &id);
+    id
+}
+
+#[tauri::command]
+pub async fn license_activate(key: String) -> Result<ActivateResponse, String> {
+    let device_id = get_or_create_device_id();
+    let client = reqwest::Client::new();
+    let res = client
+        .post(format!("{LICENSE_API}/license/activate"))
+        .json(&serde_json::json!({
+            "license_key": key,
+            "device_id": device_id,
+            "device_name": "Phaselith Desktop",
+            "platform": "apo"
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {e}"))?;
+
+    let data: ActivateResponse = res.json().await.map_err(|e| format!("Parse error: {e}"))?;
+
+    if data.valid {
+        let cache = LicenseCache {
+            license_key: key,
+            device_id,
+            tier: "Pro".into(),
+            expires_at: data.expires_at.clone().unwrap_or_default(),
+            validated_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+        };
+        let _ = std::fs::write(license_cache_path(), serde_json::to_string_pretty(&cache).unwrap_or_default());
+    }
+
+    Ok(data)
+}
+
+#[tauri::command]
+pub async fn license_validate() -> Result<ValidateResponse, String> {
+    let path = license_cache_path();
+    let cache_str = std::fs::read_to_string(&path).map_err(|_| "No license cached".to_string())?;
+    let cache: LicenseCache = serde_json::from_str(&cache_str).map_err(|_| "Invalid cache".to_string())?;
+
+    let client = reqwest::Client::new();
+    let res = client
+        .post(format!("{LICENSE_API}/license/validate"))
+        .json(&serde_json::json!({
+            "license_key": cache.license_key,
+            "device_id": cache.device_id
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {e}"))?;
+
+    let data: ValidateResponse = res.json().await.map_err(|e| format!("Parse error: {e}"))?;
+
+    if data.valid {
+        // Update validated_at
+        let updated = LicenseCache {
+            validated_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+            ..cache
+        };
+        let _ = std::fs::write(&path, serde_json::to_string_pretty(&updated).unwrap_or_default());
+    }
+
+    Ok(data)
+}
+
+#[tauri::command]
+pub async fn license_deactivate() -> Result<DeactivateResponse, String> {
+    let path = license_cache_path();
+    let cache_str = std::fs::read_to_string(&path).map_err(|_| "No license cached".to_string())?;
+    let cache: LicenseCache = serde_json::from_str(&cache_str).map_err(|_| "Invalid cache".to_string())?;
+
+    let client = reqwest::Client::new();
+    let res = client
+        .post(format!("{LICENSE_API}/license/deactivate"))
+        .json(&serde_json::json!({
+            "license_key": cache.license_key,
+            "device_id": cache.device_id
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {e}"))?;
+
+    let data: DeactivateResponse = res.json().await.map_err(|e| format!("Parse error: {e}"))?;
+
+    // Remove cache regardless
+    let _ = std::fs::remove_file(&path);
+
+    Ok(data)
+}
+
+#[tauri::command]
+pub fn license_get_cached() -> Option<LicenseCache> {
+    let path = license_cache_path();
+    let cache_str = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&cache_str).ok()
+    // Expiry check is done on the frontend side
+}
+
 #[derive(Deserialize)]
 pub struct ConfigPayload {
     pub enabled: bool,

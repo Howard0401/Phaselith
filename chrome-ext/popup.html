@@ -336,6 +336,35 @@
     </div>
   </div>
 
+  <div class="divider"></div>
+
+  <div class="content" style="padding-top: 8px; padding-bottom: 8px;">
+    <div class="section" id="licenseCard">
+      <div id="licenseActivated" style="display:none;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span style="font-size:12px; color:#999;" data-i18n="licenseLabel"></span>
+          <span style="font-size:10px; font-weight:600; padding:3px 10px; border-radius:12px; background:rgba(0,212,255,0.12); color:#00d4ff; letter-spacing:0.5px;">PRO</span>
+        </div>
+        <div style="margin-top:6px; font-size:10px; color:#555;">
+          <span id="licenseKeyDisplay" style="font-family:monospace;"></span>
+          <span style="margin-left:8px;" id="licenseExpiry"></span>
+        </div>
+      </div>
+      <div id="licenseNotActivated">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <span style="font-size:12px; color:#999;" data-i18n="licenseLabel"></span>
+          <span style="font-size:10px; font-weight:600; padding:3px 10px; border-radius:12px; background:rgba(248,113,113,0.12); color:#f87171; letter-spacing:0.5px;">FREE</span>
+        </div>
+        <div style="display:flex; gap:6px;">
+          <input type="text" id="licenseKeyInput" placeholder="PHSL-BR-..." style="flex:1; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:7px 10px; color:#e8e8f0; font-size:11px; font-family:monospace; outline:none;">
+          <button class="style-btn" id="activateBtn" style="padding:7px 14px; font-size:11px; border-color:rgba(0,212,255,0.3); color:#00d4ff;" data-i18n="activateBtn"></button>
+        </div>
+        <div id="licenseError" style="display:none; margin-top:6px; font-size:10px; color:#f87171;"></div>
+        <div style="margin-top:6px; font-size:10px; color:#555;" data-i18n="freeHint"></div>
+      </div>
+    </div>
+  </div>
+
   <div class="footer">
     <div class="lang-switcher">
       <button class="lang-btn selected" data-lang="en">EN</button>

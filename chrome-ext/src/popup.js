@@ -1,5 +1,9 @@
 // Popup UI logic — communicates with background service worker
 
+// ── License API ──
+const LICENSE_API = 'http://localhost:8787'; // dev; production: https://license.phaselith.com
+const REVALIDATE_DAYS = 7;
+
 // ── i18n (manual language selector) ──
 const I18N = {
   en: {
@@ -18,6 +22,10 @@ const I18N = {
     hfLabel: 'HF Reconstruction',
     dynamicsLabel: 'Dynamics',
     footerVersion: 'v0.1.18',
+    licenseLabel: 'License',
+    activateBtn: 'Activate',
+    freeHint: 'Free: Strength capped at 50%, Reference preset only',
+    activating: 'Activating...',
   },
   'zh-TW': {
     statusActive: '\u5df2\u555f\u7528',
@@ -35,6 +43,10 @@ const I18N = {
     hfLabel: '\u9ad8\u983b\u91cd\u5efa',
     dynamicsLabel: '\u52d5\u614b',
     footerVersion: 'v0.1.18',
+    licenseLabel: '\u6388\u6b0a',
+    activateBtn: '\u555f\u7528',
+    freeHint: '\u514d\u8cbb\u7248\uff1a\u5f37\u5ea6\u4e0a\u9650 50%\uff0c\u50c5\u53c3\u8003\u98a8\u683c',
+    activating: '\u555f\u7528\u4e2d...',
   },
   'zh-CN': {
     statusActive: '\u5df2\u542f\u7528',
@@ -52,6 +64,10 @@ const I18N = {
     hfLabel: '\u9ad8\u9891\u91cd\u5efa',
     dynamicsLabel: '\u52a8\u6001',
     footerVersion: 'v0.1.18',
+    licenseLabel: '\u6388\u6743',
+    activateBtn: '\u542f\u7528',
+    freeHint: '\u514d\u8d39\u7248\uff1a\u5f3a\u5ea6\u4e0a\u9650 50%\uff0c\u4ec5\u53c2\u8003\u98ce\u683c',
+    activating: '\u542f\u7528\u4e2d...',
   },
 };
 
@@ -193,3 +209,175 @@ document.querySelectorAll('.lang-btn').forEach(btn => {
     applyI18n();
   });
 });
+
+// ── License Management ──
+
+let licenseTier = 'Free'; // 'Free' or 'Pro'
+
+async function getDeviceId() {
+  const data = await chrome.storage.local.get('deviceId');
+  if (data.deviceId) return data.deviceId;
+  const id = crypto.randomUUID();
+  await chrome.storage.local.set({ deviceId: id });
+  return id;
+}
+
+async function loadLicense() {
+  const data = await chrome.storage.local.get('license');
+  const license = data.license;
+  if (!license) {
+    setTier('Free');
+    return;
+  }
+
+  // Check if cached license is still valid
+  const now = Date.now();
+  const expiresAt = new Date(license.expires_at).getTime();
+  if (expiresAt <= now) {
+    // Expired — clear and go Free
+    await chrome.storage.local.remove('license');
+    setTier('Free');
+    return;
+  }
+
+  // Use cached tier
+  setTier('Pro', license.license_key);
+
+  // Background revalidate if older than 7 days
+  const validatedAt = license.validated_at || 0;
+  if (now - validatedAt > REVALIDATE_DAYS * 86400000) {
+    revalidateInBackground(license.license_key, license.device_id);
+  }
+}
+
+async function revalidateInBackground(key, deviceId) {
+  try {
+    const res = await fetch(`${LICENSE_API}/license/validate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ license_key: key, device_id: deviceId }),
+    });
+    const data = await res.json();
+    if (data.valid) {
+      await chrome.storage.local.set({
+        license: { license_key: key, device_id: deviceId, tier: 'Pro', expires_at: data.expires_at, validated_at: Date.now() },
+      });
+    } else {
+      // Server says invalid — downgrade
+      await chrome.storage.local.remove('license');
+      setTier('Free');
+    }
+  } catch {
+    // Network error — keep cached tier, don't lock out
+  }
+}
+
+function setTier(tier, key) {
+  licenseTier = tier;
+  const activatedEl = document.getElementById('licenseActivated');
+  const notActivatedEl = document.getElementById('licenseNotActivated');
+
+  if (tier === 'Pro' && key) {
+    activatedEl.style.display = 'block';
+    notActivatedEl.style.display = 'none';
+    document.getElementById('licenseKeyDisplay').textContent = key.substring(0, 11) + '...' + key.substring(key.length - 4);
+    // Show expiry
+    chrome.storage.local.get('license', (data) => {
+      if (data.license?.expires_at) {
+        const d = new Date(data.license.expires_at);
+        document.getElementById('licenseExpiry').textContent = '→ ' + d.toLocaleDateString();
+      }
+    });
+  } else {
+    activatedEl.style.display = 'none';
+    notActivatedEl.style.display = 'block';
+  }
+
+  enforceLimits();
+}
+
+function enforceLimits() {
+  const isFree = licenseTier !== 'Pro';
+
+  // Strength cap
+  if (isFree && parseInt(strengthSlider.value) > 50) {
+    strengthSlider.value = 50;
+    saveAndNotify();
+  }
+  strengthSlider.max = isFree ? '50' : '100';
+  document.getElementById('strengthValue').textContent = strengthSlider.value + '%';
+
+  // Preset lock — only Reference for Free
+  styleBtns.forEach(btn => {
+    const preset = parseInt(btn.dataset.preset);
+    if (isFree && preset !== 0) {
+      btn.style.opacity = '0.3';
+      btn.style.pointerEvents = 'none';
+    } else {
+      btn.style.opacity = '';
+      btn.style.pointerEvents = '';
+    }
+  });
+
+  // Force Reference if Free and non-Reference selected
+  if (isFree && currentStylePreset !== 0) {
+    currentStylePreset = 0;
+    updateStyleUI();
+    saveAndNotify();
+  }
+}
+
+// Activate button
+document.getElementById('activateBtn').addEventListener('click', async () => {
+  const keyInput = document.getElementById('licenseKeyInput');
+  const errorEl = document.getElementById('licenseError');
+  const key = keyInput.value.trim();
+
+  if (!key) return;
+
+  // Validate key format client-side
+  if (!/^PHSL-BR-[A-Za-z0-9]{24}$/.test(key)) {
+    errorEl.textContent = 'Invalid key format';
+    errorEl.style.display = 'block';
+    return;
+  }
+
+  const activateBtn = document.getElementById('activateBtn');
+  activateBtn.textContent = t('activating');
+  activateBtn.disabled = true;
+  errorEl.style.display = 'none';
+
+  try {
+    const deviceId = await getDeviceId();
+    const res = await fetch(`${LICENSE_API}/license/activate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        license_key: key,
+        device_id: deviceId,
+        device_name: 'Chrome Extension',
+        platform: 'chrome',
+      }),
+    });
+    const data = await res.json();
+
+    if (data.valid) {
+      await chrome.storage.local.set({
+        license: { license_key: key, device_id: deviceId, tier: 'Pro', expires_at: data.expires_at, validated_at: Date.now() },
+      });
+      setTier('Pro', key);
+    } else {
+      errorEl.textContent = data.error || 'Activation failed';
+      errorEl.style.display = 'block';
+    }
+  } catch (e) {
+    errorEl.textContent = 'Network error — check connection';
+    errorEl.style.display = 'block';
+  } finally {
+    activateBtn.textContent = t('activateBtn');
+    activateBtn.disabled = false;
+  }
+});
+
+// Load license on startup
+loadLicense();

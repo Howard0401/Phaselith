@@ -21,6 +21,10 @@ fn main() {
             commands::uninstall_apo,
             commands::get_config,
             commands::is_apo_installed,
+            commands::license_activate,
+            commands::license_validate,
+            commands::license_deactivate,
+            commands::license_get_cached,
         ])
         .setup(|_app| {
             // Initialize mmap IPC bridge

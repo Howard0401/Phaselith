@@ -7,7 +7,7 @@
     <input
       type="range"
       min="0"
-      max="100"
+      :max="Math.round((max ?? 1.0) * 100)"
       :value="Math.round(modelValue * 100)"
       :disabled="disabled"
       @input="$emit('update:modelValue', $event.target.value / 100)"
@@ -20,6 +20,7 @@ defineProps({
   label: String,
   modelValue: Number,
   disabled: { type: Boolean, default: false },
+  max: { type: Number, default: 1.0 },
 });
 defineEmits(['update:modelValue']);
 </script>
