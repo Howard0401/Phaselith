@@ -1,0 +1,15 @@
+[package]
+name = "phaselith-license"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "License trait interface for Phaselith — platform-agnostic tier gating"
+
+[dependencies]
+phaselith-dsp-core = { path = "../dsp-core" }
+serde = { version = "1", features = ["derive"], optional = true }
+
+[features]
+default = []
+serde = ["dep:serde"]
