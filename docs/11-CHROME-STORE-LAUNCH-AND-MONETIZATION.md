@@ -47,7 +47,7 @@ Use **one Chrome Web Store listing** throughout all phases.
 
 | Tier | Price | Features |
 |------|-------|----------|
-| Studio | $199 one-time | DAW plugin, full controls, 3 device activations |
+| Studio | $39 one-time | DAW plugin, full controls, 3 device activations |
 
 ### License Key Prefix
 
