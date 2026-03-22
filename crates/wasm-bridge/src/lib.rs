@@ -60,21 +60,33 @@ fn make_config() -> EngineConfig {
     }
 }
 
-fn build_engine(sample_rate: u32, config: EngineConfig) -> PhaselithEngine {
-    PhaselithEngineBuilder::new(sample_rate, 1024)
+fn build_engine(sample_rate: u32, config: EngineConfig, max_sub_block: Option<usize>) -> PhaselithEngine {
+    let builder = PhaselithEngineBuilder::new(sample_rate, 1024)
         .with_channels(1) // Each engine processes one deinterleaved mono channel
-        .with_config(config)
-        .with_max_sub_block(1) // per-sample OLA readout: smoothest output
-        .build_default()
+        .with_config(config);
+
+    let builder = if let Some(size) = max_sub_block {
+        builder.with_max_sub_block(size)
+    } else {
+        builder
+    };
+
+    builder.build_default()
 }
 
 #[no_mangle]
 pub extern "C" fn init(sample_rate: f32) {
+    init_with_sub_block(sample_rate, 0);
+}
+
+#[no_mangle]
+pub extern "C" fn init_with_sub_block(sample_rate: f32, max_sub_block: u32) {
     let config = make_config();
     let sr = sample_rate as u32;
+    let max_sub_block = (max_sub_block > 0).then_some(max_sub_block as usize);
     unsafe {
-        *STATE.engine_l.get() = Some(build_engine(sr, config));
-        *STATE.engine_r.get() = Some(build_engine(sr, config));
+        *STATE.engine_l.get() = Some(build_engine(sr, config, max_sub_block));
+        *STATE.engine_r.get() = Some(build_engine(sr, config, max_sub_block));
     }
 }
 

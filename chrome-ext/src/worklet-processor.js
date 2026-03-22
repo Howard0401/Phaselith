@@ -208,7 +208,12 @@ class PhaselithProcessor extends AudioWorkletProcessor {
       });
 
       this.wasm = instance.exports;
-      this.wasm.init(sampleRate);
+      const maxSubBlock = this.platformOs === 'mac' ? 4 : 1;
+      if (this.wasm.init_with_sub_block) {
+        this.wasm.init_with_sub_block(sampleRate, maxSubBlock);
+      } else {
+        this.wasm.init(sampleRate);
+      }
 
       this.inputPtr = this.wasm.get_input_ptr();
       this.outputPtr = this.wasm.get_output_ptr();
@@ -220,6 +225,7 @@ class PhaselithProcessor extends AudioWorkletProcessor {
         platformOs: this.platformOs,
         debugVersion: this.debugVersion,
         sampleRate,
+        maxSubBlock,
         inputPtr: this.inputPtr,
         outputPtr: this.outputPtr,
         memoryBytes: this.wasm.memory?.buffer?.byteLength ?? 0,

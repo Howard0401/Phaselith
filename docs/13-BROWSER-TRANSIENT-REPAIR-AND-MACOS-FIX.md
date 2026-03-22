@@ -180,15 +180,71 @@ The current investigation target is whether macOS browser noise comes from:
 
 That is why the runtime now exposes independent browser-only probe modes instead of re-enabling the whole transient path at once.
 
+Later live listening uncovered a second browser-runtime problem on top of the
+transient investigation:
+
+1. the browser WASM bridge had been changed to `with_max_sub_block(1)`
+2. that per-sample split sounded attractive, but it made the Chrome extension
+   much more likely to stutter on macOS
+3. the stutter appeared even when startup logs looked healthy and did not show
+   explicit `WASM_ERROR` or early `overBudget` reports
+
+This means the browser artifact story had two layers:
+
+1. transient-path roughness
+2. browser runtime stutter from an overly aggressive sub-block policy
+
+The second issue was not solved by transient-safe mode alone.
+
 ## Practical Outcome
 
 The current shipping browser behavior is:
 
-1. Windows keeps the existing transient path and user-facing behavior
+1. Windows keeps the existing transient path and browser sub-block `1`
 2. macOS Chrome now defaults to `transient-safe` in the extension
 3. `transient-safe` keeps the delayed pre-echo path enabled, but only shapes the delayed enhancement delta and does not fade the dry waveform
-4. `declip-safe` remains available as a conservative fallback that keeps declip transient scaling active while disabling pre-echo shaping
-5. `stable-fallback` remains available as an escape hatch that forces `transient = 0`
+4. macOS Chrome also initializes the browser engine with `max_sub_block = 4`
+5. `declip-safe` remains available as a conservative fallback that keeps declip transient scaling active while disabling pre-echo shaping
+6. `stable-fallback` remains available as an escape hatch that forces `transient = 0`
+
+## Why the Browser Now Splits by Platform
+
+The browser runtime now initializes the WASM bridge differently by platform:
+
+1. Windows: `max_sub_block = 1`
+2. macOS: `max_sub_block = 4`
+
+### Reason for the Change
+
+The original browser bridge change to `with_max_sub_block(1)` applied the same
+per-sample OLA readout policy everywhere.
+
+That sounded best in direct listening, but in the Chrome extension runtime it
+also meant:
+
+1. a 128-sample render quantum was split into 128 tiny engine passes per channel
+2. macOS Chrome became audibly prone to stutter
+3. Windows still subjectively held together with that same setting
+
+The best current explanation is still a host-runtime difference, not a claim
+that one platform was "correct" and the other "buggy":
+
+1. macOS exposed the extra browser-side work more clearly in its low-latency
+   Chrome/Core Audio path
+2. Windows tolerated or masked that same cost better in real listening
+
+### Why macOS Uses 4
+
+macOS now uses `4` because real listening showed it as the best current
+tradeoff:
+
+1. `1` sounded slightly better but reintroduced audible stutter
+2. `4` removed the stutter
+3. `4` still preserved more of the finer sub-block readout character than a
+   full fallback to the default hop-sized fast path
+
+This is the current shipping browser compromise until the engine becomes cheap
+enough to revisit `1` safely on macOS.
 
 The browser runtime also supports hidden macOS probe modes through `chrome.storage.local`:
 
@@ -203,6 +259,16 @@ The browser runtime also supports hidden macOS probe modes through `chrome.stora
 5. `declip-probe`
    backward-compatible alias for `declip-safe`
 
+## Files Changed for the Platform Split
+
+Browser runtime:
+
+- `chrome-ext/src/worklet-processor.js`
+
+WASM bridge:
+
+- `crates/wasm-bridge/src/lib.rs`
+
 ## Next Engineering Step
 
 The next correct step is not another threshold tweak.
@@ -212,7 +278,8 @@ That split now exists in code, and current real-device listening suggests the de
 The next engineering step is:
 
 1. keep validating `transient-safe` on longer real listening sessions
-2. keep `declip-safe` and `stable-fallback` as instant rollback modes
-3. if broader listening stays clean, keep the current naming and retire the old probe aliases later
+2. keep validating the new browser split policy: Windows `1`, macOS `4`
+3. keep `declip-safe` and `stable-fallback` as instant rollback modes
+4. if broader listening stays clean, keep the current naming and retire the old probe aliases later
 
 Until one of those isolated paths proves clean in live listening, re-enabling the full transient setting on macOS browser playback is still too risky.
