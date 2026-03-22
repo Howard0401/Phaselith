@@ -30,11 +30,39 @@ Use **one Chrome Web Store listing** throughout all phases.
 | Free | $0 | Strength ≤50%, Reference preset only, all audio sources |
 | Pro | $4.99/month or $39.99/year | Full strength, all 7 presets, full controls |
 
-### Desktop APO (separate product)
+### Desktop APO (System Pro)
 
 | Tier | Price | Features |
 |------|-------|----------|
-| TBD | TBD | Full system-wide audio restoration |
+| Free | $0 | Strength ≤50%, Reference preset only, system-wide |
+| System Pro | $7.99/month or $59.99/year | Full strength, all presets, full controls |
+
+### Bundle (Browser + System)
+
+| Tier | Price | Features |
+|------|-------|----------|
+| Bundle | $9.99/month or $79.99/year | Chrome Extension + Windows APO, full controls |
+
+### VST3 Studio (future, separate product)
+
+| Tier | Price | Features |
+|------|-------|----------|
+| Studio | $199 one-time | DAW plugin, full controls, 3 device activations |
+
+### License Key Prefix
+
+| Product | Prefix | Platforms allowed |
+|---------|--------|-------------------|
+| Browser Pro | `PHSL-BR-` | Chrome Extension only |
+| System Pro | `PHSL-SY-` | Windows APO, macOS Core Audio |
+| Bundle | `PHSL-BU-` | Chrome + APO + Core Audio |
+| Studio | `PHSL-ST-` | VST3 only |
+
+### Cross-Product Pricing Logic
+
+- Bundle ($9.99) saves $3/month vs buying Browser ($4.99) + System ($7.99) separately
+- Each key allows up to 3 device activations
+- Subscription expiry auto-downgrades to Free via server webhook (no client-side deactivation needed)
 
 ## Product Positioning
 
