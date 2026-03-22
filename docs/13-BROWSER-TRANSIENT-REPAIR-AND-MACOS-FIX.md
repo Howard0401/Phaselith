@@ -184,9 +184,10 @@ Later live listening uncovered a second browser-runtime problem on top of the
 transient investigation:
 
 1. the browser WASM bridge had been changed to `with_max_sub_block(1)`
-2. that per-sample split sounded attractive, but it made the Chrome extension
-   much more likely to stutter on macOS
-3. the stutter appeared even when startup logs looked healthy and did not show
+2. that per-sample split sounded best in direct listening
+3. but on some macOS Chrome systems it also made the extension much more likely
+   to stutter
+4. the stutter appeared even when startup logs looked healthy and did not show
    explicit `WASM_ERROR` or early `overBudget` reports
 
 This means the browser artifact story had two layers:
@@ -203,7 +204,8 @@ The current shipping browser behavior is:
 1. Windows keeps the existing transient path and browser sub-block `1`
 2. macOS Chrome now defaults to `transient-safe` in the extension
 3. `transient-safe` keeps the delayed pre-echo path enabled, but only shapes the delayed enhancement delta and does not fade the dry waveform
-4. macOS Chrome also initializes the browser engine with `max_sub_block = 4`
+4. macOS Chrome now defaults to `max_sub_block = 1`, but exposes a popup
+   fallback to `8` for systems that still stutter
 5. `declip-safe` remains available as a conservative fallback that keeps declip transient scaling active while disabling pre-echo shaping
 6. `stable-fallback` remains available as an escape hatch that forces `transient = 0`
 
@@ -211,8 +213,8 @@ The current shipping browser behavior is:
 
 The browser runtime now initializes the WASM bridge differently by platform:
 
-1. Windows: `max_sub_block = 1`
-2. macOS: `max_sub_block = 4`
+1. Windows: fixed `max_sub_block = 1`
+2. macOS: default `max_sub_block = 1`, with a user-facing popup override to `8`
 
 ### Reason for the Change
 
@@ -223,8 +225,9 @@ That sounded best in direct listening, but in the Chrome extension runtime it
 also meant:
 
 1. a 128-sample render quantum was split into 128 tiny engine passes per channel
-2. macOS Chrome became audibly prone to stutter
-3. Windows still subjectively held together with that same setting
+2. some macOS Chrome systems became audibly prone to stutter
+3. other macOS systems could still run it cleanly
+4. Windows still subjectively held together with that same setting
 
 The best current explanation is still a host-runtime difference, not a claim
 that one platform was "correct" and the other "buggy":
@@ -233,18 +236,33 @@ that one platform was "correct" and the other "buggy":
    Chrome/Core Audio path
 2. Windows tolerated or masked that same cost better in real listening
 
-### Why macOS Uses 4
+### Why macOS Uses a `1 / 8` Popup Split
 
-macOS now uses `4` because real listening showed it as the best current
-tradeoff:
+Real listening showed two different truths at once:
 
-1. `1` sounded slightly better but reintroduced audible stutter
-2. `4` removed the stutter
-3. `4` still preserved more of the finer sub-block readout character than a
-   full fallback to the default hop-sized fast path
+1. `1` really does sound best
+2. some macOS systems still need a much larger fallback to stop stutter
+
+That made the old fixed macOS value of `4` feel too hidden and too in-between
+for a shipping product.
+
+The extension now exposes only two macOS-facing choices:
+
+1. `1`
+   use the best-sounding per-sample readout when the host can sustain it
+2. `8`
+   use a much more conservative emergency fallback for users who hit crackle or
+   stutter
+
+The reason for exposing `1 / 8` instead of every intermediate engineering value
+is product clarity:
+
+1. users do not need a tuning lab
+2. they need a clear best mode
+3. and a clear stability fallback
 
 This is the current shipping browser compromise until the engine becomes cheap
-enough to revisit `1` safely on macOS.
+enough to make the best-sounding mode universally safe on macOS.
 
 The browser runtime also supports hidden macOS probe modes through `chrome.storage.local`:
 

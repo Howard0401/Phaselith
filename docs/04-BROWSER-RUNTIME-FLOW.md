@@ -64,39 +64,44 @@ The browser runtime now uses a platform-specific sub-block policy when the
 AudioWorklet initializes the WASM bridge:
 
 1. Windows initializes the browser engine with `max_sub_block = 1`
-2. macOS initializes the browser engine with `max_sub_block = 4`
+2. macOS initializes the browser engine with `max_sub_block = 1` by default
+3. macOS also exposes a popup override between `1` and `8`
 
-This is not a product-facing control. It is a browser-runtime stability rule.
+This is now a limited product-facing control on macOS only.
 
 ### Why This Exists
 
-Recent listening and code review showed that the browser WASM bridge had been
-forced to `with_max_sub_block(1)` for every platform.
+Recent listening and code review showed that lower sub-block sizes do sound
+better in this browser runtime.
 
-That sounded very smooth, but it also meant a 128-sample Chrome render quantum
-was split into 128 tiny engine passes per channel.
+At the same time, they also increase the chance of host-side instability on
+some macOS Chrome systems even when startup logs look healthy.
 
-In the extension runtime, that has two different real-world outcomes:
+The real-world listening result is:
 
-1. Windows still subjectively tolerated the per-sample split
-2. macOS Chrome became much more likely to audibly stutter even when there was
-   no explicit `WASM_ERROR`, `RUNTIME_ERROR`, or early `overBudget` warning
+1. `1` sounds best
+2. some macOS systems can still run `1` cleanly
+3. other macOS systems need a much more conservative fallback
+4. Windows has so far tolerated `1` well enough to keep it as the fixed default
 
-So the browser runtime now treats `max_sub_block = 1` as a Windows-safe
-listening mode, but not as the default macOS browser setting.
+### Why macOS Exposes `1 / 8`
 
-### Why macOS Uses 4 Instead of the Default Hop Path
+macOS now exposes only two browser-facing choices in the popup:
 
-The macOS browser setting is `4`, not the larger default hop-sized fast path,
-because live listening showed a useful middle ground:
+1. `1`
+   best sound quality, lowest sub-block, highest risk on unstable systems
+2. `8`
+   intentionally conservative fallback for users who hear crackle or stutter
 
-1. `1` sounded best but was not stable enough on macOS Chrome
-2. `4` removed the obvious stutter while preserving more of the finer OLA
-   readout character than a full rollback to the default fast path
+This was chosen for a product reason, not just an engineering reason:
 
-This should be understood as a runtime tradeoff, not as proof that macOS or
-Chrome has a platform bug. It is an engineering choice based on real listening
-behavior in the browser host.
+1. most users either want the best-sounding mode
+2. or they want an obvious "make it stable" escape hatch
+3. intermediate values are useful for engineering, but not necessary in the
+   main user-facing control
+
+This should still be understood as a runtime tradeoff, not as proof that macOS
+or Chrome has a platform bug. It is a browser-host stability control.
 
 ## Transient Repair Note
 
@@ -112,7 +117,8 @@ That transient-safe mode is now paired with the macOS browser sub-block policy
 above. In practice, stable macOS browser playback currently depends on both:
 
 1. delta-only delayed transient shaping
-2. `max_sub_block = 4` instead of `1`
+2. the ability to fall back from `1` to a larger sub-block when a given macOS
+   Chrome system cannot sustain the best-sounding mode
 
 ## Current Limitations
 

@@ -190,6 +190,9 @@ function updateConfig(cfg) {
     macTransientMode: currentMacTransientRuntimeMode,
     stylePreset: cfg.stylePreset ?? 0,
     synthesisMode: cfg.synthesisMode ?? 0,
+    maxSubBlock: currentPlatformOs === 'mac'
+      ? (cfg.maxSubBlockFrames === 8 ? 8 : 1)
+      : 1,
   });
 }
 

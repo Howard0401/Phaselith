@@ -21,11 +21,15 @@ const I18N = {
     strengthLabel: 'Strength',
     hfLabel: 'HF Reconstruction',
     dynamicsLabel: 'Dynamics',
-    footerVersion: 'v0.1.18',
+    footerVersion: 'v0.1.25',
     licenseLabel: 'License',
     activateBtn: 'Activate',
     freeHint: 'Free: Strength capped at 50%, Reference preset only',
     activating: 'Activating...',
+    macRuntimeModeLabel: 'macOS Runtime Mode',
+    macRuntimeModeBest: '1 (Best)',
+    macRuntimeModeStable: '8 (Stable)',
+    macRuntimeModeHint: 'macOS only. 1 sounds best but may crackle on some systems. 8 is the safer fallback.',
   },
   'zh-TW': {
     statusActive: '\u5df2\u555f\u7528',
@@ -42,11 +46,15 @@ const I18N = {
     strengthLabel: '\u5f37\u5ea6',
     hfLabel: '\u9ad8\u983b\u91cd\u5efa',
     dynamicsLabel: '\u52d5\u614b',
-    footerVersion: 'v0.1.18',
+    footerVersion: 'v0.1.25',
     licenseLabel: '\u6388\u6b0a',
     activateBtn: '\u555f\u7528',
     freeHint: '\u514d\u8cbb\u7248\uff1a\u5f37\u5ea6\u4e0a\u9650 50%\uff0c\u50c5\u53c3\u8003\u98a8\u683c',
     activating: '\u555f\u7528\u4e2d...',
+    macRuntimeModeLabel: 'macOS \u57f7\u884c\u6a21\u5f0f',
+    macRuntimeModeBest: '1 \uff08\u97f3\u8cea\u6700\u4f73\uff09',
+    macRuntimeModeStable: '8 \uff08\u7a69\u5b9a\u512a\u5148\uff09',
+    macRuntimeModeHint: '\u50c5 macOS \u986f\u793a\u30021 \u97f3\u8cea\u6700\u597d\uff0c\u4f46\u67d0\u4e9b\u7cfb\u7d71\u53ef\u80fd\u6703\u5361\u9813\uff1b8 \u662f\u8f03\u5b89\u5168\u7684\u5099\u63f4\u8a2d\u5b9a\u3002',
   },
   'zh-CN': {
     statusActive: '\u5df2\u542f\u7528',
@@ -63,11 +71,15 @@ const I18N = {
     strengthLabel: '\u5f3a\u5ea6',
     hfLabel: '\u9ad8\u9891\u91cd\u5efa',
     dynamicsLabel: '\u52a8\u6001',
-    footerVersion: 'v0.1.18',
+    footerVersion: 'v0.1.25',
     licenseLabel: '\u6388\u6743',
     activateBtn: '\u542f\u7528',
     freeHint: '\u514d\u8d39\u7248\uff1a\u5f3a\u5ea6\u4e0a\u9650 50%\uff0c\u4ec5\u53c2\u8003\u98ce\u683c',
     activating: '\u542f\u7528\u4e2d...',
+    macRuntimeModeLabel: 'macOS \u8fd0\u884c\u6a21\u5f0f',
+    macRuntimeModeBest: '1 \uff08\u97f3\u8d28\u6700\u4f73\uff09',
+    macRuntimeModeStable: '8 \uff08\u7a33\u5b9a\u4f18\u5148\uff09',
+    macRuntimeModeHint: '\u4ec5 macOS \u663e\u793a\u30021 \u97f3\u8d28\u6700\u597d\uff0c\u4f46\u5728\u67d0\u4e9b\u7cfb\u7edf\u4e0a\u53ef\u80fd\u4f1a\u5361\u987f\uff1b8 \u662f\u66f4\u4fdd\u5b88\u7684\u5907\u63f4\u8bbe\u5b9a\u3002',
   },
 };
 
@@ -108,13 +120,17 @@ const dynSlider = document.getElementById('dynamics');
 const statusEl = document.getElementById('status');
 const styleGrid = document.getElementById('styleGrid');
 const styleBtns = styleGrid.querySelectorAll('.style-btn');
+const macRuntimeSection = document.getElementById('macRuntimeSection');
+const macSubBlockBtns = document.querySelectorAll('.mac-sub-block-btn');
 
 let currentStylePreset = 0;
 let currentPlatformOs = 'unknown';
+let currentMacSubBlock = 1;
 
 chrome.runtime.getPlatformInfo((info) => {
   if (!chrome.runtime.lastError && info?.os) {
     currentPlatformOs = info.os;
+    renderMacRuntimeSection();
   }
 });
 
@@ -125,15 +141,18 @@ function getSynthesisMode() {
 }
 
 // ── Load saved state ──
-chrome.storage.local.get(['enabled', 'strength', 'hfReconstruction', 'dynamics', 'stylePreset', 'lang'], (data) => {
+chrome.storage.local.get(['enabled', 'strength', 'hfReconstruction', 'dynamics', 'stylePreset', 'lang', 'macSubBlockFrames'], (data) => {
   enableToggle.checked = data.enabled ?? false;
   strengthSlider.value = data.strength ?? 70;
   hfSlider.value = data.hfReconstruction ?? 80;
   dynSlider.value = data.dynamics ?? 60;
   currentStylePreset = data.stylePreset ?? 0;
   currentLang = data.lang || detectLang();
+  currentMacSubBlock = data.macSubBlockFrames ?? 1;
   updateStyleUI();
+  updateMacSubBlockUI();
   applyI18n();
+  renderMacRuntimeSection();
 });
 
 function updateUI() {
@@ -157,6 +176,17 @@ function updateStyleUI() {
   });
 }
 
+function updateMacSubBlockUI() {
+  macSubBlockBtns.forEach(btn => {
+    const subBlock = parseInt(btn.dataset.subBlock, 10);
+    btn.classList.toggle('selected', subBlock === currentMacSubBlock);
+  });
+}
+
+function renderMacRuntimeSection() {
+  macRuntimeSection.style.display = currentPlatformOs === 'mac' ? 'block' : 'none';
+}
+
 function buildState() {
   return {
     enabled: enableToggle.checked,
@@ -165,6 +195,7 @@ function buildState() {
     dynamics: parseInt(dynSlider.value),
     stylePreset: currentStylePreset,
     synthesisMode: getSynthesisMode(),
+    macSubBlockFrames: currentPlatformOs === 'mac' ? currentMacSubBlock : undefined,
   };
 }
 
@@ -191,6 +222,28 @@ enableToggle.addEventListener('change', async () => {
 strengthSlider.addEventListener('input', saveAndNotify);
 hfSlider.addEventListener('input', saveAndNotify);
 dynSlider.addEventListener('input', saveAndNotify);
+
+async function saveMacSubBlockAndRestartIfNeeded(nextSubBlock) {
+  currentMacSubBlock = nextSubBlock;
+  updateMacSubBlockUI();
+  await chrome.storage.local.set({ macSubBlockFrames: currentMacSubBlock });
+
+  if (!enableToggle.checked) {
+    return;
+  }
+
+  await chrome.runtime.sendMessage({ type: 'STOP_CAPTURE' });
+  await chrome.runtime.sendMessage({ type: 'START_CAPTURE' });
+}
+
+macSubBlockBtns.forEach((btn) => {
+  btn.addEventListener('click', async () => {
+    if (currentPlatformOs !== 'mac') return;
+    const nextSubBlock = parseInt(btn.dataset.subBlock, 10);
+    if (nextSubBlock === currentMacSubBlock) return;
+    await saveMacSubBlockAndRestartIfNeeded(nextSubBlock);
+  });
+});
 
 // Style preset buttons
 styleBtns.forEach(btn => {

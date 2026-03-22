@@ -163,7 +163,7 @@ async function startCapture() {
 
     // Read saved config from storage (offscreen can't access chrome.storage)
     const config = await chrome.storage.local.get(
-      ['strength', 'hfReconstruction', 'dynamics', 'enabled', 'stylePreset', 'synthesisMode', 'macTransientMode']
+      ['strength', 'hfReconstruction', 'dynamics', 'enabled', 'stylePreset', 'synthesisMode', 'macTransientMode', 'macSubBlockFrames']
     );
     config.macTransientMode = normalizeMacTransientMode(config.macTransientMode);
     if (platformOs === 'mac' && (!config.macTransientMode || config.macTransientMode === 'declip-safe')) {
@@ -171,6 +171,9 @@ async function startCapture() {
       await chrome.storage.local.set({ macTransientMode: config.macTransientMode });
     } else if (!config.macTransientMode) {
       config.macTransientMode = DEFAULT_MAC_TRANSIENT_MODE;
+    }
+    if (platformOs === 'mac') {
+      config.macSubBlockFrames = config.macSubBlockFrames === 8 ? 8 : 1;
     }
 
     chrome.runtime.sendMessage({

@@ -46,6 +46,7 @@ class PhaselithProcessor extends AudioWorkletProcessor {
     this.impactGain = null;
     this.body = null;
     this.ambiencePreserve = null;
+    this.maxSubBlock = 1;
 
     this.port.onmessage = (e) => {
       const msg = e.data;
@@ -78,6 +79,7 @@ class PhaselithProcessor extends AudioWorkletProcessor {
         if (msg.impactGain !== undefined) this.impactGain = msg.impactGain;
         if (msg.body !== undefined) this.body = msg.body;
         if (msg.ambiencePreserve !== undefined) this.ambiencePreserve = msg.ambiencePreserve;
+        if (msg.maxSubBlock !== undefined) this.maxSubBlock = msg.maxSubBlock;
 
         if (this.wasmReady) {
           this._applyConfig();
@@ -208,7 +210,9 @@ class PhaselithProcessor extends AudioWorkletProcessor {
       });
 
       this.wasm = instance.exports;
-      const maxSubBlock = this.platformOs === 'mac' ? 4 : 1;
+      const maxSubBlock = this.platformOs === 'mac'
+        ? (this.maxSubBlock === 8 ? 8 : 1)
+        : 1;
       if (this.wasm.init_with_sub_block) {
         this.wasm.init_with_sub_block(sampleRate, maxSubBlock);
       } else {

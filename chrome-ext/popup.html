@@ -177,6 +177,10 @@
       font-weight: 600;
       box-shadow: 0 0 12px rgba(0, 212, 255, 0.08);
     }
+    .style-btn.compact {
+      min-width: 0;
+      padding: 7px 10px;
+    }
 
     /* ── Sliders ── */
     .slider-group {
@@ -231,6 +235,28 @@
     input[type="range"]:active::-webkit-slider-thumb {
       transform: scale(1.3);
       box-shadow: 0 0 14px rgba(0, 212, 255, 0.6);
+    }
+
+    /* ── macOS Runtime Mode ── */
+    .mac-only {
+      display: none;
+    }
+    .mac-runtime-label {
+      font-size: 12px;
+      font-weight: 500;
+      color: #999;
+      margin-bottom: 10px;
+    }
+    .mac-runtime-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+    }
+    .mac-runtime-hint {
+      margin-top: 8px;
+      font-size: 10px;
+      line-height: 1.4;
+      color: #666;
     }
 
     /* ── Footer ── */
@@ -333,6 +359,15 @@
         </div>
         <input type="range" id="dynamics" min="0" max="100" value="60">
       </div>
+    </div>
+
+    <div class="section mac-only" id="macRuntimeSection">
+      <div class="mac-runtime-label" data-i18n="macRuntimeModeLabel"></div>
+      <div class="mac-runtime-grid">
+        <button class="style-btn compact mac-sub-block-btn" data-sub-block="1" data-i18n="macRuntimeModeBest"></button>
+        <button class="style-btn compact mac-sub-block-btn" data-sub-block="8" data-i18n="macRuntimeModeStable"></button>
+      </div>
+      <div class="mac-runtime-hint" data-i18n="macRuntimeModeHint"></div>
     </div>
   </div>
 
