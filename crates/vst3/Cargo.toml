@@ -1,0 +1,15 @@
+[package]
+name = "phaselith-vst3"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+name = "phaselith_vst3"
+
+[dependencies]
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = ["assert_process_allocs"] }
+phaselith-dsp-core = { path = "../dsp-core" }
+phaselith-license = { path = "../license" }

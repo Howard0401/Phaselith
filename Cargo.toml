@@ -8,6 +8,7 @@ members = [
     "crates/wasm-bridge",
     "crates/tauri-app",
     "crates/core-audio",
+    "crates/vst3",
 ]
 exclude = [
     "tools/audio_recorder",
@@ -32,4 +33,7 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package.phaselith-core-audio]
+opt-level = 3
+
+[profile.dev.package.phaselith-vst3]
 opt-level = 3
