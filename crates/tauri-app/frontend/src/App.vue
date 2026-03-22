@@ -113,9 +113,6 @@
           <span style="font-size:11px; color:#555; font-family:monospace;">{{ maskedKey }}</span>
           <span style="font-size:10px; color:#555;">{{ licenseExpiry }}</span>
         </div>
-        <div style="margin-top:6px; text-align:right;">
-          <button class="btn uninstall" style="padding:6px 12px; font-size:11px;" @click="deactivateLicense">Deactivate</button>
-        </div>
       </div>
       <div v-else class="license-free">
         <div style="display:flex; gap:6px; margin-bottom:6px;">
