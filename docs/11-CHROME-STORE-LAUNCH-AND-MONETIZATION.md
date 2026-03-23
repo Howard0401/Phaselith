@@ -13,7 +13,7 @@ Use **one Chrome Web Store listing** throughout all phases.
 - Public Early Access
 - Free tier: Strength capped at 50%, Reference preset only
 - Pro tier: Full strength (0-100%), all 7 presets, full HF/dynamics control
-- Pricing: **$4.99/month or $39.99/year**
+- Pricing: **$4.99/month or $49.99/year**
 
 ### Phase 2 — Mature Product
 
@@ -28,7 +28,7 @@ Use **one Chrome Web Store listing** throughout all phases.
 | Tier | Price | Features |
 |------|-------|----------|
 | Free | $0 | Strength ≤50%, Reference preset only, all audio sources |
-| Pro | $4.99/month or $39.99/year | Full strength, all 7 presets, full controls |
+| Pro | $4.99/month or $49.99/year | Full strength, all 7 presets, full controls |
 
 ### Desktop APO (System Pro)
 
@@ -90,7 +90,7 @@ Phaselith should NOT be described as:
 
 When free user hits a Pro-only feature:
 
-> Unlock full strength and all style presets — $4.99/month or $39.99/year.
+> Unlock full strength and all style presets — $4.99/month or $49.99/year.
 
 ### Store Listing Copy
 
@@ -110,7 +110,7 @@ When free user hits a Pro-only feature:
 
 ### Is Phaselith free?
 
-Phaselith has a free tier that lets you experience the core restoration engine with Reference preset at up to 50% strength. Pro unlocks full controls for $4.99/month or $39.99/year.
+Phaselith has a free tier that lets you experience the core restoration engine with Reference preset at up to 50% strength. Pro unlocks full controls for $4.99/month or $49.99/year.
 
 ### Why not just make it free?
 

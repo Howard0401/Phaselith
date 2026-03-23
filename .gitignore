@@ -5,3 +5,8 @@ dist/
 .claude/
 phaselith-extension.zip
 test-scripts/
+tools/
+.DS_Store
+*.exe
+*.pdb
+*.wav
