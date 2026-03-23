@@ -201,7 +201,7 @@ unsafe fn open_and_mmap(
     let fd = libc::open(
         c_path.as_ptr(),
         libc::O_RDWR | libc::O_CREAT,
-        0o666 as libc::mode_t,
+        0o666 as libc::mode_t as libc::c_uint,
     );
     if fd < 0 {
         return Err(IpcError::new(code_open, format!("open({path}): errno {}", *libc::__error())));

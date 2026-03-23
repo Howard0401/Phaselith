@@ -2530,6 +2530,7 @@ name = "phaselith-tauri"
 version = "0.1.24"
 dependencies = [
  "dirs 5.0.1",
+ "phaselith-core-audio",
  "phaselith-dsp-core",
  "reqwest 0.12.28",
  "serde",

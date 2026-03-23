@@ -3,10 +3,57 @@
 use crate::ipc_bridge;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+#[cfg(target_os = "macos")]
+use std::process::Command;
 
 // ─── License API ───
 
 const LICENSE_API: &str = "http://localhost:8787"; // dev; production: https://license.phaselith.com
+
+#[derive(Serialize)]
+pub struct HostPlatform {
+    pub os: &'static str,
+}
+
+#[tauri::command]
+pub fn get_host_platform() -> HostPlatform {
+    HostPlatform {
+        os: std::env::consts::OS,
+    }
+}
+
+fn system_license_platform() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        "coreaudio"
+    }
+    #[cfg(windows)]
+    {
+        "apo"
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        "desktop"
+    }
+}
+
+#[cfg(target_os = "macos")]
+const MACOS_DRIVER_INSTALL_PATH: &str = "/Library/Audio/Plug-Ins/HAL/PhaselithAudio.driver";
+
+#[cfg(target_os = "macos")]
+const MACOS_IPC_DIR: &str = "/tmp/phaselith";
+
+#[cfg(target_os = "macos")]
+const MACOS_IPC_CONFIG_PATH: &str = "/tmp/phaselith/shared_config.bin";
+
+#[cfg(target_os = "macos")]
+const MACOS_IPC_STATUS_PATH: &str = "/tmp/phaselith/shared_status.bin";
+
+#[cfg(target_os = "macos")]
+const MACOS_DEV_KEYCHAIN_NAME: &str = "PhaselithDev.keychain-db";
+
+#[cfg(target_os = "macos")]
+const MACOS_DEV_SIGNING_IDENTITY: &str = "Phaselith Local Driver Dev";
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct LicenseCache {
@@ -83,7 +130,7 @@ pub async fn license_activate(key: String) -> Result<ActivateResponse, String> {
             "license_key": key,
             "device_id": device_id,
             "device_name": "Phaselith Desktop",
-            "platform": "apo"
+            "platform": system_license_platform()
         }))
         .send()
         .await
@@ -364,6 +411,210 @@ fn resolve_apo_dll() -> Result<PathBuf, String> {
     ))
 }
 
+#[cfg(target_os = "macos")]
+fn resolve_workspace_root() -> Result<PathBuf, String> {
+    let mut candidates = Vec::new();
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(debug_target) = exe.parent() {
+            if let Some(target_dir) = debug_target.parent() {
+                if let Some(workspace_root) = target_dir.parent() {
+                    candidates.push(workspace_root.to_path_buf());
+                }
+            }
+        }
+    }
+
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd);
+    }
+
+    for root in candidates {
+        if root.join("Cargo.toml").exists() && root.join("crates/core-audio/resources/Info.plist").exists() {
+            return Ok(root);
+        }
+    }
+
+    Err("Could not locate workspace root for Core Audio bundle preparation".into())
+}
+
+#[cfg(target_os = "macos")]
+fn prepare_core_audio_bundle() -> Result<PathBuf, String> {
+    let workspace_root = resolve_workspace_root()?;
+    let dylib_path = workspace_root.join("target").join("release").join("libphaselith_core_audio.dylib");
+    let info_plist_path = workspace_root.join("crates").join("core-audio").join("resources").join("Info.plist");
+    if !dylib_path.exists() {
+        return Err(format!(
+            "Core Audio dylib not found at {}. Build it first with `cargo build -p phaselith-core-audio --release`.",
+            dylib_path.display()
+        ));
+    }
+    if !info_plist_path.exists() {
+        return Err(format!("Core Audio Info.plist not found at {}", info_plist_path.display()));
+    }
+
+    let bundle_root = workspace_root.join("target").join("PhaselithAudio.driver");
+    let contents_dir = bundle_root.join("Contents");
+    let macos_dir = contents_dir.join("MacOS");
+    let executable_path = macos_dir.join("phaselith_core_audio");
+
+    if bundle_root.exists() {
+        std::fs::remove_dir_all(&bundle_root)
+            .map_err(|e| format!("Failed to remove old Core Audio bundle: {e}"))?;
+    }
+    std::fs::create_dir_all(&macos_dir)
+        .map_err(|e| format!("Failed to create Core Audio bundle dir: {e}"))?;
+    std::fs::copy(&info_plist_path, contents_dir.join("Info.plist"))
+        .map_err(|e| format!("Failed to copy Info.plist: {e}"))?;
+    std::fs::copy(&dylib_path, &executable_path)
+        .map_err(|e| format!("Failed to copy Core Audio dylib: {e}"))?;
+
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = std::fs::metadata(&executable_path)
+        .map_err(|e| format!("Failed to stat Core Audio dylib: {e}"))?
+        .permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&executable_path, perms)
+        .map_err(|e| format!("Failed to chmod Core Audio dylib: {e}"))?;
+
+    codesign_core_audio_bundle(&bundle_root)?;
+
+    Ok(bundle_root)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_local_dev_keychain_path() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    Some(PathBuf::from(home).join("Library").join("Keychains").join(MACOS_DEV_KEYCHAIN_NAME))
+}
+
+#[cfg(target_os = "macos")]
+fn codesign_core_audio_bundle(bundle_root: &std::path::Path) -> Result<(), String> {
+    if let Some(keychain_path) = macos_local_dev_keychain_path() {
+        if keychain_path.exists() {
+            let has_identity = Command::new("/usr/bin/security")
+                .args(["find-certificate", "-c", MACOS_DEV_SIGNING_IDENTITY])
+                .arg(&keychain_path)
+                .status()
+                .map_err(|e| format!("Failed to query local macOS signing identity: {e}"))?;
+
+            if has_identity.success() {
+                let status = Command::new("/usr/bin/codesign")
+                    .args(["--force", "--deep", "--keychain"])
+                    .arg(&keychain_path)
+                    .args(["-s", MACOS_DEV_SIGNING_IDENTITY])
+                    .arg(bundle_root)
+                    .status()
+                    .map_err(|e| format!("Failed to run codesign with local macOS identity: {e}"))?;
+                if status.success() {
+                    eprintln!(
+                        "Phaselith Core Audio bundle signed with local identity '{}'",
+                        MACOS_DEV_SIGNING_IDENTITY
+                    );
+                    return Ok(());
+                }
+                return Err(format!(
+                    "codesign failed with local identity '{}'",
+                    MACOS_DEV_SIGNING_IDENTITY
+                ));
+            }
+        }
+    }
+
+    let status = Command::new("/usr/bin/codesign")
+        .args(["--force", "--deep", "-s", "-"])
+        .arg(bundle_root)
+        .status()
+        .map_err(|e| format!("Failed to run ad-hoc codesign: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("codesign failed while preparing Core Audio bundle".into())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn escape_applescript_string(input: &str) -> String {
+    input.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+#[cfg(target_os = "macos")]
+fn temp_script_path(name: &str) -> PathBuf {
+    std::env::temp_dir().join(name)
+}
+
+#[cfg(target_os = "macos")]
+fn run_macos_admin_script(script_name: &str, body: &str) -> Result<(), String> {
+    let script_path = temp_script_path(script_name);
+    std::fs::write(&script_path, body)
+        .map_err(|e| format!("Failed to write macOS admin script: {e}"))?;
+
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = std::fs::metadata(&script_path)
+        .map_err(|e| format!("Failed to stat macOS admin script: {e}"))?
+        .permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&script_path, perms)
+        .map_err(|e| format!("Failed to chmod macOS admin script: {e}"))?;
+
+    let apple_script = format!(
+        "do shell script \"/bin/sh {}\" with administrator privileges",
+        escape_applescript_string(&script_path.display().to_string())
+    );
+
+    let status = Command::new("/usr/bin/osascript")
+        .arg("-e")
+        .arg(&apple_script)
+        .status()
+        .map_err(|e| format!("Failed to launch macOS admin prompt: {e}"))?;
+
+    let _ = std::fs::remove_file(&script_path);
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err("macOS administrator authorization was cancelled or failed".into())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn verify_macos_driver_load() -> Result<(), String> {
+    use std::thread;
+    use std::time::Duration;
+
+    thread::sleep(Duration::from_millis(1200));
+
+    let output = Command::new("/usr/bin/log")
+        .args([
+            "show",
+            "--last",
+            "2m",
+            "--style",
+            "compact",
+            "--predicate",
+            "(process == \"coreaudiod\" OR process == \"amfid\") && eventMessage CONTAINS[c] \"Phaselith\"",
+        ])
+        .output()
+        .map_err(|e| format!("Failed to inspect macOS Core Audio logs: {e}"))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let log_text = format!("{stdout}\n{stderr}");
+
+    if log_text.contains("unknown certificate chain")
+        || log_text.contains("adhoc signed")
+        || log_text.contains("unable to load plug-in")
+        || log_text.contains("Remote driver service was unable to load plug-in")
+    {
+        return Err(
+            "Core Audio driver files were copied into the system, but macOS refused to load the driver because the current code-signing chain is not accepted by coreaudiod. Use an Apple Development / Developer ID signing identity for real driver loading."
+                .into(),
+        );
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 pub fn install_apo() -> Result<String, String> {
     #[cfg(windows)]
@@ -410,8 +661,32 @@ pub fn install_apo() -> Result<String, String> {
         Ok(format!("APO installed. {elevated_msg}. {ipc_msg}."))
     }
 
-    #[cfg(not(windows))]
-    Err("APO is only supported on Windows".into())
+    #[cfg(target_os = "macos")]
+    {
+        let bundle_root = prepare_core_audio_bundle()?;
+        let install_script = format!(
+            r#"#!/bin/sh
+set -eu
+DST_DIR="/Library/Audio/Plug-Ins/HAL"
+DST="$DST_DIR/PhaselithAudio.driver"
+mkdir -p "$DST_DIR"
+rm -rf "$DST"
+cp -R "{bundle}" "$DST"
+chown -R root:wheel "$DST"
+chmod -R a+rX "$DST"
+/bin/launchctl kickstart -k system/com.apple.audio.coreaudiod >/dev/null 2>&1 || /usr/bin/killall coreaudiod >/dev/null 2>&1 || true
+"#,
+            bundle = bundle_root.display()
+        );
+        run_macos_admin_script("phaselith_install_core_audio.sh", &install_script)?;
+        verify_macos_driver_load()?;
+        let ipc_ok = ipc_bridge::reconnect();
+        let ipc_msg = if ipc_ok { "IPC connected" } else { "IPC pending" };
+        Ok(format!("Core Audio driver installed. {ipc_msg}."))
+    }
+
+    #[cfg(not(any(windows, target_os = "macos")))]
+    Err("System audio runtime install is only supported on Windows and macOS".into())
 }
 
 /// Build the PowerShell install script content.
@@ -515,7 +790,11 @@ pub fn is_apo_installed() -> bool {
             false
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        std::path::Path::new(MACOS_DRIVER_INSTALL_PATH).exists()
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         false
     }
@@ -571,8 +850,29 @@ pub fn uninstall_apo() -> Result<String, String> {
         Ok(format!("APO uninstalled. {elevated_msg}."))
     }
 
-    #[cfg(not(windows))]
-    Err("APO is only supported on Windows".into())
+    #[cfg(target_os = "macos")]
+    {
+        let uninstall_script = format!(
+            r#"#!/bin/sh
+set -eu
+DST="{driver}"
+if [ -e "$DST" ]; then
+  rm -rf "$DST"
+fi
+/bin/launchctl kickstart -k system/com.apple.audio.coreaudiod >/dev/null 2>&1 || /usr/bin/killall coreaudiod >/dev/null 2>&1 || true
+"#,
+            driver = MACOS_DRIVER_INSTALL_PATH
+        );
+        run_macos_admin_script("phaselith_uninstall_core_audio.sh", &uninstall_script)?;
+        ipc_bridge::disconnect();
+        let _ = std::fs::remove_file(MACOS_IPC_CONFIG_PATH);
+        let _ = std::fs::remove_file(MACOS_IPC_STATUS_PATH);
+        let _ = std::fs::remove_dir(MACOS_IPC_DIR);
+        Ok("Core Audio driver removed. System audio has been restored.".into())
+    }
+
+    #[cfg(not(any(windows, target_os = "macos")))]
+    Err("System audio runtime uninstall is only supported on Windows and macOS".into())
 }
 
 /// Build the PowerShell uninstall script content.

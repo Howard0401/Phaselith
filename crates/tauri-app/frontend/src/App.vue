@@ -25,11 +25,11 @@
       <span>{{ dpcWarning.text }}</span>
     </div>
 
-    <section class="controls" :class="{ disabled: !apoInstalled }">
+    <section class="controls" :class="{ disabled: !runtimeInstalled }">
       <div class="toggle-row">
         <label>Enable Enhancement</label>
-        <label class="switch" :class="{ disabled: !apoInstalled }">
-          <input type="checkbox" v-model="config.enabled" :disabled="!apoInstalled" @change="applyConfig">
+        <label class="switch" :class="{ disabled: !runtimeInstalled }">
+          <input type="checkbox" v-model="config.enabled" :disabled="!runtimeInstalled" @change="applyConfig">
           <span class="slider"></span>
         </label>
       </div>
@@ -37,26 +37,26 @@
       <SliderControl
         label="Compensation Strength"
         v-model="config.strength"
-        :disabled="!apoInstalled"
+        :disabled="!runtimeInstalled"
         :max="licenseTier === 'Pro' ? 1.0 : 0.5"
         @update:modelValue="applyConfig"
       />
       <SliderControl
         label="HF Reconstruction"
         v-model="config.hf_reconstruction"
-        :disabled="!apoInstalled"
+        :disabled="!runtimeInstalled"
         @update:modelValue="applyConfig"
       />
       <SliderControl
         label="Dynamics Restoration"
         v-model="config.dynamics"
-        :disabled="!apoInstalled"
+        :disabled="!runtimeInstalled"
         @update:modelValue="applyConfig"
       />
       <SliderControl
         label="Transient Repair"
         v-model="config.transient"
-        :disabled="!apoInstalled"
+        :disabled="!runtimeInstalled"
         @update:modelValue="applyConfig"
       />
 
@@ -70,14 +70,14 @@
             v-for="(style, idx) in filterStyles"
             :key="idx"
             class="pill"
-            :class="{ active: config.filter_style === idx, disabled: !apoInstalled || (licenseTier !== 'Pro' && idx !== 0) }"
-            :disabled="!apoInstalled || (licenseTier !== 'Pro' && idx !== 0)"
+            :class="{ active: config.filter_style === idx, disabled: !runtimeInstalled || (licenseTier !== 'Pro' && idx !== 0) }"
+            :disabled="!runtimeInstalled || (licenseTier !== 'Pro' && idx !== 0)"
             @click="selectPreset(idx)"
           >{{ style }}</button>
           <button
             class="pill"
-            :class="{ active: config.filter_style === 3, disabled: !apoInstalled || licenseTier !== 'Pro' }"
-            :disabled="!apoInstalled || licenseTier !== 'Pro'"
+            :class="{ active: config.filter_style === 3, disabled: !runtimeInstalled || licenseTier !== 'Pro' }"
+            :disabled="!runtimeInstalled || licenseTier !== 'Pro'"
             @click="config.filter_style = 3; applyConfig()"
           >Custom</button>
         </div>
@@ -90,12 +90,12 @@
         <span v-if="isCustom" class="custom-badge">Custom</span>
       </div>
       <div v-show="advancedOpen" class="advanced-panel">
-        <SliderControl label="Warmth" v-model="config.warmth" :disabled="!apoInstalled" @update:modelValue="onAxisChange" />
-        <SliderControl label="Air / Brightness" v-model="config.air_brightness" :disabled="!apoInstalled" @update:modelValue="onAxisChange" />
-        <SliderControl label="Smoothness" v-model="config.smoothness" :disabled="!apoInstalled" @update:modelValue="onAxisChange" />
-        <SliderControl label="Spatial Spread" v-model="config.spatial_spread" :disabled="!apoInstalled" @update:modelValue="onAxisChange" />
-        <SliderControl label="Impact Gain" v-model="config.impact_gain" :disabled="!apoInstalled" @update:modelValue="onAxisChange" />
-        <SliderControl label="Body" v-model="config.body" :disabled="!apoInstalled" @update:modelValue="onAxisChange" />
+        <SliderControl label="Warmth" v-model="config.warmth" :disabled="!runtimeInstalled" @update:modelValue="onAxisChange" />
+        <SliderControl label="Air / Brightness" v-model="config.air_brightness" :disabled="!runtimeInstalled" @update:modelValue="onAxisChange" />
+        <SliderControl label="Smoothness" v-model="config.smoothness" :disabled="!runtimeInstalled" @update:modelValue="onAxisChange" />
+        <SliderControl label="Spatial Spread" v-model="config.spatial_spread" :disabled="!runtimeInstalled" @update:modelValue="onAxisChange" />
+        <SliderControl label="Impact Gain" v-model="config.impact_gain" :disabled="!runtimeInstalled" @update:modelValue="onAxisChange" />
+        <SliderControl label="Body" v-model="config.body" :disabled="!runtimeInstalled" @update:modelValue="onAxisChange" />
       </div>
 
     </section>
@@ -133,20 +133,20 @@
 
     <section class="mode-section">
       <div class="mode-header">
-        <label>Audio Mode</label>
-        <span class="mode-badge" :class="apoInstalled ? 'system' : 'browser'">
-          {{ apoInstalled ? 'System-Wide' : 'Chrome Extension' }}
+        <label>Audio Runtime</label>
+        <span class="mode-badge" :class="runtimeInstalled ? 'system' : 'browser'">
+          {{ runtimeInstalled ? systemRuntimeBadge : 'Chrome Extension' }}
         </span>
       </div>
-      <p class="mode-hint" v-if="apoInstalled">
-        APO is active. Disable Chrome extension to avoid crackling.
+      <p class="mode-hint" v-if="runtimeInstalled">
+        {{ installedRuntimeHint }}
       </p>
       <p class="mode-hint" v-else>
-        Use Chrome extension for per-tab enhancement. Install APO for system-wide.
+        {{ installRuntimeHint }}
       </p>
-      <div class="actions">
-        <button v-if="!apoInstalled" class="btn install" @click="installApo">Install APO</button>
-        <button v-else class="btn uninstall" @click="uninstallApo">Uninstall APO</button>
+      <div v-if="showRuntimeActions" class="actions">
+        <button v-if="!runtimeInstalled" class="btn install" @click="installApo">{{ installActionLabel }}</button>
+        <button v-else class="btn uninstall" @click="uninstallApo">{{ uninstallActionLabel }}</button>
       </div>
     </section>
 
@@ -189,9 +189,14 @@ const config = ref({
 const cpuCores = navigator.hardwareConcurrency || 1;
 const advancedOpen = ref(false);
 const isCustom = computed(() => config.value.filter_style === 3);
+const hostPlatform = ref('unknown');
+const isMac = computed(() => hostPlatform.value === 'macos');
+const isWindows = computed(() => hostPlatform.value === 'windows');
+const showRuntimeActions = computed(() => !isMac.value);
 
 const status = ref(null);
 const apoInstalled = ref(false);
+const runtimeInstalled = computed(() => apoInstalled.value);
 let pollTimer = null;
 
 // Pop mute notification
@@ -207,6 +212,30 @@ const licenseLoading = ref(false);
 const maskedKey = ref('');
 const licenseExpiry = ref('');
 const REVALIDATE_MS = 7 * 86400000; // 7 days
+const systemRuntimeName = computed(() => (isMac.value ? 'Core Audio' : isWindows.value ? 'APO' : 'system audio runtime'));
+const systemRuntimeBadge = computed(() => (isMac.value ? 'Core Audio' : isWindows.value ? 'Windows APO' : 'System-Wide'));
+const installActionLabel = computed(() => (isMac.value ? 'Install Core Audio' : isWindows.value ? 'Install APO' : 'Install Runtime'));
+const uninstallActionLabel = computed(() => (isMac.value ? 'Restore System Audio' : isWindows.value ? 'Uninstall APO' : 'Remove Runtime'));
+const installRuntimeHint = computed(() => {
+  if (isMac.value) {
+    return runtimeInstalled.value
+      ? 'Core Audio driver detected. Use Enable Enhancement above for A/B comparison on macOS.'
+      : 'Use the Chrome extension for per-tab enhancement. Core Audio driver setup is handled outside the main UI on macOS.';
+  }
+  if (isWindows.value) {
+    return 'Use Chrome extension for per-tab enhancement. Install APO for system-wide playback.';
+  }
+  return 'Install the system audio runtime for system-wide playback.';
+});
+const installedRuntimeHint = computed(() => {
+  if (isMac.value) {
+    return 'Core Audio driver is detected. Use Enable Enhancement for A/B comparison. Driver install and removal are not exposed in the main macOS UI.';
+  }
+  if (isWindows.value) {
+    return 'APO is active. Disable the Chrome extension to avoid crackling.';
+  }
+  return 'System audio runtime is active.';
+});
 
 // Processing = APO connected + enhancement enabled + audio flowing
 const isProcessing = computed(() =>
@@ -215,7 +244,7 @@ const isProcessing = computed(() =>
 
 // DPC latency warning — shows when system has DPC issues (Docker, Hyper-V, bad drivers)
 const dpcWarning = computed(() => {
-  if (!status.value) return null;
+  if (!isWindows.value || !status.value) return null;
   const mode = status.value.dpc_mode;
   if (mode === 0) return { level: 'profiling', icon: '...', text: 'Measuring system latency...' };
   if (mode === 2) return { level: 'warn', icon: '!', text: 'DPC latency detected — audio quality may be reduced' };
@@ -231,6 +260,13 @@ function ema(prev, next, alpha = EMA_ALPHA) {
 }
 
 onMounted(async () => {
+  try {
+    const platform = await invoke('get_host_platform');
+    hostPlatform.value = platform.os || 'unknown';
+  } catch {
+    hostPlatform.value = 'unknown';
+  }
+
   await loadLicense();
 
   try {
@@ -404,15 +440,15 @@ async function applyConfig() {
 }
 
 async function installApo() {
-  const ok = confirm(
-    'Install system-wide APO?\n\n' +
-    'Important: Disable the Chrome extension before installing.\n' +
-    'APO and Chrome extension cannot be active at the same time.'
+  const ok = confirm(isMac.value
+    ? 'Install system-wide Core Audio driver?\n\nDisable the Chrome extension first to avoid double-processing.\nYou will be able to A/B with Enable Enhancement and fully restore stock audio from this app.'
+    : 'Install system-wide APO?\n\nImportant: Disable the Chrome extension before installing.\nAPO and Chrome extension cannot be active at the same time.'
   );
   if (!ok) return;
   try {
     const msg = await invoke('install_apo');
     apoInstalled.value = true;
+    await applyConfig();
     alert(msg);
   } catch (e) {
     alert('Error: ' + e);
@@ -423,7 +459,7 @@ async function uninstallApo() {
   try {
     const msg = await invoke('uninstall_apo');
     apoInstalled.value = false;
-    alert(msg + '\n\nYou can now use the Chrome extension.');
+    alert(isMac.value ? msg : msg + '\n\nYou can now use the Chrome extension.');
   } catch (e) {
     alert('Error: ' + e);
   }

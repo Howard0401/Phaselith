@@ -7,7 +7,9 @@
 
 mod ipc_bridge;
 mod commands;
+#[cfg(windows)]
 mod endpoint_bind;
+#[cfg(windows)]
 mod com_bind;
 
 fn main() {
@@ -16,6 +18,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::get_status,
             commands::get_ipc_state,
+            commands::get_host_platform,
             commands::set_config,
             commands::install_apo,
             commands::uninstall_apo,

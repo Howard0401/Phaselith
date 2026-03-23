@@ -30,8 +30,15 @@ windows = { version = "0.58", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+phaselith-core-audio = { path = "../core-audio" }
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+
+[features]
+default = []
+custom-protocol = ["tauri/custom-protocol"]
 
 [[bin]]
 name = "phaselith-tauri"
