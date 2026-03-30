@@ -1,7 +1,7 @@
 // Popup UI logic — communicates with background service worker
 
 // ── License API ──
-const LICENSE_API = 'http://localhost:8787'; // dev; production: https://license.phaselith.com
+const LICENSE_API = 'https://license.phaselith.com';
 const REVALIDATE_DAYS = 7;
 
 // ── i18n (manual language selector) ──
