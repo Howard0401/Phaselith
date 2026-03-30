@@ -1,6 +1,6 @@
 {
   "appName": { "message": "Phaselith" },
-  "appDesc": { "message": "\u6bcf\u6708\u4e00\u676f\u5496\u5561 \u2014 \u8ba9\u4f60\u7684 YouTube \u548c Spotify \u5728\u73b0\u6709\u8033\u673a\u4e0a\u542c\u51fa\u4e13\u4e1a DAC \u7684\u8d28\u611f\u3002" },
+  "appDesc": { "message": "\u901a\u8fc7\u73b0\u6709\u8033\u673a\u83b7\u5f97\u66f4\u597d\u7684\u97f3\u8d28 \u2014 \u8fd8\u539f YouTube\u3001Spotify \u53ca\u6d4f\u89c8\u5668\u97f3\u9891\u4e2d\u5931\u53bb\u7684\u7ec6\u8282\u3002" },
   "statusActive": { "message": "\u5df2\u542f\u7528" },
   "statusInactive": { "message": "\u672a\u542f\u7528" },
   "enableEnhancement": { "message": "\u542f\u7528\u589e\u5f3a" },

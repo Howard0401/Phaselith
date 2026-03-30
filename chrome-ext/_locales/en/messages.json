@@ -1,6 +1,6 @@
 {
   "appName": { "message": "Phaselith" },
-  "appDesc": { "message": "One coffee a month \u2014 turn your YouTube and Spotify into studio-quality audio through your existing headphones." },
+  "appDesc": { "message": "Better audio through your existing headphones \u2014 restore lost detail from YouTube, Spotify, and any browser audio." },
   "statusActive": { "message": "Active" },
   "statusInactive": { "message": "Inactive" },
   "enableEnhancement": { "message": "Enable Enhancement" },
