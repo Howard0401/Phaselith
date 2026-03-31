@@ -27,6 +27,10 @@ class PhaselithProcessor extends AudioWorkletProcessor {
     this.timingEventCount = 0;
     this.macProcessLogCount = 0;
     this.debugVersion = 'unknown';
+    this.levelInputSqEma = 0;
+    this.levelOutputSqEma = 0;
+    this.levelMeterFrames = 0;
+    this.levelMeterPrimed = false;
 
     // Cached config — persisted across startup so nothing is lost
     this.enabled = true;
@@ -46,7 +50,10 @@ class PhaselithProcessor extends AudioWorkletProcessor {
     this.impactGain = null;
     this.body = null;
     this.bodyPassEnabled = false;
+    this.hfTame = 0;
+    this.airContinuity = 0;
     this.ambiencePreserve = null;
+    this.ambienceGlue = 0;
     this.maxSubBlock = 1;
 
     this.port.onmessage = (e) => {
@@ -80,7 +87,10 @@ class PhaselithProcessor extends AudioWorkletProcessor {
         if (msg.impactGain !== undefined) this.impactGain = msg.impactGain;
         if (msg.body !== undefined) this.body = msg.body;
         if (msg.bodyPassEnabled !== undefined) this.bodyPassEnabled = !!msg.bodyPassEnabled;
+        if (msg.hfTame !== undefined) this.hfTame = msg.hfTame;
+        if (msg.airContinuity !== undefined) this.airContinuity = msg.airContinuity;
         if (msg.ambiencePreserve !== undefined) this.ambiencePreserve = msg.ambiencePreserve;
+        if (msg.ambienceGlue !== undefined) this.ambienceGlue = msg.ambienceGlue;
         if (msg.maxSubBlock !== undefined) this.maxSubBlock = msg.maxSubBlock;
 
         if (this.wasmReady) {
@@ -135,8 +145,17 @@ class PhaselithProcessor extends AudioWorkletProcessor {
     if (this.wasm.set_body_pass_enabled) {
       this.wasm.set_body_pass_enabled(this.bodyPassEnabled ? 1 : 0);
     }
+    if (this.wasm.set_hf_tame) {
+      this.wasm.set_hf_tame(this.hfTame);
+    }
+    if (this.wasm.set_air_continuity) {
+      this.wasm.set_air_continuity(this.airContinuity);
+    }
     if (this.wasm.set_ambience_preserve && this.ambiencePreserve !== null) {
       this.wasm.set_ambience_preserve(this.ambiencePreserve);
+    }
+    if (this.wasm.set_ambience_glue) {
+      this.wasm.set_ambience_glue(this.ambienceGlue);
     }
     if (this.wasm.set_synthesis_mode) {
       this.wasm.set_synthesis_mode(this.synthesisMode);
@@ -207,6 +226,50 @@ class PhaselithProcessor extends AudioWorkletProcessor {
     return { peak, invalid: false };
   }
 
+  _accumulateEnergy(channelData, frameOffset = 0, frameCount = channelData.length) {
+    let sumSq = 0;
+    for (let i = frameOffset; i < frameOffset + frameCount; i++) {
+      const sample = channelData[i];
+      if (!Number.isFinite(sample)) continue;
+      sumSq += sample * sample;
+    }
+    return sumSq;
+  }
+
+  _updateLiveLevels(inputEnergy, outputEnergy, sampleCount) {
+    if (sampleCount <= 0) return;
+
+    const inputSq = inputEnergy / sampleCount;
+    const outputSq = outputEnergy / sampleCount;
+    const alpha = 0.12;
+
+    if (!this.levelMeterPrimed) {
+      this.levelInputSqEma = inputSq;
+      this.levelOutputSqEma = outputSq;
+      this.levelMeterPrimed = true;
+    } else {
+      this.levelInputSqEma += alpha * (inputSq - this.levelInputSqEma);
+      this.levelOutputSqEma += alpha * (outputSq - this.levelOutputSqEma);
+    }
+
+    this.levelMeterFrames += 1;
+    if (this.levelMeterFrames < 24) {
+      return;
+    }
+    this.levelMeterFrames = 0;
+
+    const inputDbfs = 10 * Math.log10(Math.max(this.levelInputSqEma, 1e-12));
+    const outputDbfs = 10 * Math.log10(Math.max(this.levelOutputSqEma, 1e-12));
+    this.port.postMessage({
+      type: 'LIVE_LEVELS',
+      inputDbfs,
+      outputDbfs,
+      deltaDb: outputDbfs - inputDbfs,
+      enabled: this.enabled,
+      processCount: this.processCount,
+    });
+  }
+
   async _initWasm(wasmPayload) {
     try {
       const wasmBytes = this._normalizeWasmBytes(wasmPayload);
@@ -270,6 +333,9 @@ class PhaselithProcessor extends AudioWorkletProcessor {
       const blockSize = input[0].length;
       const processStartMs = globalThis.performance?.now?.() ?? 0;
       this.processCount += 1;
+      let inputEnergy = 0;
+      let outputEnergy = 0;
+      let energySamples = 0;
       if (blockSize > this.maxWasmBlockFrames && !this.blockSizeWarningLogged) {
         this.blockSizeWarningLogged = true;
         console.warn(
@@ -284,6 +350,7 @@ class PhaselithProcessor extends AudioWorkletProcessor {
           const inputChannel = input[ch];
           const outputChannel = output[ch];
           if (!inputChannel) continue;
+          inputEnergy += this._accumulateEnergy(inputChannel, frameOffset, chunkSize);
 
           const inputOffset = this.inputPtr / 4;
           const outputOffset = this.outputPtr / 4;
@@ -308,6 +375,8 @@ class PhaselithProcessor extends AudioWorkletProcessor {
             outputOffset,
             chunkSize
           );
+          outputEnergy += this._accumulateEnergy(outputChannel, frameOffset, chunkSize);
+          energySamples += chunkSize;
 
           if ((safety.clippedSamples > 0 || safety.invalidSamples > 0) && this.safetyEventCount < 8) {
             this.safetyEventCount += 1;
@@ -327,6 +396,8 @@ class PhaselithProcessor extends AudioWorkletProcessor {
           }
         }
       }
+
+      this._updateLiveLevels(inputEnergy, outputEnergy, energySamples);
 
       if (!this.statsPosted && this.processCount <= 4) {
         for (let ch = 0; ch < Math.min(input.length, output.length); ch++) {

@@ -101,6 +101,8 @@ async function startProcessing(streamId, config) {
       } else if (d.type === 'WORKLET_STATS') {
         console.log('Phaselith: WORKLET_STATS', d);
         relayDebugEvent(d);
+      } else if (d.type === 'LIVE_LEVELS') {
+        chrome.runtime.sendMessage({ type: 'LIVE_LEVELS', payload: d }).catch(() => {});
       } else if (d.type === 'WASM_ERROR') {
         console.error('Phaselith: WASM init error:', d.error);
         relayDebugEvent(d);
@@ -197,7 +199,10 @@ function updateConfig(cfg) {
     impactGain: (cfg.impactGain ?? 15) / 100,
     body: (cfg.bodyCtrl ?? 40) / 100,
     bodyPassEnabled: !!cfg.bodyPassEnabled,
+    hfTame: (cfg.hfTame ?? 0) / 100,
+    airContinuity: (cfg.airContinuity ?? 0) / 100,
     ambiencePreserve: (cfg.ambiencePreserve ?? 0) / 100,
+    ambienceGlue: (cfg.ambienceGlue ?? 0) / 100,
     maxSubBlock: currentPlatformOs === 'mac'
       ? (cfg.maxSubBlockFrames === 8 ? 8 : 1)
       : 1,

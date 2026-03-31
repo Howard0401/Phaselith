@@ -384,11 +384,14 @@ impl IoEngine {
             declip_transient_scaling: 1.0,
             delayed_transient_repair: false,
             body_pass_enabled: false,
+            hf_tame: 0.0,
+            air_continuity: 0.0,
             phase_mode: PhaseMode::Linear,
             quality_mode: QualityMode::Standard,
             style,
             synthesis_mode: SynthesisMode::LegacyAdditive,
             ambience_preserve: 0.0,
+            ambience_glue: 0.0,
             filter_style: fs,
         }
     }

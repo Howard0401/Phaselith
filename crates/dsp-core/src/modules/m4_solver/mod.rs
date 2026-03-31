@@ -21,6 +21,7 @@ use crate::types::ResidualCandidate;
 pub struct InverseResidualSolver {
     num_bins: usize,
     sample_rate: u32,
+    air_continuity_state: Vec<f32>,
 }
 
 impl InverseResidualSolver {
@@ -28,6 +29,7 @@ impl InverseResidualSolver {
         Self {
             num_bins: 0,
             sample_rate: 48000,
+            air_continuity_state: Vec::new(),
         }
     }
 }
@@ -39,6 +41,8 @@ impl PhaselithModule for InverseResidualSolver {
 
     fn init(&mut self, _max_frame_size: usize, sample_rate: u32) {
         self.sample_rate = sample_rate;
+        let max_bins = crate::config::QualityMode::UltraExtreme.core_fft_size() / 2 + 1;
+        self.air_continuity_state = vec![0.0; max_bins];
     }
 
     fn process(&mut self, samples: &mut [f32], ctx: &mut ProcessContext) {
@@ -120,6 +124,18 @@ impl PhaselithModule for InverseResidualSolver {
                 strength * ctx.config.hf_reconstruction,
                 &mut ctx.residual.air,
             );
+            if self.air_continuity_state.len() < core_bins {
+                self.air_continuity_state.resize(core_bins, 0.0);
+            }
+            air_cont::smooth_air_continuation(
+                &mut ctx.residual.air,
+                &mut self.air_continuity_state,
+                cutoff_bin,
+                ctx.config.air_continuity,
+            );
+        } else if !self.air_continuity_state.is_empty() {
+            let clear_len = core_bins.min(self.air_continuity_state.len());
+            self.air_continuity_state[..clear_len].fill(0.0);
         }
 
         // 4. Phase relaxation
@@ -156,6 +172,7 @@ impl PhaselithModule for InverseResidualSolver {
 
     fn reset(&mut self) {
         self.num_bins = 0;
+        self.air_continuity_state.fill(0.0);
     }
 }
 

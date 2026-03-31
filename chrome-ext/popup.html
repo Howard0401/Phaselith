@@ -461,6 +461,32 @@
         </div>
       </div>
 
+      <div class="section windows-only" id="windowsRefineSection">
+        <div class="section-label" data-i18n="refineLabel"></div>
+        <div class="slider-group">
+          <div class="slider-header">
+            <span class="slider-name" data-i18n="hfTameLabel"></span>
+            <span class="slider-value" id="hfTameValue">0%</span>
+          </div>
+          <input type="range" id="hfTame" min="0" max="100" value="0">
+        </div>
+        <div class="slider-group" style="margin-top:8px;">
+          <div class="slider-header">
+            <span class="slider-name" data-i18n="airContinuityLabel"></span>
+            <span class="slider-value" id="airContinuityValue">0%</span>
+          </div>
+          <input type="range" id="airContinuity" min="0" max="100" value="0">
+        </div>
+        <div class="slider-group" style="margin-top:8px;">
+          <div class="slider-header">
+            <span class="slider-name" data-i18n="ambienceGlueLabel"></span>
+            <span class="slider-value" id="ambienceGlueValue">0%</span>
+          </div>
+          <input type="range" id="ambienceGlue" min="0" max="100" value="0">
+        </div>
+        <div class="body-pass-hint" data-i18n="refineHint"></div>
+      </div>
+
       <div class="section">
         <div class="section-label" data-i18n="spatialLabel"></div>
         <div class="slider-group">
@@ -504,6 +530,19 @@
   <div class="divider"></div>
 
   <div class="content" style="padding-top: 8px; padding-bottom: 8px;">
+    <div class="section">
+      <div class="section-label" data-i18n="levelCheckLabel"></div>
+      <div style="display:grid; grid-template-columns:1fr auto; gap:6px 10px; align-items:center;">
+        <span class="slider-name" data-i18n="inputLevelLabel"></span>
+        <span class="slider-value" id="liveInputLevel">--</span>
+        <span class="slider-name" data-i18n="outputLevelLabel"></span>
+        <span class="slider-value" id="liveOutputLevel">--</span>
+        <span class="slider-name" data-i18n="levelDeltaLabel"></span>
+        <span class="slider-value" id="liveLevelDelta">--</span>
+      </div>
+      <div class="body-pass-hint" data-i18n="levelCheckHint"></div>
+    </div>
+
     <!-- Preview badge — all features unlocked during preview period -->
     <div class="section" style="text-align:center;">
       <span style="font-size:10px; font-weight:600; padding:4px 14px; border-radius:12px; background:rgba(0,212,255,0.12); color:#00d4ff; letter-spacing:1px; text-transform:uppercase;" data-i18n="previewBadge"></span>

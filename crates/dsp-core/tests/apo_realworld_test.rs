@@ -31,11 +31,14 @@ fn make_config_max_params() -> EngineConfig {
         declip_transient_scaling: 1.0,
         delayed_transient_repair: false,
         body_pass_enabled: false,
+        hf_tame: 0.0,
+        air_continuity: 0.0,
         phase_mode: phaselith_dsp_core::config::PhaseMode::Linear,
         quality_mode: QualityMode::Standard,
         style: StyleConfig::default(),
         synthesis_mode: SynthesisMode::FftOlaPilot,
         ambience_preserve: 0.0,
+        ambience_glue: 0.0,
         filter_style: phaselith_dsp_core::config::FilterStyle::Reference,
     }
 }
@@ -346,11 +349,14 @@ fn apo_ultraextreme_528_block() {
         declip_transient_scaling: 1.0,
         delayed_transient_repair: false,
         body_pass_enabled: false,
+        hf_tame: 0.0,
+        air_continuity: 0.0,
         phase_mode: phaselith_dsp_core::config::PhaseMode::Linear,
         quality_mode: QualityMode::UltraExtreme,
         style: StyleConfig::default(),
         synthesis_mode: SynthesisMode::FftOlaPilot,
         ambience_preserve: 0.0,
+        ambience_glue: 0.0,
         filter_style: phaselith_dsp_core::config::FilterStyle::Reference,
     };
     let output = simulate_apo(&input, block_size, config);

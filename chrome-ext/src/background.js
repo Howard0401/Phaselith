@@ -12,6 +12,7 @@ let isEnabled = false;    // Whether the extension is active
 let captureGeneration = 0; // Monotonic counter to discard stale captures
 let lastGestureNoticeTabId = null; // Avoid spamming the same tab-switch notice
 let platformOs = 'unknown';
+let latestLiveLevels = null;
 const DEBUG_VERSION = 'mac-transient-safe-1';
 const DEFAULT_MAC_TRANSIENT_MODE = 'transient-safe';
 
@@ -38,14 +39,26 @@ chrome.runtime.getPlatformInfo((info) => {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'START_CAPTURE') {
     isEnabled = true;
+    latestLiveLevels = null;
     startCapture();
   } else if (msg.type === 'STOP_CAPTURE') {
     isEnabled = false;
     capturedTabId = null;
+    latestLiveLevels = null;
     chrome.runtime.sendMessage({ type: 'OFFSCREEN_STOP' }).catch(() => {});
   } else if (msg.type === 'CONFIG_UPDATE') {
     // Forward config to offscreen
     chrome.runtime.sendMessage({ ...msg, platformOs }).catch(() => {});
+  } else if (msg.type === 'LIVE_LEVELS') {
+    latestLiveLevels = {
+      ...msg.payload,
+      updatedAt: Date.now(),
+    };
+  } else if (msg.type === 'GET_LIVE_LEVELS') {
+    sendResponse({
+      payload: latestLiveLevels,
+      enabled: isEnabled,
+    });
   } else if (msg.type === 'DEBUG_EVENT') {
     console.log('Phaselith DEBUG:', JSON.stringify(msg.payload));
   }
@@ -163,7 +176,7 @@ async function startCapture() {
 
     // Read saved config from storage (offscreen can't access chrome.storage)
     const config = await chrome.storage.local.get(
-      ['strength', 'hfReconstruction', 'dynamics', 'transient', 'warmth', 'airBrightness', 'smoothness', 'bodyCtrl', 'bodyPassEnabled', 'spatialSpread', 'ambiencePreserve', 'impactGain', 'enabled', 'stylePreset', 'synthesisMode', 'macTransientMode', 'macSubBlockFrames']
+      ['strength', 'hfReconstruction', 'dynamics', 'transient', 'warmth', 'airBrightness', 'smoothness', 'bodyCtrl', 'bodyPassEnabled', 'hfTame', 'airContinuity', 'ambienceGlue', 'spatialSpread', 'ambiencePreserve', 'impactGain', 'enabled', 'stylePreset', 'synthesisMode', 'macTransientMode', 'macSubBlockFrames']
     );
     config.macTransientMode = normalizeMacTransientMode(config.macTransientMode);
     if (platformOs === 'mac' && (!config.macTransientMode || config.macTransientMode === 'declip-safe')) {

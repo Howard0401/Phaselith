@@ -1231,6 +1231,8 @@ impl PhaselithApo {
                 declip_transient_scaling: 1.0,
                 delayed_transient_repair: false,
                 body_pass_enabled: false,
+                hf_tame: 0.0,
+                air_continuity: 0.0,
                 // Standard mode (FFT 1024, hop 256) matches Chrome extension.
                 // Engine sub-block processing splits APO blocks (528) into
                 // ≤ hop_size chunks, guaranteeing hops_this_block ≤ 1 and
@@ -1262,6 +1264,7 @@ impl PhaselithApo {
                 // with Standard-mode's coarser 1024-point FFT resolution.
                 synthesis_mode: SynthesisMode::LegacyAdditive,
                 ambience_preserve: 0.0,
+                ambience_glue: 0.0,
                 filter_style: {
                     let fs_val = sc.filter_style.load(std::sync::atomic::Ordering::Relaxed) as u32;
                     phaselith_dsp_core::config::FilterStyle::from_u32(fs_val)

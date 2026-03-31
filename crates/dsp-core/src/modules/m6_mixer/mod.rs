@@ -204,6 +204,16 @@ impl PerceptualSafetyMixer {
         }
     }
 
+    #[inline]
+    fn hf_deemph_cutoff_hz(&self, ctx: &ProcessContext) -> f32 {
+        (4000.0 - ctx.config.hf_tame.clamp(0.0, 1.0) * 1800.0).max(1800.0)
+    }
+
+    #[inline]
+    fn hf_deemph_shelf_amount(base_drive: f32, hf_tame: f32) -> f32 {
+        (base_drive * 0.85 + hf_tame.clamp(0.0, 1.0) * 0.35).clamp(0.0, 0.98)
+    }
+
     fn apply_delayed_transient_repair(&mut self, samples: &mut [f32], ctx: &ProcessContext) {
         let pre_echo_amount =
             (ctx.config.transient * ctx.config.pre_echo_transient_scaling).clamp(0.0, 1.0);
@@ -256,8 +266,13 @@ impl PerceptualSafetyMixer {
             // HF de-emphasis shelf on transient delta — prevents sibilance
             // from sharp pre-echo suppression gain transitions.
             let deemph_alpha = 1.0
-                - (-2.0 * std::f32::consts::PI * 4000.0 / self.sample_rate as f32).exp();
-            let shelf_amount = pre_echo_amount * 0.85;
+                - (-2.0
+                    * std::f32::consts::PI
+                    * self.hf_deemph_cutoff_hz(ctx)
+                    / self.sample_rate as f32)
+                    .exp();
+            let shelf_amount =
+                Self::hf_deemph_shelf_amount(pre_echo_amount, ctx.config.hf_tame);
 
             for i in 0..emit {
                 let raw_delta = self.delayed_transient_delta_buffer[i];
@@ -324,6 +339,7 @@ impl PhaselithModule for PerceptualSafetyMixer {
             && style.warmth < 0.01
             && style.smoothness < 0.01
             && ctx.config.ambience_preserve < 0.001
+            && ctx.config.ambience_glue < 0.001
             && !ctx.config.delayed_transient_repair
         {
             return;
@@ -339,8 +355,12 @@ impl PhaselithModule for PerceptualSafetyMixer {
         // at strength=1.0, giving ~-5 dB at 8 kHz, ~-12 dB at 16 kHz).
         if has_residual && mix_gain > 0.001 {
             let deemph_alpha = 1.0
-                - (-2.0 * std::f32::consts::PI * 4000.0 / self.sample_rate as f32).exp();
-            let shelf_amount = strength * 0.85;
+                - (-2.0
+                    * std::f32::consts::PI
+                    * self.hf_deemph_cutoff_hz(ctx)
+                    / self.sample_rate as f32)
+                    .exp();
+            let shelf_amount = Self::hf_deemph_shelf_amount(strength, ctx.config.hf_tame);
 
             let res_len = len.min(ctx.validated.data.len());
             for i in 0..res_len {
@@ -386,8 +406,12 @@ impl PhaselithModule for PerceptualSafetyMixer {
         let time_mix_gain = strength * ctx.damage.clipping.mean.clamp(0.0, 1.0);
         if time_mix_gain > 0.001 && !ctx.validated.time_residual.is_empty() {
             let deemph_alpha = 1.0
-                - (-2.0 * std::f32::consts::PI * 4000.0 / self.sample_rate as f32).exp();
-            let shelf_amount = strength * 0.85;
+                - (-2.0
+                    * std::f32::consts::PI
+                    * self.hf_deemph_cutoff_hz(ctx)
+                    / self.sample_rate as f32)
+                    .exp();
+            let shelf_amount = Self::hf_deemph_shelf_amount(strength, ctx.config.hf_tame);
 
             let time_len = len.min(ctx.validated.time_residual.len());
             for i in 0..time_len {
@@ -445,7 +469,8 @@ impl PhaselithModule for PerceptualSafetyMixer {
         //   - Upper-mid ambience (500Hz+ stochastic content)
         //   - Air/room tone in decay regions
         let amb = ctx.config.ambience_preserve;
-        if amb > 0.001 && has_residual {
+        let glue = ctx.config.ambience_glue.clamp(0.0, 1.0);
+        if (amb > 0.001 || glue > 0.001) && has_residual {
             // Gate 1: Diffuse gate — only compensate when M5 actually rejected diffuse content.
             let diffuse_amount = (1.0 - ctx.validated.consistency_score).max(0.0);
             let diffuse_gate = if diffuse_amount > 0.2 {
@@ -471,14 +496,16 @@ impl PhaselithModule for PerceptualSafetyMixer {
             let combined_gate = diffuse_gate * transient_gate * decay_gate;
 
             if combined_gate > 0.001 {
-                let effective_amb = amb * 0.5 * combined_gate;
+                let effective_amb = ((amb * 0.5) + glue * 0.22).min(0.85) * combined_gate;
                 let dry_len = len.min(ctx.dry_buffer.len());
 
                 // ── Source narrowing: 1-pole high-pass on diff ──
-                // Cutoff ~500Hz removes low-freq content from blend-back source.
+                // Glue lowers the cutoff so more low-mid room energy tracks the body.
                 // α = 1 - π·fc/fs (first-order approximation)
-                // At 48kHz: α ≈ 0.967, at 44.1kHz: α ≈ 0.964
-                let hp_alpha = 1.0 - (std::f32::consts::PI * 500.0 / self.sample_rate as f32);
+                // At 48kHz: 500Hz ≈ 0.967, 220Hz ≈ 0.986
+                let hp_cutoff_hz = (500.0 - glue * 280.0).max(220.0);
+                let hp_alpha =
+                    1.0 - (std::f32::consts::PI * hp_cutoff_hz / self.sample_rate as f32);
                 // Local state: reset per block since gate activation is intermittent.
                 // HP settles within ~3 samples at this cutoff — negligible for 256+ sample blocks.
                 let mut hp_prev_x = 0.0f32;
@@ -752,16 +779,17 @@ mod tests {
         assert!(max_val < 1e-10, "Silence should stay silent, got {max_val}");
     }
 
-    /// Helper: run M6 with given dry/processed and ambience_preserve, return output.
+    /// Helper: run M6 with given dry/processed ambience settings, return output.
     /// Forces all 3 gates open (low consistency, non-transient, decaying energy).
     /// Uses minimal warmth (0.02) to ensure both amb=0 and amb>0 runs go through
     /// the full pipeline (prevents bypass early return).
-    fn run_m6_ambience_test(dry: &[f32], processed: &[f32], amb: f32) -> Vec<f32> {
+    fn run_m6_ambience_test(dry: &[f32], processed: &[f32], amb: f32, glue: f32) -> Vec<f32> {
         let n = dry.len();
         let mut m6 = PerceptualSafetyMixer::new();
         m6.init(1024, 48000);
         let mut config = EngineConfig::default();
         config.ambience_preserve = amb;
+        config.ambience_glue = glue;
         // Minimal warmth prevents bypass early return so both runs follow same code path
         config.style = StyleConfig::new(0.02, 0.0, 0.0, 0.0, 0.0, 0.0);
 
@@ -863,8 +891,8 @@ mod tests {
             .collect();
         let processed: Vec<f32> = dry.iter().map(|s| s * 0.7).collect();
 
-        let out_no_amb = run_m6_ambience_test(&dry, &processed, 0.0);
-        let out_with_amb = run_m6_ambience_test(&dry, &processed, 1.0);
+        let out_no_amb = run_m6_ambience_test(&dry, &processed, 0.0, 0.0);
+        let out_with_amb = run_m6_ambience_test(&dry, &processed, 1.0, 0.0);
 
         // Should see a measurable difference when ambience_preserve is on
         let delta: f32 = out_with_amb
@@ -878,6 +906,31 @@ mod tests {
         assert!(
             delta > 0.001,
             "Ambience preserve should modify output with broadband signal, delta={delta:.6}"
+        );
+    }
+
+    #[test]
+    fn ambience_glue_reintroduces_low_mid_room_energy() {
+        let n = 512;
+        let dry: Vec<f32> = (0..n)
+            .map(|i| 0.35 * (2.0 * std::f32::consts::PI * 320.0 * i as f32 / 48000.0).sin())
+            .collect();
+        let processed: Vec<f32> = dry.iter().map(|s| s * 0.7).collect();
+
+        let out_no_glue = run_m6_ambience_test(&dry, &processed, 0.0, 0.0);
+        let out_with_glue = run_m6_ambience_test(&dry, &processed, 0.0, 1.0);
+
+        let delta: f32 = out_with_glue
+            .iter()
+            .zip(out_no_glue.iter())
+            .skip(10)
+            .map(|(a, b)| (a - b).abs())
+            .sum::<f32>()
+            / (n - 10) as f32;
+
+        assert!(
+            delta > 0.001,
+            "Ambience glue should change low-mid tail/body balance, delta={delta:.6}"
         );
     }
 
@@ -1016,13 +1069,19 @@ mod tests {
     /// Helper: measure RMS of a frequency band in the M6 output residual.
     /// Feeds a pure-tone residual at `freq_hz` through M6 Phase 1a and returns
     /// the ratio of output residual RMS to input residual RMS.
-    fn measure_residual_hf_gain(freq_hz: f32, strength: f32, sample_rate: u32) -> f32 {
+    fn measure_residual_hf_gain(
+        freq_hz: f32,
+        strength: f32,
+        hf_tame: f32,
+        sample_rate: u32,
+    ) -> f32 {
         let n = 1024;
         let mut m6 = PerceptualSafetyMixer::new();
         m6.init(n, sample_rate);
 
         let mut config = EngineConfig::default();
         config.strength = strength;
+        config.hf_tame = hf_tame;
         config.style = StyleConfig::new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
 
         // Silent dry signal — all output change comes from residual
@@ -1065,7 +1124,7 @@ mod tests {
     fn hf_deemph_low_freq_passes_through() {
         // 500 Hz residual should pass through with minimal attenuation
         // regardless of strength, because 500 Hz is well below the shelf crossover.
-        let gain = measure_residual_hf_gain(500.0, 1.0, 48000);
+        let gain = measure_residual_hf_gain(500.0, 1.0, 0.0, 48000);
         assert!(
             gain > 0.85,
             "500 Hz should pass through shelf at strength=1.0, gain={gain:.4}"
@@ -1075,7 +1134,7 @@ mod tests {
     #[test]
     fn hf_deemph_mid_freq_mostly_passes() {
         // 2 kHz residual should mostly pass through (slight shelf transition)
-        let gain = measure_residual_hf_gain(2000.0, 1.0, 48000);
+        let gain = measure_residual_hf_gain(2000.0, 1.0, 0.0, 48000);
         assert!(
             gain > 0.70,
             "2 kHz should mostly pass shelf at strength=1.0, gain={gain:.4}"
@@ -1086,12 +1145,12 @@ mod tests {
     fn hf_deemph_sibilance_range_attenuated() {
         // 8 kHz (sibilance range) should be significantly attenuated at high strength.
         // Compare HF/LF ratio to isolate shelf effect from mix_gain scaling.
-        let gain_8k_s1 = measure_residual_hf_gain(8000.0, 1.0, 48000);
-        let gain_500_s1 = measure_residual_hf_gain(500.0, 1.0, 48000);
+        let gain_8k_s1 = measure_residual_hf_gain(8000.0, 1.0, 0.0, 48000);
+        let gain_500_s1 = measure_residual_hf_gain(500.0, 1.0, 0.0, 48000);
         let ratio_hi_strength = gain_8k_s1 / gain_500_s1.max(1e-10);
 
-        let gain_8k_s03 = measure_residual_hf_gain(8000.0, 0.3, 48000);
-        let gain_500_s03 = measure_residual_hf_gain(500.0, 0.3, 48000);
+        let gain_8k_s03 = measure_residual_hf_gain(8000.0, 0.3, 0.0, 48000);
+        let gain_500_s03 = measure_residual_hf_gain(500.0, 0.3, 0.0, 48000);
         let ratio_lo_strength = gain_8k_s03 / gain_500_s03.max(1e-10);
 
         assert!(
@@ -1107,7 +1166,7 @@ mod tests {
     #[test]
     fn hf_deemph_extreme_hf_heavily_attenuated() {
         // 16 kHz should be heavily attenuated at high strength
-        let gain = measure_residual_hf_gain(16000.0, 1.0, 48000);
+        let gain = measure_residual_hf_gain(16000.0, 1.0, 0.0, 48000);
         assert!(
             gain < 0.45,
             "16 kHz should be heavily attenuated at strength=1.0, gain={gain:.4}"
@@ -1122,8 +1181,8 @@ mod tests {
         // So residual is mixed at very low level, not directly comparable.
         // Instead verify that the shelf itself doesn't apply: gain ratio
         // between 500 Hz and 16 kHz should be close to 1 at low strength.
-        let gain_lo = measure_residual_hf_gain(500.0, 0.1, 48000);
-        let gain_hi = measure_residual_hf_gain(16000.0, 0.1, 48000);
+        let gain_lo = measure_residual_hf_gain(500.0, 0.1, 0.0, 48000);
+        let gain_hi = measure_residual_hf_gain(16000.0, 0.1, 0.0, 48000);
         let ratio = gain_hi / gain_lo.max(1e-10);
         assert!(
             ratio > 0.80,
@@ -1132,11 +1191,24 @@ mod tests {
     }
 
     #[test]
+    fn hf_tame_adds_extra_sibilance_reduction() {
+        let ratio_no_tame = measure_residual_hf_gain(8000.0, 1.0, 0.0, 48000)
+            / measure_residual_hf_gain(500.0, 1.0, 0.0, 48000).max(1e-10);
+        let ratio_full_tame = measure_residual_hf_gain(8000.0, 1.0, 1.0, 48000)
+            / measure_residual_hf_gain(500.0, 1.0, 1.0, 48000).max(1e-10);
+
+        assert!(
+            ratio_full_tame < ratio_no_tame,
+            "HF tame should further reduce the 8k/500 ratio: tame={ratio_full_tame:.4}, base={ratio_no_tame:.4}"
+        );
+    }
+
+    #[test]
     fn hf_deemph_selectivity_ratio() {
         // At high strength, the 8kHz/500Hz gain ratio should show
         // meaningful selectivity (HF attenuated, LF preserved).
-        let gain_500 = measure_residual_hf_gain(500.0, 1.0, 48000);
-        let gain_8k = measure_residual_hf_gain(8000.0, 1.0, 48000);
+        let gain_500 = measure_residual_hf_gain(500.0, 1.0, 0.0, 48000);
+        let gain_8k = measure_residual_hf_gain(8000.0, 1.0, 0.0, 48000);
         let selectivity = gain_500 / gain_8k.max(1e-10);
         assert!(
             selectivity > 1.5,
@@ -1152,8 +1224,8 @@ mod tests {
         let strengths = [0.3, 0.5, 0.7, 1.0];
         let mut prev_ratio = 2.0f32; // start high
         for &s in &strengths {
-            let gain_lf = measure_residual_hf_gain(500.0, s, 48000);
-            let gain_hf = measure_residual_hf_gain(10000.0, s, 48000);
+            let gain_lf = measure_residual_hf_gain(500.0, s, 0.0, 48000);
+            let gain_hf = measure_residual_hf_gain(10000.0, s, 0.0, 48000);
             let ratio = gain_hf / gain_lf.max(1e-10);
             assert!(
                 ratio <= prev_ratio + 0.05, // allow small float tolerance

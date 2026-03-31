@@ -68,6 +68,12 @@ pub struct EngineConfig {
     /// Experimental browser A/B toggle that re-opens the low-mid
     /// body lane (180-500 Hz) below the cutoff when harmonic structure exists.
     pub body_pass_enabled: bool,
+    /// Extra high-frequency taming on top of the default M6 de-emphasis shelf.
+    /// 0.0 = current behavior, 1.0 = maximum extra harshness reduction.
+    pub hf_tame: f32,
+    /// Temporal smoothing for M4 air continuation.
+    /// 0.0 = current behavior, 1.0 = strongest breath/air continuity hold.
+    pub air_continuity: f32,
     /// Phase correction mode.
     pub phase_mode: PhaseMode,
     /// Quality mode (affects CPU/GPU budget).
@@ -83,6 +89,9 @@ pub struct EngineConfig {
     /// Independent parameter — does NOT reuse spatial_spread.
     /// Start very low (0.05-0.15) and tune by ear.
     pub ambience_preserve: f32,
+    /// Low-mid glue for ambience preserve source shaping.
+    /// 0.0 = current behavior, 1.0 = maximum room/body reconnection.
+    pub ambience_glue: f32,
     /// High-level filter style selector.
     /// When changed, overrides the 6-axis StyleConfig with the preset values.
     pub filter_style: FilterStyle,
@@ -99,12 +108,15 @@ impl Default for EngineConfig {
             declip_transient_scaling: 1.0,
             delayed_transient_repair: false,
             body_pass_enabled: false,
+            hf_tame: 0.0,
+            air_continuity: 0.0,
             phase_mode: PhaseMode::Linear,
             quality_mode: QualityMode::Standard,
             enabled: true,
             style: StyleConfig::default(),
             synthesis_mode: SynthesisMode::default(),
             ambience_preserve: 0.0,
+            ambience_glue: 0.0,
             filter_style: FilterStyle::default(),
         }
     }

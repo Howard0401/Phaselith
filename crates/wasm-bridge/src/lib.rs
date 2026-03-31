@@ -248,6 +248,20 @@ pub extern "C" fn set_body_pass_enabled(enabled: u32) {
     with_both_engines(|e| e.update_config(config));
 }
 
+#[no_mangle]
+pub extern "C" fn set_hf_tame(value: f32) {
+    let mut config = current_config();
+    config.hf_tame = value.clamp(0.0, 1.0);
+    with_both_engines(|e| e.update_config(config));
+}
+
+#[no_mangle]
+pub extern "C" fn set_air_continuity(value: f32) {
+    let mut config = current_config();
+    config.air_continuity = value.clamp(0.0, 1.0);
+    with_both_engines(|e| e.update_config(config));
+}
+
 // ─── Style / Character exports ───
 
 /// Set style preset by index:
@@ -337,5 +351,12 @@ pub extern "C" fn set_synthesis_mode(mode: u32) {
 pub extern "C" fn set_ambience_preserve(value: f32) {
     let mut config = current_config();
     config.ambience_preserve = value.clamp(0.0, 1.0);
+    with_both_engines(|e| e.update_config(config));
+}
+
+#[no_mangle]
+pub extern "C" fn set_ambience_glue(value: f32) {
+    let mut config = current_config();
+    config.ambience_glue = value.clamp(0.0, 1.0);
     with_both_engines(|e| e.update_config(config));
 }
