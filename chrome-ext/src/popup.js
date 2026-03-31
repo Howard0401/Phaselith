@@ -21,9 +21,29 @@ const I18N = {
     strengthLabel: 'Strength',
     hfLabel: 'HF Reconstruction',
     dynamicsLabel: 'Dynamics',
-    footerVersion: 'v0.1.25',
+    transientLabel: 'Transient',
+    paramPresetLabel: 'PARAMETER PRESET',
+    paramPresetDefault: 'Default',
+    paramPresetHoward: 'Howard',
+    advancedLabel: 'Advanced \u25BC',
+    advancedLabelOpen: 'Advanced \u25B2',
+    toneLabel: 'TONE',
+    warmthLabel: 'Warmth',
+    airBrightnessLabel: 'Air / Brightness',
+    smoothnessLabel: 'Smoothness',
+    bodyLabel: 'Body',
+    bodyPassLabel: 'Body Pass A/B',
+    bodyPassHint: 'Windows only. Re-opens the 180-500 Hz body lane below cutoff for quick A/B.',
+    spatialLabel: 'SPATIAL',
+    spatialSpreadLabel: 'Stereo Spread',
+    ambienceLabel: 'Ambience Preserve',
+    impactLabel: 'IMPACT',
+    impactGainLabel: 'Impact Gain',
+    footerVersion: 'v0.1.27',
     licenseLabel: 'License',
     activateBtn: 'Activate',
+    previewBadge: 'Preview',
+    previewHint: 'All features unlocked during preview. Feedback welcome!',
     freeHint: 'Free: Strength capped at 50%, Reference preset only',
     getProLink: 'View Plans \u2192',
     activating: 'Activating...',
@@ -47,9 +67,29 @@ const I18N = {
     strengthLabel: '\u5f37\u5ea6',
     hfLabel: '\u9ad8\u983b\u91cd\u5efa',
     dynamicsLabel: '\u52d5\u614b',
-    footerVersion: 'v0.1.25',
+    transientLabel: '\u77ac\u614b',
+    paramPresetLabel: '\u53c3\u6578\u9810\u8a2d',
+    paramPresetDefault: '\u9810\u8a2d',
+    paramPresetHoward: 'Howard',
+    advancedLabel: '\u9032\u968e \u25BC',
+    advancedLabelOpen: '\u9032\u968e \u25B2',
+    toneLabel: '\u97f3\u8272',
+    warmthLabel: '\u6eab\u6696\u611f',
+    airBrightnessLabel: '\u7a7a\u6c23 / \u4eae\u5ea6',
+    smoothnessLabel: '\u6ed1\u9806\u5ea6',
+    bodyLabel: '\u539a\u5ea6',
+    bodyPassLabel: '\u539a\u5ea6 A/B \u958b\u95dc',
+    bodyPassHint: '\u50c5 Windows \u986f\u793a\u3002\u6703\u91cd\u65b0\u6253\u958b cutoff \u4ee5\u4e0b 180-500 Hz \u7684 body \u901a\u9053\uff0c\u65b9\u4fbf\u5feb\u901f A/B\u3002',
+    spatialLabel: '\u7a7a\u9593',
+    spatialSpreadLabel: '\u7acb\u9ad4\u8076\u5bec\u5ea6',
+    ambienceLabel: '\u6df7\u97ff\u4fdd\u7559',
+    impactLabel: '\u885d\u64ca',
+    impactGainLabel: '\u885d\u64ca\u589e\u76ca',
+    footerVersion: 'v0.1.27',
     licenseLabel: '\u6388\u6b0a',
     activateBtn: '\u555f\u7528',
+    previewBadge: '\u9810\u89bd\u7248',
+    previewHint: '\u9810\u89bd\u671f\u9593\u5168\u529f\u80fd\u958b\u653e\uff0c\u6b61\u8fce\u56de\u994b\uff01',
     freeHint: '\u514d\u8cbb\u7248\uff1a\u5f37\u5ea6\u4e0a\u9650 50%\uff0c\u50c5\u53c3\u8003\u98a8\u683c',
     getProLink: '\u67e5\u770b\u65b9\u6848 \u2192',
     activating: '\u555f\u7528\u4e2d...',
@@ -73,9 +113,29 @@ const I18N = {
     strengthLabel: '\u5f3a\u5ea6',
     hfLabel: '\u9ad8\u9891\u91cd\u5efa',
     dynamicsLabel: '\u52a8\u6001',
-    footerVersion: 'v0.1.25',
+    transientLabel: '\u77ac\u6001',
+    paramPresetLabel: '\u53c2\u6570\u9884\u8bbe',
+    paramPresetDefault: '\u9884\u8bbe',
+    paramPresetHoward: 'Howard',
+    advancedLabel: '\u8fdb\u9636 \u25BC',
+    advancedLabelOpen: '\u8fdb\u9636 \u25B2',
+    toneLabel: '\u97f3\u8272',
+    warmthLabel: '\u6e29\u6696\u611f',
+    airBrightnessLabel: '\u7a7a\u6c14 / \u4eae\u5ea6',
+    smoothnessLabel: '\u6ed1\u987a\u5ea6',
+    bodyLabel: '\u539a\u5ea6',
+    bodyPassLabel: '\u539a\u5ea6 A/B \u5f00\u5173',
+    bodyPassHint: '\u4ec5 Windows \u663e\u793a\u3002\u4f1a\u91cd\u65b0\u6253\u5f00 cutoff \u4ee5\u4e0b 180-500 Hz \u7684 body \u901a\u9053\uff0c\u65b9\u4fbf\u5feb\u901f A/B\u3002',
+    spatialLabel: '\u7a7a\u95f4',
+    spatialSpreadLabel: '\u7acb\u4f53\u58f0\u5bbd\u5ea6',
+    ambienceLabel: '\u6df7\u54cd\u4fdd\u7559',
+    impactLabel: '\u51b2\u51fb',
+    impactGainLabel: '\u51b2\u51fb\u589e\u76ca',
+    footerVersion: 'v0.1.27',
     licenseLabel: '\u6388\u6743',
     activateBtn: '\u542f\u7528',
+    previewBadge: '\u9884\u89c8\u7248',
+    previewHint: '\u9884\u89c8\u671f\u95f4\u5168\u529f\u80fd\u5f00\u653e\uff0c\u6b22\u8fce\u53cd\u9988\uff01',
     freeHint: '\u514d\u8d39\u7248\uff1a\u5f3a\u5ea6\u4e0a\u9650 50%\uff0c\u4ec5\u53c2\u8003\u98ce\u683c',
     getProLink: '\u67e5\u770b\u65b9\u6848 \u2192',
     activating: '\u542f\u7528\u4e2d...',
@@ -120,11 +180,25 @@ const enableToggle = document.getElementById('enableToggle');
 const strengthSlider = document.getElementById('strength');
 const hfSlider = document.getElementById('hfReconstruction');
 const dynSlider = document.getElementById('dynamics');
+const transientSlider = document.getElementById('transient');
+const warmthSlider = document.getElementById('warmth');
+const airBrightnessSlider = document.getElementById('airBrightness');
+const smoothnessSlider = document.getElementById('smoothness');
+const bodySlider = document.getElementById('bodyCtrl');
+const bodyPassToggle = document.getElementById('bodyPassToggle');
+const bodyPassSection = document.getElementById('bodyPassSection');
+const spatialSpreadSlider = document.getElementById('spatialSpread');
+const ambienceSlider = document.getElementById('ambiencePreserve');
+const impactGainSlider = document.getElementById('impactGain');
+const advancedToggle = document.getElementById('advancedToggle');
+const advancedPanel = document.getElementById('advancedPanel');
 const statusEl = document.getElementById('status');
 const styleGrid = document.getElementById('styleGrid');
 const styleBtns = styleGrid.querySelectorAll('.style-btn');
 const macRuntimeSection = document.getElementById('macRuntimeSection');
 const macSubBlockBtns = document.querySelectorAll('.mac-sub-block-btn');
+
+let advancedOpen = false;
 
 let currentStylePreset = 0;
 let currentPlatformOs = 'unknown';
@@ -133,7 +207,7 @@ let currentMacSubBlock = 1;
 chrome.runtime.getPlatformInfo((info) => {
   if (!chrome.runtime.lastError && info?.os) {
     currentPlatformOs = info.os;
-    renderMacRuntimeSection();
+    renderPlatformSections();
   }
 });
 
@@ -144,24 +218,50 @@ function getSynthesisMode() {
 }
 
 // ── Load saved state ──
-chrome.storage.local.get(['enabled', 'strength', 'hfReconstruction', 'dynamics', 'stylePreset', 'lang', 'macSubBlockFrames'], (data) => {
+chrome.storage.local.get(['enabled', 'strength', 'hfReconstruction', 'dynamics', 'transient', 'warmth', 'airBrightness', 'smoothness', 'bodyCtrl', 'bodyPassEnabled', 'spatialSpread', 'ambiencePreserve', 'impactGain', 'stylePreset', 'lang', 'macSubBlockFrames', 'advancedOpen'], (data) => {
   enableToggle.checked = data.enabled ?? false;
   strengthSlider.value = data.strength ?? 70;
   hfSlider.value = data.hfReconstruction ?? 80;
   dynSlider.value = data.dynamics ?? 60;
+  transientSlider.value = data.transient ?? 50;
+  warmthSlider.value = data.warmth ?? 15;
+  airBrightnessSlider.value = data.airBrightness ?? 50;
+  smoothnessSlider.value = data.smoothness ?? 40;
+  bodySlider.value = data.bodyCtrl ?? 40;
+  bodyPassToggle.checked = data.bodyPassEnabled ?? false;
+  spatialSpreadSlider.value = data.spatialSpread ?? 30;
+  ambienceSlider.value = data.ambiencePreserve ?? 0;
+  impactGainSlider.value = data.impactGain ?? 15;
   currentStylePreset = data.stylePreset ?? 0;
   currentLang = data.lang || detectLang();
   currentMacSubBlock = data.macSubBlockFrames ?? 1;
+  advancedOpen = data.advancedOpen ?? false;
+  if (advancedOpen) {
+    advancedPanel.style.display = 'flex';
+    advancedPanel.style.flexDirection = 'column';
+    advancedPanel.style.gap = '12px';
+  }
   updateStyleUI();
   updateMacSubBlockUI();
   applyI18n();
-  renderMacRuntimeSection();
+  renderPlatformSections();
 });
 
 function updateUI() {
   document.getElementById('strengthValue').textContent = strengthSlider.value + '%';
   document.getElementById('hfValue').textContent = hfSlider.value + '%';
   document.getElementById('dynValue').textContent = dynSlider.value + '%';
+  document.getElementById('transientValue').textContent = transientSlider.value + '%';
+  document.getElementById('warmthValue').textContent = warmthSlider.value + '%';
+  document.getElementById('airBrightnessValue').textContent = airBrightnessSlider.value + '%';
+  document.getElementById('smoothnessValue').textContent = smoothnessSlider.value + '%';
+  document.getElementById('bodyValue').textContent = bodySlider.value + '%';
+  document.getElementById('spatialSpreadValue').textContent = spatialSpreadSlider.value + '%';
+  document.getElementById('ambienceValue').textContent = ambienceSlider.value + '%';
+  document.getElementById('impactGainValue').textContent = impactGainSlider.value + '%';
+
+  // Advanced toggle label
+  advancedToggle.textContent = advancedOpen ? t('advancedLabelOpen') : t('advancedLabel');
 
   if (enableToggle.checked) {
     statusEl.textContent = t('statusActive');
@@ -186,8 +286,9 @@ function updateMacSubBlockUI() {
   });
 }
 
-function renderMacRuntimeSection() {
+function renderPlatformSections() {
   macRuntimeSection.style.display = currentPlatformOs === 'mac' ? 'block' : 'none';
+  bodyPassSection.style.display = currentPlatformOs === 'win' ? 'block' : 'none';
 }
 
 function buildState() {
@@ -196,6 +297,15 @@ function buildState() {
     strength: parseInt(strengthSlider.value),
     hfReconstruction: parseInt(hfSlider.value),
     dynamics: parseInt(dynSlider.value),
+    transient: parseInt(transientSlider.value),
+    warmth: parseInt(warmthSlider.value),
+    airBrightness: parseInt(airBrightnessSlider.value),
+    smoothness: parseInt(smoothnessSlider.value),
+    bodyCtrl: parseInt(bodySlider.value),
+    bodyPassEnabled: currentPlatformOs === 'win' ? bodyPassToggle.checked : false,
+    spatialSpread: parseInt(spatialSpreadSlider.value),
+    ambiencePreserve: parseInt(ambienceSlider.value),
+    impactGain: parseInt(impactGainSlider.value),
     stylePreset: currentStylePreset,
     synthesisMode: getSynthesisMode(),
     macSubBlockFrames: currentPlatformOs === 'mac' ? currentMacSubBlock : undefined,
@@ -225,6 +335,50 @@ enableToggle.addEventListener('change', async () => {
 strengthSlider.addEventListener('input', saveAndNotify);
 hfSlider.addEventListener('input', saveAndNotify);
 dynSlider.addEventListener('input', saveAndNotify);
+transientSlider.addEventListener('input', saveAndNotify);
+warmthSlider.addEventListener('input', saveAndNotify);
+airBrightnessSlider.addEventListener('input', saveAndNotify);
+smoothnessSlider.addEventListener('input', saveAndNotify);
+bodySlider.addEventListener('input', saveAndNotify);
+spatialSpreadSlider.addEventListener('input', saveAndNotify);
+ambienceSlider.addEventListener('input', saveAndNotify);
+impactGainSlider.addEventListener('input', saveAndNotify);
+bodyPassToggle.addEventListener('change', saveAndNotify);
+
+// Parameter presets
+const PARAM_PRESETS = {
+  default: { strength: 100, hfReconstruction: 100, dynamics: 100, transient: 50, warmth: 15, airBrightness: 50, smoothness: 40, bodyCtrl: 40, spatialSpread: 30, ambiencePreserve: 0, impactGain: 15 },
+  howard:  { strength: 100, hfReconstruction: 100, dynamics: 100, transient: 100, warmth: 78, airBrightness: 46, smoothness: 87, bodyCtrl: 100, spatialSpread: 100, ambiencePreserve: 100, impactGain: 100 },
+};
+
+function applyParamPreset(name) {
+  const p = PARAM_PRESETS[name];
+  if (!p) return;
+  strengthSlider.value = p.strength;
+  hfSlider.value = p.hfReconstruction;
+  dynSlider.value = p.dynamics;
+  transientSlider.value = p.transient;
+  warmthSlider.value = p.warmth;
+  airBrightnessSlider.value = p.airBrightness;
+  smoothnessSlider.value = p.smoothness;
+  bodySlider.value = p.bodyCtrl;
+  spatialSpreadSlider.value = p.spatialSpread;
+  ambienceSlider.value = p.ambiencePreserve;
+  impactGainSlider.value = p.impactGain;
+  saveAndNotify();
+}
+
+document.getElementById('presetDefault').addEventListener('click', () => applyParamPreset('default'));
+document.getElementById('presetHoward').addEventListener('click', () => applyParamPreset('howard'));
+
+advancedToggle.addEventListener('click', () => {
+  advancedOpen = !advancedOpen;
+  advancedPanel.style.display = advancedOpen ? 'flex' : 'none';
+  advancedPanel.style.flexDirection = 'column';
+  advancedPanel.style.gap = '12px';
+  chrome.storage.local.set({ advancedOpen });
+  updateUI();
+});
 
 async function saveMacSubBlockAndRestartIfNeeded(nextSubBlock) {
   currentMacSubBlock = nextSubBlock;
@@ -353,37 +507,35 @@ function setTier(tier, key) {
 }
 
 function enforceLimits() {
-  const isFree = licenseTier !== 'Pro';
-
-  // Strength cap
-  if (isFree && parseInt(strengthSlider.value) > 50) {
-    strengthSlider.value = 50;
-    saveAndNotify();
-  }
-  strengthSlider.max = isFree ? '50' : '100';
+  // ── Preview period: all features unlocked ──
+  // TODO: Re-enable limits when ready to charge
+  // const isFree = licenseTier !== 'Pro';
+  // if (isFree && parseInt(strengthSlider.value) > 50) {
+  //   strengthSlider.value = 50;
+  //   saveAndNotify();
+  // }
+  // strengthSlider.max = isFree ? '50' : '100';
+  // styleBtns.forEach(btn => {
+  //   const preset = parseInt(btn.dataset.preset);
+  //   if (isFree && preset !== 0) {
+  //     btn.style.opacity = '0.3';
+  //     btn.style.pointerEvents = 'none';
+  //   } else {
+  //     btn.style.opacity = '';
+  //     btn.style.pointerEvents = '';
+  //   }
+  // });
+  // if (isFree && currentStylePreset !== 0) {
+  //   currentStylePreset = 0;
+  //   updateStyleUI();
+  //   saveAndNotify();
+  // }
+  strengthSlider.max = '100';
   document.getElementById('strengthValue').textContent = strengthSlider.value + '%';
-
-  // Preset lock — only Reference for Free
-  styleBtns.forEach(btn => {
-    const preset = parseInt(btn.dataset.preset);
-    if (isFree && preset !== 0) {
-      btn.style.opacity = '0.3';
-      btn.style.pointerEvents = 'none';
-    } else {
-      btn.style.opacity = '';
-      btn.style.pointerEvents = '';
-    }
-  });
-
-  // Force Reference if Free and non-Reference selected
-  if (isFree && currentStylePreset !== 0) {
-    currentStylePreset = 0;
-    updateStyleUI();
-    saveAndNotify();
-  }
 }
 
-// Activate button
+// TODO: Re-enable license activation when ready to charge
+/* Activate button
 document.getElementById('activateBtn').addEventListener('click', async () => {
   const keyInput = document.getElementById('licenseKeyInput');
   const errorEl = document.getElementById('licenseError');
@@ -435,5 +587,7 @@ document.getElementById('activateBtn').addEventListener('click', async () => {
   }
 });
 
-// Load license on startup
-loadLicense();
+*/
+
+// Load license on startup — skipped during preview
+// loadLicense();

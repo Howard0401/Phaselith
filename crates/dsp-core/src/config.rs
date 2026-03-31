@@ -65,6 +65,9 @@ pub struct EngineConfig {
     /// output path instead of mutating the current host callback block.
     /// Used by browser runtimes that need frame-aligned transient shaping.
     pub delayed_transient_repair: bool,
+    /// Experimental browser A/B toggle that re-opens the low-mid
+    /// body lane (180-500 Hz) below the cutoff when harmonic structure exists.
+    pub body_pass_enabled: bool,
     /// Phase correction mode.
     pub phase_mode: PhaseMode,
     /// Quality mode (affects CPU/GPU budget).
@@ -95,6 +98,7 @@ impl Default for EngineConfig {
             pre_echo_transient_scaling: 1.0,
             declip_transient_scaling: 1.0,
             delayed_transient_repair: false,
+            body_pass_enabled: false,
             phase_mode: PhaseMode::Linear,
             quality_mode: QualityMode::Standard,
             enabled: true,

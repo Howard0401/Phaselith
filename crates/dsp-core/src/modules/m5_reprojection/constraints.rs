@@ -3,7 +3,7 @@
 /// - Phase constraint: limit phase correction magnitude
 /// - Stereo constraint: bound side/mid ratio
 pub fn apply_constraints(mask: &[f32], cutoff_bin: usize) -> Vec<f32> {
-    apply_constraints_styled(mask, cutoff_bin, 48000, 1024, 0.0, &[])
+    apply_constraints_styled(mask, cutoff_bin, 48000, 1024, 0.0, &[], false, 0.0, &[])
 }
 
 /// Apply constraints with impact band support.
@@ -11,6 +11,10 @@ pub fn apply_constraints(mask: &[f32], cutoff_bin: usize) -> Vec<f32> {
 /// Opens a narrow window in the 80-180 Hz region for transient-shaped
 /// residual, controlled by `impact_gain`. Only allows residual through
 /// where transient energy is detected (no sustained bass inflation).
+///
+/// When `body_pass_enabled` is true, a second exception re-opens
+/// harmonic bins in the 180-500 Hz body band so the M4 body path can
+/// survive the low-band lock for Windows extension A/B testing.
 pub fn apply_constraints_styled(
     mask: &[f32],
     cutoff_bin: usize,
@@ -18,6 +22,9 @@ pub fn apply_constraints_styled(
     fft_size: usize,
     impact_gain: f32,
     transient_field: &[f32],
+    body_pass_enabled: bool,
+    body: f32,
+    harmonic_field: &[f32],
 ) -> Vec<f32> {
     let mut constrained = mask.to_vec();
     let bin_to_freq = sample_rate as f32 / fft_size.max(1) as f32;
@@ -27,6 +34,9 @@ pub fn apply_constraints_styled(
     let impact_hi_bin = (180.0 / bin_to_freq) as usize;
     // Maximum acceptance in impact band (0.0-0.4 range)
     let impact_max = impact_gain.clamp(0.0, 1.0) * 0.4;
+    let body_lo_bin = (180.0 / bin_to_freq) as usize;
+    let body_hi_bin = (500.0 / bin_to_freq) as usize;
+    let body_active = body_pass_enabled && body > 0.01;
 
     // Low-band lock: zero below cutoff (with impact band exception)
     for k in 0..cutoff_bin.min(constrained.len()) {
@@ -39,6 +49,14 @@ pub fn apply_constraints_styled(
             let transient_gate = transient_field[k].clamp(0.0, 1.0);
             // Only open when transient energy is detected
             constrained[k] = (mask[k] * impact_max * transient_gate).min(impact_max);
+        } else if body_active
+            && k >= body_lo_bin
+            && k < body_hi_bin
+            && k < harmonic_field.len()
+            && harmonic_field[k] > 1e-10
+        {
+            // Only re-open bins that M4 already tagged as harmonic body content.
+            constrained[k] = mask[k];
         } else {
             constrained[k] = 0.0;
         }
@@ -63,6 +81,9 @@ pub fn apply_constraints_styled_into(
     fft_size: usize,
     impact_gain: f32,
     transient_field: &[f32],
+    body_pass_enabled: bool,
+    body: f32,
+    harmonic_field: &[f32],
     out: &mut [f32],
 ) {
     let len = mask.len().min(out.len());
@@ -72,6 +93,9 @@ pub fn apply_constraints_styled_into(
     let impact_lo_bin = (80.0 / bin_to_freq) as usize;
     let impact_hi_bin = (180.0 / bin_to_freq) as usize;
     let impact_max = impact_gain.clamp(0.0, 1.0) * 0.4;
+    let body_lo_bin = (180.0 / bin_to_freq) as usize;
+    let body_hi_bin = (500.0 / bin_to_freq) as usize;
+    let body_active = body_pass_enabled && body > 0.01;
 
     for k in 0..cutoff_bin.min(len) {
         if impact_gain > 0.01
@@ -81,6 +105,13 @@ pub fn apply_constraints_styled_into(
         {
             let transient_gate = transient_field[k].clamp(0.0, 1.0);
             out[k] = (mask[k] * impact_max * transient_gate).min(impact_max);
+        } else if body_active
+            && k >= body_lo_bin
+            && k < body_hi_bin
+            && k < harmonic_field.len()
+            && harmonic_field[k] > 1e-10
+        {
+            out[k] = mask[k];
         } else {
             out[k] = 0.0;
         }
@@ -148,6 +179,9 @@ mod tests {
             &mask, cutoff_bin, sample_rate, fft_size,
             0.5, // impact_gain
             &transient_field,
+            false,
+            0.0,
+            &[],
         );
 
         // Impact band should have non-zero values
@@ -170,6 +204,9 @@ mod tests {
             &mask, cutoff_bin, 48000, 1024,
             0.5, // impact_gain
             &transient_field,
+            false,
+            0.0,
+            &[],
         );
 
         // Impact band should remain zero without transient energy
@@ -177,5 +214,61 @@ mod tests {
         let hi = (180.0 / (48000.0 / 1024.0)) as usize;
         let impact_energy: f32 = result[lo..hi].iter().sum();
         assert_eq!(impact_energy, 0.0, "No transients = no impact opening");
+    }
+
+    #[test]
+    fn body_band_opens_for_harmonic_bins_when_enabled() {
+        let mask = vec![1.0; 513];
+        let cutoff_bin = 400;
+        let sample_rate = 48000;
+        let fft_size = 1024;
+        let bin_to_freq = sample_rate as f32 / fft_size as f32;
+        let lo = (180.0 / bin_to_freq) as usize;
+        let hi = (500.0 / bin_to_freq) as usize;
+        let mut harmonic_field = vec![0.0; 513];
+        for k in lo..hi.min(harmonic_field.len()) {
+            if k % 3 == 0 {
+                harmonic_field[k] = 0.2;
+            }
+        }
+
+        let result = apply_constraints_styled(
+            &mask, cutoff_bin, sample_rate, fft_size,
+            0.0,
+            &[],
+            true,
+            0.4,
+            &harmonic_field,
+        );
+
+        let body_energy: f32 = result[lo..hi].iter().sum();
+        assert!(body_energy > 0.0, "Body band should open on harmonic bins when enabled");
+    }
+
+    #[test]
+    fn body_band_stays_closed_when_toggle_disabled() {
+        let mask = vec![1.0; 513];
+        let cutoff_bin = 400;
+        let sample_rate = 48000;
+        let fft_size = 1024;
+        let bin_to_freq = sample_rate as f32 / fft_size as f32;
+        let lo = (180.0 / bin_to_freq) as usize;
+        let hi = (500.0 / bin_to_freq) as usize;
+        let mut harmonic_field = vec![0.0; 513];
+        for k in lo..hi.min(harmonic_field.len()) {
+            harmonic_field[k] = 0.2;
+        }
+
+        let result = apply_constraints_styled(
+            &mask, cutoff_bin, sample_rate, fft_size,
+            0.0,
+            &[],
+            false,
+            0.4,
+            &harmonic_field,
+        );
+
+        let body_energy: f32 = result[lo..hi].iter().sum();
+        assert_eq!(body_energy, 0.0, "Body band should stay locked when toggle is off");
     }
 }

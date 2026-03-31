@@ -257,6 +257,9 @@ impl PhaselithModule for SelfReprojectionValidator {
                     fft_size,
                     ctx.config.style.impact_gain,
                     &ctx.fields.transient,
+                    ctx.config.body_pass_enabled,
+                    ctx.config.style.body,
+                    &ctx.fields.harmonic,
                     &mut self.constrained_scratch,
                 );
 
@@ -321,6 +324,9 @@ impl PhaselithModule for SelfReprojectionValidator {
                     fft_size,
                     ctx.config.style.impact_gain,
                     &ctx.fields.transient,
+                    ctx.config.body_pass_enabled,
+                    ctx.config.style.body,
+                    &ctx.fields.harmonic,
                 );
 
                 // 5. Shrink residual where error is high

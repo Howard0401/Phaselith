@@ -123,12 +123,12 @@ fn isolation_constraints_into_matches_allocating() {
     let cutoff_bin = 300;
 
     let alloc_result = constraints::apply_constraints_styled(
-        &mask, cutoff_bin, SR, FFT, 0.5, &transient_field,
+        &mask, cutoff_bin, SR, FFT, 0.5, &transient_field, false, 0.0, &[],
     );
 
     let mut into_result = vec![0.0f32; 513];
     constraints::apply_constraints_styled_into(
-        &mask, cutoff_bin, SR, FFT, 0.5, &transient_field, &mut into_result,
+        &mask, cutoff_bin, SR, FFT, 0.5, &transient_field, false, 0.0, &[], &mut into_result,
     );
 
     let mut max_diff = 0.0f32;

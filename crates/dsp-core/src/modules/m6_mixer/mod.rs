@@ -1,5 +1,4 @@
 pub mod crossover;
-pub mod kweighting;
 pub mod masking;
 pub mod true_peak;
 
@@ -19,14 +18,6 @@ use crate::modules::m3_factorizer::transient;
 /// - Character floor: ensures effect even on high-quality sources
 pub struct PerceptualSafetyMixer {
     sample_rate: u32,
-    /// EMA-smoothed dry K-weighted MS (slow follower, ~300ms time constant)
-    dry_rms_sq_ema: f32,
-    /// EMA-smoothed post-processing K-weighted MS (same time constant)
-    post_rms_sq_ema: f32,
-    /// K-weighting filter for dry signal measurement
-    kweight_dry: kweighting::KWeightingFilter,
-    /// K-weighting filter for post-processing measurement
-    kweight_post: kweighting::KWeightingFilter,
     /// Hop-delayed dry buffer used by browser-safe transient repair.
     delayed_transient_dry_buffer: Vec<f32>,
     /// Hop-delayed enhancement delta buffer. Pre-echo suppression only shapes
@@ -199,10 +190,6 @@ impl PerceptualSafetyMixer {
     pub fn new() -> Self {
         Self {
             sample_rate: 48000,
-            dry_rms_sq_ema: 0.0,
-            post_rms_sq_ema: 0.0,
-            kweight_dry: kweighting::KWeightingFilter::new(48000),
-            kweight_post: kweighting::KWeightingFilter::new(48000),
             delayed_transient_dry_buffer: Vec::new(),
             delayed_transient_delta_buffer: Vec::new(),
             delayed_transient_len: 0,
@@ -214,21 +201,6 @@ impl PerceptualSafetyMixer {
             hf_deemph_lp2_delta: 0.0,
             #[cfg(feature = "headroom-log")]
             headroom_log: HeadroomLog::new(),
-        }
-    }
-
-    /// Update EMA-smoothed RMS² trackers. Called unconditionally (including
-    /// during bypass) so the smoother doesn't go stale.
-    fn update_ema(&mut self, dry_rms_sq: f32, post_rms_sq: f32, block_len: usize) {
-        let block_dur = block_len as f32 / self.sample_rate as f32;
-        let alpha = 1.0 - (-block_dur / 0.3_f32).exp(); // 300ms time constant
-
-        if self.dry_rms_sq_ema < 1e-20 {
-            self.dry_rms_sq_ema = dry_rms_sq;
-            self.post_rms_sq_ema = post_rms_sq;
-        } else {
-            self.dry_rms_sq_ema += alpha * (dry_rms_sq - self.dry_rms_sq_ema);
-            self.post_rms_sq_ema += alpha * (post_rms_sq - self.post_rms_sq_ema);
         }
     }
 
@@ -317,8 +289,6 @@ impl PhaselithModule for PerceptualSafetyMixer {
 
     fn init(&mut self, _max_frame_size: usize, sample_rate: u32) {
         self.sample_rate = sample_rate;
-        self.kweight_dry = kweighting::KWeightingFilter::new(sample_rate);
-        self.kweight_post = kweighting::KWeightingFilter::new(sample_rate);
         let max_hop = crate::config::QualityMode::UltraExtreme.hop_size();
         self.delayed_transient_dry_buffer = vec![0.0; _max_frame_size + max_hop];
         self.delayed_transient_delta_buffer = vec![0.0; _max_frame_size + max_hop];
@@ -350,25 +320,12 @@ impl PhaselithModule for PerceptualSafetyMixer {
         // especially at lower quality presets (smaller FFT → coarser residuals).
         let limit = 0.95f32;
 
-        // ── Global output level reference (K-weighted) ──
-        // Measure dry K-weighted MS for this block. Must happen BEFORE early return
-        // so the EMA stays warm during bypass periods — prevents audible
-        // compensation jumps when processing resumes after quiet/bypass sections.
-        // K-weighting (BS.1770) de-emphasizes low frequencies and boosts presence
-        // range, giving a loudness measurement that matches human perception.
-        let dry_rms_sq_block = self
-            .kweight_dry
-            .compute_weighted_ms(&ctx.dry_buffer[..len.min(ctx.dry_buffer.len())]);
-
         if mix_gain < 0.001
             && style.warmth < 0.01
             && style.smoothness < 0.01
             && ctx.config.ambience_preserve < 0.001
             && !ctx.config.delayed_transient_repair
         {
-            // Bypass: still update EMA so it doesn't go stale.
-            // During bypass, post == dry, so ratio stays ~1.0 — correct.
-            self.update_ema(dry_rms_sq_block, dry_rms_sq_block, len);
             return;
         }
 
@@ -570,43 +527,11 @@ impl PhaselithModule for PerceptualSafetyMixer {
             }
         }
 
-        // ── Phase 4: Global output level compensation ──
-        // Uses EMA-smoothed RMS² (~300ms time constant) instead of per-block
-        // instantaneous RMS. This prevents the compensator from chasing waveform
-        // micro-structure and instead tracks perceived loudness over time.
-        //
-        // Headroom-aware: limits makeup per-sample to available headroom so that
-        // boosted samples don't just hit the 0.99 clamp and get eaten.
-        //
-        // Conservative: only compensates level LOSS (ratio >= 1), never cuts.
-        // Capped at +3 dB (~1.414x) to prevent runaway amplification.
-        let post_rms_sq_block = self.kweight_post.compute_weighted_ms(samples);
-        self.update_ema(dry_rms_sq_block, post_rms_sq_block, len);
-
-        if self.dry_rms_sq_ema > 1e-12 && self.post_rms_sq_ema > 1e-12 {
-            let ratio = (self.dry_rms_sq_ema / self.post_rms_sq_ema).sqrt();
-            let makeup = ratio.clamp(1.0, 1.414); // only boost, max +3 dB
-            if makeup > 1.001 {
-                for i in 0..len {
-                    // Headroom-aware: limit boost to what the sample can actually use
-                    // without hitting the ceiling. This prevents "boost then clamp" waste.
-                    let s = samples[i];
-                    let headroom_gain = if s.abs() > 0.001 {
-                        (limit / s.abs()).min(makeup)
-                    } else {
-                        makeup // near-zero samples have unlimited headroom
-                    };
-                    samples[i] = s * headroom_gain;
-                }
-            }
-        }
-
         self.apply_delayed_transient_repair(samples, ctx);
 
         // ── Final true peak guard ──
         // apply_delayed_transient_repair reconstructs dry + filtered_delta
-        // WITHOUT any ceiling enforcement, and runs AFTER Phase 4's makeup
-        // gain already pushed samples near 0.99. The sum can exceed 1.0,
+        // WITHOUT any ceiling enforcement. The sum can exceed 1.0,
         // causing hard clipping in the DAC.
         //
         // Uses uniform block gain reduction (not per-sample hard clipping)
@@ -622,10 +547,6 @@ impl PhaselithModule for PerceptualSafetyMixer {
     }
 
     fn reset(&mut self) {
-        self.dry_rms_sq_ema = 0.0;
-        self.post_rms_sq_ema = 0.0;
-        self.kweight_dry.reset();
-        self.kweight_post.reset();
         self.delayed_transient_dry_buffer.fill(0.0);
         self.delayed_transient_delta_buffer.fill(0.0);
         self.delayed_transient_len = 0;
@@ -784,8 +705,6 @@ mod tests {
         assert!(smooth_var < orig_var, "Smoothing should reduce variation");
     }
 
-    // ── Global level compensation tests ──
-
     /// Helper: set up M6 context with dry_buffer matching input signal
     fn setup_ctx_with_dry(signal: &[f32], config: EngineConfig) -> ProcessContext {
         let mut ctx = ProcessContext::new(48000, 2, config);
@@ -795,79 +714,7 @@ mod tests {
     }
 
     #[test]
-    fn warmth_level_compensation_preserves_rms() {
-        let mut m6 = PerceptualSafetyMixer::new();
-        m6.init(1024, 48000);
-        let mut config = EngineConfig::default();
-        config.style = StyleConfig::new(1.0, 0.0, 0.0, 0.0, 0.0, 0.0); // max warmth
-
-        let original: Vec<f32> = (0..256)
-            .map(|i| 0.6 * (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 48000.0).sin())
-            .collect();
-        let pre_rms: f32 = (original.iter().map(|s| s * s).sum::<f32>() / 256.0).sqrt();
-
-        let mut ctx = setup_ctx_with_dry(&original, config);
-        let mut samples = original.clone();
-        m6.process(&mut samples, &mut ctx);
-
-        let post_rms: f32 = (samples.iter().map(|s| s * s).sum::<f32>() / 256.0).sqrt();
-        let ratio = post_rms / pre_rms;
-        assert!(
-            ratio > 0.88 && ratio < 1.12,
-            "RMS should be compensated: pre={pre_rms:.4}, post={post_rms:.4}, ratio={ratio:.4}"
-        );
-    }
-
-    #[test]
-    fn smoothness_level_compensation_preserves_rms() {
-        let mut m6 = PerceptualSafetyMixer::new();
-        m6.init(1024, 48000);
-        let mut config = EngineConfig::default();
-        config.style = StyleConfig::new(0.0, 0.0, 1.0, 0.0, 0.0, 0.0); // max smoothness
-
-        let original: Vec<f32> = (0..256)
-            .map(|i| 0.5 * (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / 48000.0).sin())
-            .collect();
-        let pre_rms: f32 = (original.iter().map(|s| s * s).sum::<f32>() / 256.0).sqrt();
-
-        let mut ctx = setup_ctx_with_dry(&original, config);
-        let mut samples = original.clone();
-        m6.process(&mut samples, &mut ctx);
-
-        let post_rms: f32 = (samples.iter().map(|s| s * s).sum::<f32>() / 256.0).sqrt();
-        let ratio = post_rms / pre_rms;
-        assert!(
-            ratio > 0.88 && ratio < 1.12,
-            "RMS should be compensated: pre={pre_rms:.4}, post={post_rms:.4}, ratio={ratio:.4}"
-        );
-    }
-
-    #[test]
-    fn combined_warmth_smoothness_level_compensated() {
-        let mut m6 = PerceptualSafetyMixer::new();
-        m6.init(1024, 48000);
-        let mut config = EngineConfig::default();
-        config.style = StyleConfig::new(0.3, 0.0, 0.8, 0.0, 0.0, 0.0);
-
-        let original: Vec<f32> = (0..256)
-            .map(|i| 0.7 * (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 48000.0).sin())
-            .collect();
-        let pre_rms: f32 = (original.iter().map(|s| s * s).sum::<f32>() / 256.0).sqrt();
-
-        let mut ctx = setup_ctx_with_dry(&original, config);
-        let mut samples = original.clone();
-        m6.process(&mut samples, &mut ctx);
-
-        let post_rms: f32 = (samples.iter().map(|s| s * s).sum::<f32>() / 256.0).sqrt();
-        let ratio = post_rms / pre_rms;
-        assert!(
-            ratio > 0.85 && ratio < 1.15,
-            "Combined character RMS compensated: pre={pre_rms:.4}, post={post_rms:.4}, ratio={ratio:.4}"
-        );
-    }
-
-    #[test]
-    fn level_compensation_respects_true_peak() {
+    fn processing_still_respects_true_peak() {
         let mut m6 = PerceptualSafetyMixer::new();
         m6.init(1024, 48000);
         let mut config = EngineConfig::default();
@@ -883,14 +730,14 @@ mod tests {
         for &s in &samples {
             assert!(
                 s.abs() <= 0.99,
-                "Level compensation must not exceed true peak, got {}",
+                "Processing must not exceed true peak, got {}",
                 s
             );
         }
     }
 
     #[test]
-    fn level_compensation_no_effect_on_silence() {
+    fn processing_keeps_silence_silent() {
         let mut m6 = PerceptualSafetyMixer::new();
         m6.init(1024, 48000);
         let mut config = EngineConfig::default();
@@ -903,29 +750,6 @@ mod tests {
 
         let max_val = samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
         assert!(max_val < 1e-10, "Silence should stay silent, got {max_val}");
-    }
-
-    #[test]
-    fn level_compensation_capped_at_3db() {
-        let mut m6 = PerceptualSafetyMixer::new();
-        m6.init(1024, 48000);
-        let mut config = EngineConfig::default();
-        config.style = StyleConfig::new(1.0, 0.0, 1.0, 0.0, 0.0, 0.0);
-
-        let original: Vec<f32> = (0..256)
-            .map(|i| 0.4 * (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 48000.0).sin())
-            .collect();
-        let pre_rms: f32 = (original.iter().map(|s| s * s).sum::<f32>() / 256.0).sqrt();
-
-        let mut ctx = setup_ctx_with_dry(&original, config);
-        let mut samples = original.clone();
-        m6.process(&mut samples, &mut ctx);
-
-        let post_rms: f32 = (samples.iter().map(|s| s * s).sum::<f32>() / 256.0).sqrt();
-        assert!(
-            post_rms <= pre_rms * 1.42,
-            "Makeup gain should be capped: pre={pre_rms:.4}, post={post_rms:.4}"
-        );
     }
 
     /// Helper: run M6 with given dry/processed and ambience_preserve, return output.
@@ -1058,9 +882,7 @@ mod tests {
     }
 
     #[test]
-    fn global_compensation_covers_residual_mixing() {
-        // Test that compensation works even when only residual mixing
-        // happens (no warmth/smoothness) — this is the new behavior.
+    fn residual_mixing_no_longer_adds_makeup_gain() {
         let mut m6 = PerceptualSafetyMixer::new();
         m6.init(1024, 48000);
         let mut config = EngineConfig::default();
@@ -1073,20 +895,16 @@ mod tests {
         let dry_rms: f32 = (original.iter().map(|s| s * s).sum::<f32>() / 128.0).sqrt();
 
         let mut ctx = setup_ctx_with_dry(&original, config);
-        // Add residual that could change level
-        ctx.validated.data = vec![0.05; 128];
-        ctx.validated.consistency_score = 0.8;
-        ctx.damage.overall_confidence = 0.9;
+        ctx.validated.data = original.iter().map(|s| -0.2 * s).collect();
+        ctx.validated.consistency_score = 1.0;
+        ctx.damage.overall_confidence = 1.0;
         let mut samples = original.clone();
         m6.process(&mut samples, &mut ctx);
 
         let post_rms: f32 = (samples.iter().map(|s| s * s).sum::<f32>() / 128.0).sqrt();
-
-        // Output should not be quieter than input (compensation kicks in)
-        // Allow small tolerance for clipping headroom management
         assert!(
-            post_rms >= dry_rms * 0.85,
-            "Global compensation should prevent level loss: dry={dry_rms:.4}, post={post_rms:.4}"
+            post_rms < dry_rms * 0.9,
+            "Residual mixing should not auto-restore RMS anymore: dry={dry_rms:.4}, post={post_rms:.4}"
         );
     }
 

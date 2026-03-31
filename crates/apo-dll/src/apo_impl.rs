@@ -1230,6 +1230,7 @@ impl PhaselithApo {
                 pre_echo_transient_scaling: 0.4,
                 declip_transient_scaling: 1.0,
                 delayed_transient_repair: false,
+                body_pass_enabled: false,
                 // Standard mode (FFT 1024, hop 256) matches Chrome extension.
                 // Engine sub-block processing splits APO blocks (528) into
                 // ≤ hop_size chunks, guaranteeing hops_this_block ≤ 1 and

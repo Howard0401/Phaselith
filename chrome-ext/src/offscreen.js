@@ -190,6 +190,14 @@ function updateConfig(cfg) {
     macTransientMode: currentMacTransientRuntimeMode,
     stylePreset: cfg.stylePreset ?? 0,
     synthesisMode: cfg.synthesisMode ?? 0,
+    warmth: (cfg.warmth ?? 15) / 100,
+    airBrightness: (cfg.airBrightness ?? 50) / 100,
+    smoothness: (cfg.smoothness ?? 40) / 100,
+    spatialSpread: (cfg.spatialSpread ?? 30) / 100,
+    impactGain: (cfg.impactGain ?? 15) / 100,
+    body: (cfg.bodyCtrl ?? 40) / 100,
+    bodyPassEnabled: !!cfg.bodyPassEnabled,
+    ambiencePreserve: (cfg.ambiencePreserve ?? 0) / 100,
     maxSubBlock: currentPlatformOs === 'mac'
       ? (cfg.maxSubBlockFrames === 8 ? 8 : 1)
       : 1,

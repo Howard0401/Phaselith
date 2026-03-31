@@ -64,7 +64,7 @@ checksum = "170433209e817da6aae2c51aa0dd443009a613425dd041ebfb2492d1c4c11a25"
 
 [[package]]
 name = "apo-test-host"
-version = "0.1.24"
+version = "0.1.27"
 dependencies = [
  "windows 0.58.0",
  "windows-core 0.58.0",
@@ -2491,7 +2491,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "phaselith-apo"
-version = "0.1.24"
+version = "0.1.27"
 dependencies = [
  "phaselith-dsp-core",
  "windows 0.58.0",
@@ -2500,7 +2500,7 @@ dependencies = [
 
 [[package]]
 name = "phaselith-core-audio"
-version = "0.1.24"
+version = "0.1.27"
 dependencies = [
  "core-foundation 0.10.1",
  "libc",
@@ -2509,7 +2509,7 @@ dependencies = [
 
 [[package]]
 name = "phaselith-dsp-core"
-version = "0.1.24"
+version = "0.1.27"
 dependencies = [
  "approx",
  "num-complex",
@@ -2519,7 +2519,7 @@ dependencies = [
 
 [[package]]
 name = "phaselith-license"
-version = "0.1.24"
+version = "0.1.27"
 dependencies = [
  "phaselith-dsp-core",
  "serde",
@@ -2527,7 +2527,7 @@ dependencies = [
 
 [[package]]
 name = "phaselith-tauri"
-version = "0.1.24"
+version = "0.1.27"
 dependencies = [
  "dirs 5.0.1",
  "phaselith-core-audio",
@@ -2544,7 +2544,7 @@ dependencies = [
 
 [[package]]
 name = "phaselith-vst3"
-version = "0.1.24"
+version = "0.1.27"
 dependencies = [
  "nih_plug",
  "phaselith-dsp-core",
@@ -2553,7 +2553,7 @@ dependencies = [
 
 [[package]]
 name = "phaselith-wasm-bridge"
-version = "0.1.24"
+version = "0.1.27"
 dependencies = [
  "phaselith-dsp-core",
 ]

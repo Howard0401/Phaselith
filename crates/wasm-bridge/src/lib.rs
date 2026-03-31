@@ -241,6 +241,13 @@ pub extern "C" fn set_delayed_transient_repair(enabled: u32) {
     with_both_engines(|e| e.update_config(config));
 }
 
+#[no_mangle]
+pub extern "C" fn set_body_pass_enabled(enabled: u32) {
+    let mut config = current_config();
+    config.body_pass_enabled = enabled != 0;
+    with_both_engines(|e| e.update_config(config));
+}
+
 // ─── Style / Character exports ───
 
 /// Set style preset by index:

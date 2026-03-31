@@ -237,9 +237,44 @@
       box-shadow: 0 0 14px rgba(0, 212, 255, 0.6);
     }
 
+    /* ── Advanced Toggle ── */
+    .advanced-toggle {
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: 500;
+      color: #666;
+      background: none;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 8px;
+      padding: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-align: center;
+    }
+    .advanced-toggle:hover {
+      color: #999;
+      border-color: rgba(255, 255, 255, 0.12);
+    }
+    .advanced-toggle.open {
+      color: #00d4ff;
+      border-color: rgba(0, 212, 255, 0.2);
+    }
+
     /* ── macOS Runtime Mode ── */
     .mac-only {
       display: none;
+    }
+    .windows-only {
+      display: none;
+    }
+    .body-pass-controls {
+      margin-top: 12px;
+    }
+    .body-pass-hint {
+      margin-top: 8px;
+      font-size: 10px;
+      line-height: 1.4;
+      color: #666;
     }
     .mac-runtime-label {
       font-size: 12px;
@@ -361,6 +396,101 @@
       </div>
     </div>
 
+    <!-- Parameter Presets -->
+    <div class="section">
+      <div class="section-label" data-i18n="paramPresetLabel"></div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+        <button class="style-btn" id="presetDefault" data-i18n="paramPresetDefault"></button>
+        <button class="style-btn" id="presetHoward" data-i18n="paramPresetHoward"></button>
+      </div>
+    </div>
+
+    <!-- Advanced toggle -->
+    <button class="advanced-toggle" id="advancedToggle" data-i18n="advancedLabel"></button>
+
+    <div id="advancedPanel" style="display:none;">
+      <div class="section">
+        <div class="slider-group">
+          <div class="slider-header">
+            <span class="slider-name" data-i18n="transientLabel"></span>
+            <span class="slider-value" id="transientValue">50%</span>
+          </div>
+          <input type="range" id="transient" min="0" max="100" value="50">
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-label" data-i18n="toneLabel"></div>
+        <div class="slider-group">
+          <div class="slider-header">
+            <span class="slider-name" data-i18n="warmthLabel"></span>
+            <span class="slider-value" id="warmthValue">15%</span>
+          </div>
+          <input type="range" id="warmth" min="0" max="100" value="15">
+        </div>
+        <div class="slider-group" style="margin-top:8px;">
+          <div class="slider-header">
+            <span class="slider-name" data-i18n="airBrightnessLabel"></span>
+            <span class="slider-value" id="airBrightnessValue">50%</span>
+          </div>
+          <input type="range" id="airBrightness" min="0" max="100" value="50">
+        </div>
+        <div class="slider-group" style="margin-top:8px;">
+          <div class="slider-header">
+            <span class="slider-name" data-i18n="smoothnessLabel"></span>
+            <span class="slider-value" id="smoothnessValue">40%</span>
+          </div>
+          <input type="range" id="smoothness" min="0" max="100" value="40">
+        </div>
+        <div class="slider-group" style="margin-top:8px;">
+          <div class="slider-header">
+            <span class="slider-name" data-i18n="bodyLabel"></span>
+            <span class="slider-value" id="bodyValue">40%</span>
+          </div>
+          <input type="range" id="bodyCtrl" min="0" max="100" value="40">
+        </div>
+        <div class="body-pass-controls windows-only" id="bodyPassSection">
+          <div class="toggle-row">
+            <span class="toggle-label" data-i18n="bodyPassLabel"></span>
+            <label class="switch">
+              <input type="checkbox" id="bodyPassToggle">
+              <span class="switch-track"></span>
+            </label>
+          </div>
+          <div class="body-pass-hint" data-i18n="bodyPassHint"></div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-label" data-i18n="spatialLabel"></div>
+        <div class="slider-group">
+          <div class="slider-header">
+            <span class="slider-name" data-i18n="spatialSpreadLabel"></span>
+            <span class="slider-value" id="spatialSpreadValue">30%</span>
+          </div>
+          <input type="range" id="spatialSpread" min="0" max="100" value="30">
+        </div>
+        <div class="slider-group" style="margin-top:8px;">
+          <div class="slider-header">
+            <span class="slider-name" data-i18n="ambienceLabel"></span>
+            <span class="slider-value" id="ambienceValue">0%</span>
+          </div>
+          <input type="range" id="ambiencePreserve" min="0" max="100" value="0">
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-label" data-i18n="impactLabel"></div>
+        <div class="slider-group">
+          <div class="slider-header">
+            <span class="slider-name" data-i18n="impactGainLabel"></span>
+            <span class="slider-value" id="impactGainValue">15%</span>
+          </div>
+          <input type="range" id="impactGain" min="0" max="100" value="15">
+        </div>
+      </div>
+    </div>
+
     <div class="section mac-only" id="macRuntimeSection">
       <div class="mac-runtime-label" data-i18n="macRuntimeModeLabel"></div>
       <div class="mac-runtime-grid">
@@ -374,6 +504,12 @@
   <div class="divider"></div>
 
   <div class="content" style="padding-top: 8px; padding-bottom: 8px;">
+    <!-- Preview badge — all features unlocked during preview period -->
+    <div class="section" style="text-align:center;">
+      <span style="font-size:10px; font-weight:600; padding:4px 14px; border-radius:12px; background:rgba(0,212,255,0.12); color:#00d4ff; letter-spacing:1px; text-transform:uppercase;" data-i18n="previewBadge"></span>
+      <div style="margin-top:6px; font-size:10px; color:#555;" data-i18n="previewHint"></div>
+    </div>
+    <!-- TODO: Re-enable license card + View Plans when ready to charge
     <div class="section" id="licenseCard">
       <div id="licenseActivated" style="display:none;">
         <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -399,6 +535,7 @@
       </div>
     </div>
     <a href="https://www.phaselith.com/#pricing" target="_blank" style="display:block; margin-top:8px; font-size:11px; font-weight:500; color:#00d4ff; text-decoration:none; letter-spacing:0.3px; text-align:center;" data-i18n="getProLink"></a>
+    -->
   </div>
 
   <div class="footer">

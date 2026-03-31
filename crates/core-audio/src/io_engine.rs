@@ -383,6 +383,7 @@ impl IoEngine {
             pre_echo_transient_scaling: 0.4,
             declip_transient_scaling: 1.0,
             delayed_transient_repair: false,
+            body_pass_enabled: false,
             phase_mode: PhaseMode::Linear,
             quality_mode: QualityMode::Standard,
             style,

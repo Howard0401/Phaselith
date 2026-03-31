@@ -45,6 +45,7 @@ class PhaselithProcessor extends AudioWorkletProcessor {
     this.spatialSpread = null;
     this.impactGain = null;
     this.body = null;
+    this.bodyPassEnabled = false;
     this.ambiencePreserve = null;
     this.maxSubBlock = 1;
 
@@ -78,6 +79,7 @@ class PhaselithProcessor extends AudioWorkletProcessor {
         if (msg.spatialSpread !== undefined) this.spatialSpread = msg.spatialSpread;
         if (msg.impactGain !== undefined) this.impactGain = msg.impactGain;
         if (msg.body !== undefined) this.body = msg.body;
+        if (msg.bodyPassEnabled !== undefined) this.bodyPassEnabled = !!msg.bodyPassEnabled;
         if (msg.ambiencePreserve !== undefined) this.ambiencePreserve = msg.ambiencePreserve;
         if (msg.maxSubBlock !== undefined) this.maxSubBlock = msg.maxSubBlock;
 
@@ -129,6 +131,9 @@ class PhaselithProcessor extends AudioWorkletProcessor {
     }
     if (this.wasm.set_body && this.body !== null) {
       this.wasm.set_body(this.body);
+    }
+    if (this.wasm.set_body_pass_enabled) {
+      this.wasm.set_body_pass_enabled(this.bodyPassEnabled ? 1 : 0);
     }
     if (this.wasm.set_ambience_preserve && this.ambiencePreserve !== null) {
       this.wasm.set_ambience_preserve(this.ambiencePreserve);

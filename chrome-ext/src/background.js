@@ -163,7 +163,7 @@ async function startCapture() {
 
     // Read saved config from storage (offscreen can't access chrome.storage)
     const config = await chrome.storage.local.get(
-      ['strength', 'hfReconstruction', 'dynamics', 'enabled', 'stylePreset', 'synthesisMode', 'macTransientMode', 'macSubBlockFrames']
+      ['strength', 'hfReconstruction', 'dynamics', 'transient', 'warmth', 'airBrightness', 'smoothness', 'bodyCtrl', 'bodyPassEnabled', 'spatialSpread', 'ambiencePreserve', 'impactGain', 'enabled', 'stylePreset', 'synthesisMode', 'macTransientMode', 'macSubBlockFrames']
     );
     config.macTransientMode = normalizeMacTransientMode(config.macTransientMode);
     if (platformOs === 'mac' && (!config.macTransientMode || config.macTransientMode === 'declip-safe')) {
