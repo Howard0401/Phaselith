@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Phaselith Analysis</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 24px;
+      font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #0f0f1a;
+      color: #e8e8f0;
+    }
+    .wrap {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    .title {
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+    .subtitle {
+      margin-top: 6px;
+      font-size: 13px;
+      color: #8d8da8;
+    }
+    .actions {
+      display: flex;
+      gap: 10px;
+    }
+    button {
+      border: 1px solid rgba(0, 212, 255, 0.25);
+      background: rgba(0, 212, 255, 0.08);
+      color: #00d4ff;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font: inherit;
+      cursor: pointer;
+    }
+    button:hover {
+      background: rgba(0, 212, 255, 0.12);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(14, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .card {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 14px;
+      padding: 14px;
+    }
+    .label {
+      font-size: 11px;
+      color: #7f7f97;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+    }
+    .value {
+      font-size: 22px;
+      font-weight: 700;
+      color: #f5f7ff;
+      font-variant-numeric: tabular-nums;
+    }
+    .hint {
+      margin-top: 6px;
+      font-size: 11px;
+      color: #7f7f97;
+      line-height: 1.4;
+    }
+    .plot {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 14px;
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+    .plot-title {
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 10px;
+      color: #d8d8e8;
+    }
+    canvas {
+      width: 100%;
+      height: 220px;
+      display: block;
+      background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+      border-radius: 10px;
+    }
+    .legend {
+      display: flex;
+      gap: 16px;
+      margin-top: 10px;
+      font-size: 12px;
+      color: #8d8da8;
+    }
+    .swatch {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-right: 6px;
+    }
+    .empty {
+      padding: 40px 20px;
+      text-align: center;
+      color: #8d8da8;
+      line-height: 1.6;
+    }
+    @media (max-width: 980px) {
+      .grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+    @media (max-width: 640px) {
+      body { padding: 16px; }
+      .header { flex-direction: column; align-items: flex-start; }
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="header">
+      <div>
+        <div class="title">Phaselith Analysis Plot</div>
+        <div class="subtitle" id="subtitle">Capture a live snapshot from the popup, then compare RMS, crest, and residual over time.</div>
+      </div>
+      <div class="actions">
+        <button id="refreshBtn">Refresh Snapshot</button>
+      </div>
+    </div>
+
+    <div id="emptyState" class="empty" style="display:none;">
+      No snapshot yet. Start Chrome capture, play audio for a few seconds, then click `Open Analysis Plot` from the popup.
+    </div>
+
+    <div id="content" style="display:none;">
+      <div class="grid">
+        <div class="card">
+          <div class="label">Dyn Delta</div>
+          <div class="value" id="dynDelta">--</div>
+          <div class="hint">Output dynamic range minus input dynamic range.</div>
+        </div>
+        <div class="card">
+          <div class="label">Crest Delta</div>
+          <div class="value" id="crestDelta">--</div>
+          <div class="hint">Average crest factor shift. More negative usually means flatter transients.</div>
+        </div>
+        <div class="card">
+          <div class="label">Env Corr</div>
+          <div class="value" id="envCorr">--</div>
+          <div class="hint">Correlation of input/output short-term envelopes.</div>
+        </div>
+        <div class="card">
+          <div class="label">Residual</div>
+          <div class="value" id="residualMean">--</div>
+          <div class="hint">Average energy of output-input. Closer to 0 dB means stronger coloration.</div>
+        </div>
+        <div class="card">
+          <div class="label">Reading</div>
+          <div class="value" id="reading" style="font-size:18px; line-height:1.3;">--</div>
+          <div class="hint" id="readingHint">Waiting for enough history.</div>
+        </div>
+        <div class="card">
+          <div class="label">Wave Corr</div>
+          <div class="value" id="waveCorr">--</div>
+          <div class="hint">Waveform similarity. Lower than envelope correlation often means phase/timbre changes.</div>
+        </div>
+        <div class="card">
+          <div class="label">Lag</div>
+          <div class="value" id="lagMean">--</div>
+          <div class="hint">Average absolute timing shift proxy in samples.</div>
+        </div>
+        <div class="card">
+          <div class="label">Roughness Δ</div>
+          <div class="value" id="roughnessDelta">--</div>
+          <div class="hint">Higher values mean more edge, grit, or distortion-like texture.</div>
+        </div>
+        <div class="card">
+          <div class="label">Width Δ</div>
+          <div class="value" id="widthDelta">--</div>
+          <div class="hint">Stereo side/mid ratio shift. Positive means wider, negative means tighter.</div>
+        </div>
+        <div class="card">
+          <div class="label">Input Width</div>
+          <div class="value" id="inputWidth">--</div>
+          <div class="hint">Average input side/mid ratio over the current snapshot.</div>
+        </div>
+        <div class="card">
+          <div class="label">Output Width</div>
+          <div class="value" id="outputWidth">--</div>
+          <div class="hint">Average output side/mid ratio over the current snapshot.</div>
+        </div>
+        <div class="card">
+          <div class="label">Center Drift</div>
+          <div class="value" id="centerDrift">--</div>
+          <div class="hint">Average L/R balance movement. Near zero means the phantom center stays put.</div>
+        </div>
+        <div class="card">
+          <div class="label">Space Δ</div>
+          <div class="value" id="spaceDelta">--</div>
+          <div class="hint">Diffuse stereo-space proxy. Positive means more decorrelated ambience-like content.</div>
+        </div>
+        <div class="card">
+          <div class="label">Early Refl Δ</div>
+          <div class="value" id="earlyReflDelta">--</div>
+          <div class="hint">Short-delay self-similarity proxy. Positive suggests more reflection-like short space.</div>
+        </div>
+      </div>
+
+      <div class="plot">
+        <div class="plot-title">Short-term RMS</div>
+        <canvas id="rmsCanvas" width="1100" height="220"></canvas>
+        <div class="legend">
+          <span><span class="swatch" style="background:#5eead4;"></span>Input RMS</span>
+          <span><span class="swatch" style="background:#38bdf8;"></span>Output RMS</span>
+        </div>
+      </div>
+
+      <div class="plot">
+        <div class="plot-title">Crest Factor</div>
+        <canvas id="crestCanvas" width="1100" height="220"></canvas>
+        <div class="legend">
+          <span><span class="swatch" style="background:#f59e0b;"></span>Input Crest</span>
+          <span><span class="swatch" style="background:#f43f5e;"></span>Output Crest</span>
+        </div>
+      </div>
+
+      <div class="plot">
+        <div class="plot-title">Residual / Processing Magnitude</div>
+        <canvas id="residualCanvas" width="1100" height="220"></canvas>
+        <div class="legend">
+          <span><span class="swatch" style="background:#a78bfa;"></span>Residual dB</span>
+        </div>
+      </div>
+
+      <div class="plot">
+        <div class="plot-title">Wave Correlation / Phase Proxy</div>
+        <canvas id="phaseCanvas" width="1100" height="220"></canvas>
+        <div class="legend">
+          <span><span class="swatch" style="background:#22c55e;"></span>Wave Corr</span>
+        </div>
+      </div>
+
+      <div class="plot">
+        <div class="plot-title">Roughness / Edge Delta</div>
+        <canvas id="roughnessCanvas" width="1100" height="220"></canvas>
+        <div class="legend">
+          <span><span class="swatch" style="background:#f97316;"></span>Roughness Delta dB</span>
+        </div>
+      </div>
+
+      <div class="plot">
+        <div class="plot-title">Stereo Image Width</div>
+        <canvas id="widthCanvas" width="1100" height="220"></canvas>
+        <div class="legend">
+          <span><span class="swatch" style="background:#60a5fa;"></span>Input Width</span>
+          <span><span class="swatch" style="background:#c084fc;"></span>Output Width</span>
+        </div>
+      </div>
+
+      <div class="plot">
+        <div class="plot-title">Space Ratio / Diffuse Ambience Proxy</div>
+        <canvas id="spaceCanvas" width="1100" height="220"></canvas>
+        <div class="legend">
+          <span><span class="swatch" style="background:#34d399;"></span>Input Space</span>
+          <span><span class="swatch" style="background:#f472b6;"></span>Output Space</span>
+        </div>
+      </div>
+
+      <div class="plot">
+        <div class="plot-title">Early Reflection Proxy</div>
+        <canvas id="earlyCanvas" width="1100" height="220"></canvas>
+        <div class="legend">
+          <span><span class="swatch" style="background:#fbbf24;"></span>Input Early Refl</span>
+          <span><span class="swatch" style="background:#ef4444;"></span>Output Early Refl</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="src/analysis.js"></script>
+</body>
+</html>

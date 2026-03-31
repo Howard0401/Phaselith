@@ -259,6 +259,7 @@ impl PhaselithModule for SelfReprojectionValidator {
                     &ctx.fields.transient,
                     ctx.config.body_pass_enabled,
                     ctx.config.style.body,
+                    ctx.config.bass_flex,
                     &ctx.fields.harmonic,
                     &mut self.constrained_scratch,
                 );
@@ -326,6 +327,7 @@ impl PhaselithModule for SelfReprojectionValidator {
                     &ctx.fields.transient,
                     ctx.config.body_pass_enabled,
                     ctx.config.style.body,
+                    ctx.config.bass_flex,
                     &ctx.fields.harmonic,
                 );
 

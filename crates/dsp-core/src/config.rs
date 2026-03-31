@@ -71,9 +71,9 @@ pub struct EngineConfig {
     /// Extra high-frequency taming on top of the default M6 de-emphasis shelf.
     /// 0.0 = current behavior, 1.0 = maximum extra harshness reduction.
     pub hf_tame: f32,
-    /// Temporal smoothing for M4 air continuation.
-    /// 0.0 = current behavior, 1.0 = strongest breath/air continuity hold.
-    pub air_continuity: f32,
+    /// Low-end elasticity control for the M5 impact/body window.
+    /// 0.0 = current behavior, 1.0 = widest / softest bass flex path.
+    pub bass_flex: f32,
     /// Phase correction mode.
     pub phase_mode: PhaseMode,
     /// Quality mode (affects CPU/GPU budget).
@@ -109,7 +109,7 @@ impl Default for EngineConfig {
             delayed_transient_repair: false,
             body_pass_enabled: false,
             hf_tame: 0.0,
-            air_continuity: 0.0,
+            bass_flex: 0.0,
             phase_mode: PhaseMode::Linear,
             quality_mode: QualityMode::Standard,
             enabled: true,

@@ -3,7 +3,7 @@
 /// - Phase constraint: limit phase correction magnitude
 /// - Stereo constraint: bound side/mid ratio
 pub fn apply_constraints(mask: &[f32], cutoff_bin: usize) -> Vec<f32> {
-    apply_constraints_styled(mask, cutoff_bin, 48000, 1024, 0.0, &[], false, 0.0, &[])
+    apply_constraints_styled(mask, cutoff_bin, 48000, 1024, 0.0, &[], false, 0.0, 0.0, &[])
 }
 
 /// Apply constraints with impact band support.
@@ -15,6 +15,34 @@ pub fn apply_constraints(mask: &[f32], cutoff_bin: usize) -> Vec<f32> {
 /// When `body_pass_enabled` is true, a second exception re-opens
 /// harmonic bins in the 180-500 Hz body band so the M4 body path can
 /// survive the low-band lock for Windows extension A/B testing.
+///
+/// `bass_flex` relaxes the impact path without changing the 0% baseline:
+/// - widens the impact lane slightly downward/upward
+/// - blends in neighboring transient support so bass hits feel less rigid
+/// - opens a partial harmonic "flex band" in the low-mids for sustain/bounce
+fn lerp(a: f32, b: f32, t: f32) -> f32 {
+    a + (b - a) * t.clamp(0.0, 1.0)
+}
+
+fn neighborhood_max(field: &[f32], center: usize, radius: usize) -> f32 {
+    if field.is_empty() {
+        return 0.0;
+    }
+    let start = center.saturating_sub(radius);
+    let end = center.saturating_add(radius + 1).min(field.len());
+    field[start..end].iter().copied().fold(0.0, f32::max)
+}
+
+fn harmonic_gate(harmonic_field: &[f32], bin: usize) -> f32 {
+    harmonic_field
+        .get(bin)
+        .copied()
+        .unwrap_or(0.0)
+        .max(0.0)
+        .sqrt()
+        .clamp(0.0, 1.0)
+}
+
 pub fn apply_constraints_styled(
     mask: &[f32],
     cutoff_bin: usize,
@@ -24,39 +52,66 @@ pub fn apply_constraints_styled(
     transient_field: &[f32],
     body_pass_enabled: bool,
     body: f32,
+    bass_flex: f32,
     harmonic_field: &[f32],
 ) -> Vec<f32> {
     let mut constrained = mask.to_vec();
     let bin_to_freq = sample_rate as f32 / fft_size.max(1) as f32;
+    let bass_flex = bass_flex.clamp(0.0, 1.0);
 
-    // Impact band: 80-180 Hz
-    let impact_lo_bin = (80.0 / bin_to_freq) as usize;
-    let impact_hi_bin = (180.0 / bin_to_freq) as usize;
+    // Impact band: 80-180 Hz at 0%, widening slightly with Bass Flex.
+    let impact_lo_bin = (lerp(80.0, 65.0, bass_flex) / bin_to_freq) as usize;
+    let impact_hi_bin = (lerp(180.0, 240.0, bass_flex) / bin_to_freq) as usize;
     // Maximum acceptance in impact band (0.0-0.4 range)
-    let impact_max = impact_gain.clamp(0.0, 1.0) * 0.4;
+    let impact_max = impact_gain.clamp(0.0, 1.0) * lerp(0.4, 0.46, bass_flex);
+    // Flex band: low-mid sustain lane that adds a little bounce behind the hit.
+    // Keep it controlled inside the 100-500 Hz region, but let Bass Flex
+    // reopen a bit more of the low-mid movement.
+    let flex_lo_bin = (lerp(180.0, 160.0, bass_flex) / bin_to_freq) as usize;
+    let flex_hi_bin = (lerp(180.0, 360.0, bass_flex) / bin_to_freq) as usize;
+    let flex_max = 0.11 * bass_flex;
     let body_lo_bin = (180.0 / bin_to_freq) as usize;
     let body_hi_bin = (500.0 / bin_to_freq) as usize;
     let body_active = body_pass_enabled && body > 0.01;
+    let flex_active = bass_flex > 0.01;
+    let body_pass_max = lerp(0.52, 0.80, body.clamp(0.0, 1.0));
 
     // Low-band lock: zero below cutoff (with impact band exception)
     for k in 0..cutoff_bin.min(constrained.len()) {
-        if impact_gain > 0.01
-            && k >= impact_lo_bin
-            && k < impact_hi_bin
-            && k < transient_field.len()
-        {
-            // Allow transient-shaped residual in impact band
-            let transient_gate = transient_field[k].clamp(0.0, 1.0);
-            // Only open when transient energy is detected
-            constrained[k] = (mask[k] * impact_max * transient_gate).min(impact_max);
-        } else if body_active
+        if body_active
             && k >= body_lo_bin
             && k < body_hi_bin
             && k < harmonic_field.len()
             && harmonic_field[k] > 1e-10
         {
-            // Only re-open bins that M4 already tagged as harmonic body content.
-            constrained[k] = mask[k];
+            // Re-open harmonic body bins, but keep a ceiling so the 180-500 Hz
+            // lane stays somewhat constrained instead of going fully free.
+            let harmonic_support = harmonic_gate(harmonic_field, k);
+            let body_gate = body_pass_max * lerp(0.68, 1.0, harmonic_support);
+            constrained[k] = (mask[k] * body_gate).min(body_gate);
+        } else if impact_gain > 0.01
+            && k >= impact_lo_bin
+            && k < impact_hi_bin
+        {
+            // Bass Flex blends direct transient, nearby transient support,
+            // and harmonic sustain so kick/bass tails do not feel as rigid.
+            let transient_gate = transient_field.get(k).copied().unwrap_or(0.0).clamp(0.0, 1.0);
+            let transient_support = neighborhood_max(transient_field, k, 2).clamp(0.0, 1.0);
+            let harmonic_support = harmonic_gate(harmonic_field, k);
+            let combined_gate = transient_gate
+                .max(transient_support * (0.35 * bass_flex))
+                .max(harmonic_support * (0.45 * bass_flex))
+                .clamp(0.0, 1.0);
+            constrained[k] = (mask[k] * impact_max * combined_gate).min(impact_max);
+        } else if flex_active
+            && k >= flex_lo_bin
+            && k < flex_hi_bin
+            && harmonic_gate(harmonic_field, k) > 1e-4
+        {
+            let transient_support = neighborhood_max(transient_field, k, 2).clamp(0.0, 1.0);
+            let harmonic_support = harmonic_gate(harmonic_field, k);
+            let flex_gate = (harmonic_support * 0.54 + transient_support * 0.18).clamp(0.0, 1.0);
+            constrained[k] = (mask[k] * flex_max * flex_gate).min(flex_max);
         } else {
             constrained[k] = 0.0;
         }
@@ -83,35 +138,58 @@ pub fn apply_constraints_styled_into(
     transient_field: &[f32],
     body_pass_enabled: bool,
     body: f32,
+    bass_flex: f32,
     harmonic_field: &[f32],
     out: &mut [f32],
 ) {
     let len = mask.len().min(out.len());
     out[..len].copy_from_slice(&mask[..len]);
     let bin_to_freq = sample_rate as f32 / fft_size.max(1) as f32;
+    let bass_flex = bass_flex.clamp(0.0, 1.0);
 
-    let impact_lo_bin = (80.0 / bin_to_freq) as usize;
-    let impact_hi_bin = (180.0 / bin_to_freq) as usize;
-    let impact_max = impact_gain.clamp(0.0, 1.0) * 0.4;
+    let impact_lo_bin = (lerp(80.0, 65.0, bass_flex) / bin_to_freq) as usize;
+    let impact_hi_bin = (lerp(180.0, 240.0, bass_flex) / bin_to_freq) as usize;
+    let impact_max = impact_gain.clamp(0.0, 1.0) * lerp(0.4, 0.46, bass_flex);
+    let flex_lo_bin = (lerp(180.0, 160.0, bass_flex) / bin_to_freq) as usize;
+    let flex_hi_bin = (lerp(180.0, 360.0, bass_flex) / bin_to_freq) as usize;
+    let flex_max = 0.11 * bass_flex;
     let body_lo_bin = (180.0 / bin_to_freq) as usize;
     let body_hi_bin = (500.0 / bin_to_freq) as usize;
     let body_active = body_pass_enabled && body > 0.01;
+    let flex_active = bass_flex > 0.01;
+    let body_pass_max = lerp(0.52, 0.80, body.clamp(0.0, 1.0));
 
     for k in 0..cutoff_bin.min(len) {
-        if impact_gain > 0.01
-            && k >= impact_lo_bin
-            && k < impact_hi_bin
-            && k < transient_field.len()
-        {
-            let transient_gate = transient_field[k].clamp(0.0, 1.0);
-            out[k] = (mask[k] * impact_max * transient_gate).min(impact_max);
-        } else if body_active
+        if body_active
             && k >= body_lo_bin
             && k < body_hi_bin
             && k < harmonic_field.len()
             && harmonic_field[k] > 1e-10
         {
-            out[k] = mask[k];
+            let harmonic_support = harmonic_gate(harmonic_field, k);
+            let body_gate = body_pass_max * lerp(0.68, 1.0, harmonic_support);
+            out[k] = (mask[k] * body_gate).min(body_gate);
+        } else if impact_gain > 0.01
+            && k >= impact_lo_bin
+            && k < impact_hi_bin
+        {
+            let transient_gate = transient_field.get(k).copied().unwrap_or(0.0).clamp(0.0, 1.0);
+            let transient_support = neighborhood_max(transient_field, k, 2).clamp(0.0, 1.0);
+            let harmonic_support = harmonic_gate(harmonic_field, k);
+            let combined_gate = transient_gate
+                .max(transient_support * (0.35 * bass_flex))
+                .max(harmonic_support * (0.45 * bass_flex))
+                .clamp(0.0, 1.0);
+            out[k] = (mask[k] * impact_max * combined_gate).min(impact_max);
+        } else if flex_active
+            && k >= flex_lo_bin
+            && k < flex_hi_bin
+            && harmonic_gate(harmonic_field, k) > 1e-4
+        {
+            let transient_support = neighborhood_max(transient_field, k, 2).clamp(0.0, 1.0);
+            let harmonic_support = harmonic_gate(harmonic_field, k);
+            let flex_gate = (harmonic_support * 0.54 + transient_support * 0.18).clamp(0.0, 1.0);
+            out[k] = (mask[k] * flex_max * flex_gate).min(flex_max);
         } else {
             out[k] = 0.0;
         }
@@ -181,6 +259,7 @@ mod tests {
             &transient_field,
             false,
             0.0,
+            0.0,
             &[],
         );
 
@@ -205,6 +284,7 @@ mod tests {
             0.5, // impact_gain
             &transient_field,
             false,
+            0.0,
             0.0,
             &[],
         );
@@ -238,6 +318,7 @@ mod tests {
             &[],
             true,
             0.4,
+            0.0,
             &harmonic_field,
         );
 
@@ -265,10 +346,80 @@ mod tests {
             &[],
             false,
             0.4,
+            0.0,
             &harmonic_field,
         );
 
         let body_energy: f32 = result[lo..hi].iter().sum();
         assert_eq!(body_energy, 0.0, "Body band should stay locked when toggle is off");
+    }
+
+    #[test]
+    fn bass_flex_widens_impact_band_above_180hz() {
+        let mask = vec![1.0; 513];
+        let cutoff_bin = 400;
+        let sample_rate = 48000;
+        let fft_size = 1024;
+        let bin_to_freq = sample_rate as f32 / fft_size as f32;
+        let flex_bin = (220.0 / bin_to_freq) as usize;
+        let mut transient_field = vec![0.0; 513];
+        transient_field[flex_bin] = 0.9;
+
+        let base = apply_constraints_styled(
+            &mask, cutoff_bin, sample_rate, fft_size,
+            0.5,
+            &transient_field,
+            false,
+            0.0,
+            0.0,
+            &[],
+        );
+        let flexed = apply_constraints_styled(
+            &mask, cutoff_bin, sample_rate, fft_size,
+            0.5,
+            &transient_field,
+            false,
+            0.0,
+            1.0,
+            &[],
+        );
+
+        assert_eq!(base[flex_bin], 0.0, "220 Hz should stay outside the legacy impact lane");
+        assert!(flexed[flex_bin] > 0.0, "Bass Flex should widen the impact lane above 180 Hz");
+    }
+
+    #[test]
+    fn bass_flex_opens_low_mid_harmonic_lane_without_body_pass() {
+        let mask = vec![1.0; 513];
+        let cutoff_bin = 400;
+        let sample_rate = 48000;
+        let fft_size = 1024;
+        let bin_to_freq = sample_rate as f32 / fft_size as f32;
+        let flex_bin = (260.0 / bin_to_freq) as usize;
+        let transient_field = vec![0.0; 513];
+        let mut harmonic_field = vec![0.0; 513];
+        harmonic_field[flex_bin] = 0.36;
+
+        let base = apply_constraints_styled(
+            &mask, cutoff_bin, sample_rate, fft_size,
+            0.0,
+            &transient_field,
+            false,
+            0.4,
+            0.0,
+            &harmonic_field,
+        );
+        let flexed = apply_constraints_styled(
+            &mask, cutoff_bin, sample_rate, fft_size,
+            0.0,
+            &transient_field,
+            false,
+            0.4,
+            1.0,
+            &harmonic_field,
+        );
+
+        assert_eq!(base[flex_bin], 0.0, "Without Bass Flex the low-mid flex lane stays closed");
+        assert!(flexed[flex_bin] > 0.0, "Bass Flex should open a partial harmonic sustain lane");
     }
 }

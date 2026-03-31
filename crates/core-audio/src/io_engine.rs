@@ -385,7 +385,7 @@ impl IoEngine {
             delayed_transient_repair: false,
             body_pass_enabled: false,
             hf_tame: 0.0,
-            air_continuity: 0.0,
+            bass_flex: 0.0,
             phase_mode: PhaseMode::Linear,
             quality_mode: QualityMode::Standard,
             style,

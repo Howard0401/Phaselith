@@ -22,9 +22,6 @@ const I18N = {
     hfLabel: 'HF Reconstruction',
     dynamicsLabel: 'Dynamics',
     transientLabel: 'Transient',
-    paramPresetLabel: 'PARAMETER PRESET',
-    paramPresetDefault: 'Default',
-    paramPresetHoward: 'Howard',
     advancedLabel: 'Advanced \u25BC',
     advancedLabelOpen: 'Advanced \u25B2',
     toneLabel: 'TONE',
@@ -32,18 +29,19 @@ const I18N = {
     airBrightnessLabel: 'Air / Brightness',
     smoothnessLabel: 'Smoothness',
     bodyLabel: 'Body',
-    bodyPassLabel: 'Body Pass A/B',
-    bodyPassHint: 'Windows only. Re-opens the 180-500 Hz body lane below cutoff for quick A/B.',
+    bodyPassLabel: 'Bass Boost',
+    bodyPassHint: 'Re-opens the 180-500 Hz body lane below cutoff for more low-end weight.',
     refineLabel: 'REFINE A/B',
-    refineHint: 'Windows only. 0% = current sound; raise each control to compare against the default path.',
+    refineHint: '0% = current sound; raise each control to compare against the default path.',
     hfTameLabel: 'HF Tame',
-    airContinuityLabel: 'Air Continuity',
     ambienceGlueLabel: 'Ambience Glue',
+    bassFlexLabel: 'Bass Flex',
     levelCheckLabel: 'LIVE LEVEL CHECK',
     inputLevelLabel: 'Input RMS',
     outputLevelLabel: 'Output RMS',
     levelDeltaLabel: 'Delta',
     levelCheckHint: 'Short-term RMS only. If Delta stays near 0 dB, the Chrome output is not actually much quieter.',
+    analysisPlotBtn: 'Open Analysis Plot',
     spatialLabel: 'SPATIAL',
     spatialSpreadLabel: 'Stereo Spread',
     ambienceLabel: 'Ambience Preserve',
@@ -78,9 +76,6 @@ const I18N = {
     hfLabel: '\u9ad8\u983b\u91cd\u5efa',
     dynamicsLabel: '\u52d5\u614b',
     transientLabel: '\u77ac\u614b',
-    paramPresetLabel: '\u53c3\u6578\u9810\u8a2d',
-    paramPresetDefault: '\u9810\u8a2d',
-    paramPresetHoward: 'Howard',
     advancedLabel: '\u9032\u968e \u25BC',
     advancedLabelOpen: '\u9032\u968e \u25B2',
     toneLabel: '\u97f3\u8272',
@@ -88,18 +83,19 @@ const I18N = {
     airBrightnessLabel: '\u7a7a\u6c23 / \u4eae\u5ea6',
     smoothnessLabel: '\u6ed1\u9806\u5ea6',
     bodyLabel: '\u539a\u5ea6',
-    bodyPassLabel: '\u539a\u5ea6 A/B \u958b\u95dc',
-    bodyPassHint: '\u50c5 Windows \u986f\u793a\u3002\u6703\u91cd\u65b0\u6253\u958b cutoff \u4ee5\u4e0b 180-500 Hz \u7684 body \u901a\u9053\uff0c\u65b9\u4fbf\u5feb\u901f A/B\u3002',
+    bodyPassLabel: '\u91cd\u4f4e\u97f3',
+    bodyPassHint: '\u6703\u91cd\u65b0\u6253\u958b cutoff \u4ee5\u4e0b 180-500 Hz \u7684 body \u901a\u9053\uff0c\u88dc\u56de\u4f4e\u983b\u91cd\u91cf\u3002',
     refineLabel: '\u7d30\u4fee A/B',
-    refineHint: '\u50c5 Windows \u986f\u793a\u30020% = \u76ee\u524d\u8072\u97f3\uff0c\u5f80\u4e0a\u63a8\u5c31\u80fd\u76f4\u63a5\u8ddf\u73fe\u884c\u8def\u5f91 A/B \u6bd4\u8f03\u3002',
+    refineHint: '0% = \u76ee\u524d\u8072\u97f3\uff0c\u5f80\u4e0a\u63a8\u5c31\u80fd\u76f4\u63a5\u8ddf\u73fe\u884c\u8def\u5f91 A/B \u6bd4\u8f03\u3002',
     hfTameLabel: '\u9ad8\u983b\u6536\u6599',
-    airContinuityLabel: '\u6c23\u97f3\u9023\u7e8c',
     ambienceGlueLabel: '\u5802\u97f3\u9ed8\u5408',
+    bassFlexLabel: '\u4f4e\u983b\u5f48\u6027',
     levelCheckLabel: '\u5373\u6642\u97ff\u5ea6\u6aa2\u67e5',
     inputLevelLabel: '\u8f38\u5165 RMS',
     outputLevelLabel: '\u8f38\u51fa RMS',
     levelDeltaLabel: '\u5dee\u503c',
     levelCheckHint: '\u9019\u662f short-term RMS\uff0c\u4e0d\u662f LUFS\u3002\u5982\u679c Delta \u9577\u6642\u9593\u63a5\u8fd1 0 dB\uff0c\u5c31\u4e0d\u662f Chrome \u8f38\u51fa\u771f\u7684\u5c0f\u5f88\u591a\u3002',
+    analysisPlotBtn: '\u958b\u555f\u5206\u6790\u5716',
     spatialLabel: '\u7a7a\u9593',
     spatialSpreadLabel: '\u7acb\u9ad4\u8076\u5bec\u5ea6',
     ambienceLabel: '\u6df7\u97ff\u4fdd\u7559',
@@ -134,9 +130,6 @@ const I18N = {
     hfLabel: '\u9ad8\u9891\u91cd\u5efa',
     dynamicsLabel: '\u52a8\u6001',
     transientLabel: '\u77ac\u6001',
-    paramPresetLabel: '\u53c2\u6570\u9884\u8bbe',
-    paramPresetDefault: '\u9884\u8bbe',
-    paramPresetHoward: 'Howard',
     advancedLabel: '\u8fdb\u9636 \u25BC',
     advancedLabelOpen: '\u8fdb\u9636 \u25B2',
     toneLabel: '\u97f3\u8272',
@@ -144,18 +137,19 @@ const I18N = {
     airBrightnessLabel: '\u7a7a\u6c14 / \u4eae\u5ea6',
     smoothnessLabel: '\u6ed1\u987a\u5ea6',
     bodyLabel: '\u539a\u5ea6',
-    bodyPassLabel: '\u539a\u5ea6 A/B \u5f00\u5173',
-    bodyPassHint: '\u4ec5 Windows \u663e\u793a\u3002\u4f1a\u91cd\u65b0\u6253\u5f00 cutoff \u4ee5\u4e0b 180-500 Hz \u7684 body \u901a\u9053\uff0c\u65b9\u4fbf\u5feb\u901f A/B\u3002',
+    bodyPassLabel: '\u91cd\u4f4e\u97f3',
+    bodyPassHint: '\u4f1a\u91cd\u65b0\u6253\u5f00 cutoff \u4ee5\u4e0b 180-500 Hz \u7684 body \u901a\u9053\uff0c\u8865\u56de\u4f4e\u9891\u91cd\u91cf\u3002',
     refineLabel: '\u7ec6\u4fee A/B',
-    refineHint: '\u4ec5 Windows \u663e\u793a\u30020% = \u5f53\u524d\u58f0\u97f3\uff1b\u5f80\u4e0a\u63a8\u5c31\u80fd\u76f4\u63a5\u548c\u73b0\u884c\u8def\u5f84 A/B \u5bf9\u6bd4\u3002',
+    refineHint: '0% = \u5f53\u524d\u58f0\u97f3\uff1b\u5f80\u4e0a\u63a8\u5c31\u80fd\u76f4\u63a5\u548c\u73b0\u884c\u8def\u5f84 A/B \u5bf9\u6bd4\u3002',
     hfTameLabel: '\u9ad8\u9891\u6536\u655b',
-    airContinuityLabel: '\u6c14\u97f3\u8fde\u7eed',
     ambienceGlueLabel: '\u5802\u54cd\u9ed8\u5408',
+    bassFlexLabel: '\u4f4e\u9891\u5f39\u6027',
     levelCheckLabel: '\u5b9e\u65f6\u54cd\u5ea6\u68c0\u67e5',
     inputLevelLabel: '\u8f93\u5165 RMS',
     outputLevelLabel: '\u8f93\u51fa RMS',
     levelDeltaLabel: '\u5dee\u503c',
     levelCheckHint: '\u8fd9\u662f short-term RMS\uff0c\u4e0d\u662f LUFS\u3002\u5982\u679c Delta \u957f\u65f6\u95f4\u63a5\u8fd1 0 dB\uff0c\u5c31\u4e0d\u662f Chrome \u8f93\u51fa\u771f\u7684\u53d8\u5c0f\u5f88\u591a\u3002',
+    analysisPlotBtn: '\u6253\u5f00\u5206\u6790\u56fe',
     spatialLabel: '\u7a7a\u95f4',
     spatialSpreadLabel: '\u7acb\u4f53\u58f0\u5bbd\u5ea6',
     ambienceLabel: '\u6df7\u54cd\u4fdd\u7559',
@@ -175,6 +169,27 @@ const I18N = {
     macRuntimeModeHint: '\u4ec5 macOS \u663e\u793a\u30021 \u97f3\u8d28\u6700\u597d\uff0c\u4f46\u5728\u67d0\u4e9b\u7cfb\u7edf\u4e0a\u53ef\u80fd\u4f1a\u5361\u987f\uff1b8 \u662f\u66f4\u4fdd\u5b88\u7684\u5907\u63f4\u8bbe\u5b9a\u3002',
   },
 };
+
+const DEFAULT_EXTENSION_STATE = Object.freeze({
+  strength: 100,
+  hfReconstruction: 70,
+  dynamics: 100,
+  transient: 100,
+  warmth: 50,
+  airBrightness: 50,
+  smoothness: 50,
+  bodyCtrl: 50,
+  bodyPassEnabled: false,
+  hfTame: 10,
+  ambienceGlue: 100,
+  bassFlex: 30,
+  spatialSpread: 100,
+  ambiencePreserve: 0,
+  impactGain: 100,
+  stylePreset: 0,
+  macSubBlockFrames: 1,
+  advancedOpen: false,
+});
 
 function detectLang() {
   // navigator.language returns e.g. "zh-TW", "zh-CN", "zh", "en-US", "en"
@@ -218,8 +233,8 @@ const bodySlider = document.getElementById('bodyCtrl');
 const bodyPassToggle = document.getElementById('bodyPassToggle');
 const bodyPassSection = document.getElementById('bodyPassSection');
 const hfTameSlider = document.getElementById('hfTame');
-const airContinuitySlider = document.getElementById('airContinuity');
 const ambienceGlueSlider = document.getElementById('ambienceGlue');
+const bassFlexSlider = document.getElementById('bassFlex');
 const spatialSpreadSlider = document.getElementById('spatialSpread');
 const ambienceSlider = document.getElementById('ambiencePreserve');
 const impactGainSlider = document.getElementById('impactGain');
@@ -233,6 +248,7 @@ const macSubBlockBtns = document.querySelectorAll('.mac-sub-block-btn');
 const liveInputLevelEl = document.getElementById('liveInputLevel');
 const liveOutputLevelEl = document.getElementById('liveOutputLevel');
 const liveLevelDeltaEl = document.getElementById('liveLevelDelta');
+const analysisPlotBtn = document.getElementById('analysisPlotBtn');
 
 let advancedOpen = false;
 
@@ -250,33 +266,33 @@ chrome.runtime.getPlatformInfo((info) => {
 });
 
 function getSynthesisMode() {
-  // Keep the original pilot path on Windows; use the safer legacy path on macOS
-  // while we investigate the browser-runtime artifact there.
-  return currentPlatformOs === 'mac' ? 0 : 1;
+  // Use the same pilot path across platforms. macOS still keeps the
+  // separate 1 / 8 runtime-mode control for sub-block stability.
+  return 1;
 }
 
 // ── Load saved state ──
-chrome.storage.local.get(['enabled', 'strength', 'hfReconstruction', 'dynamics', 'transient', 'warmth', 'airBrightness', 'smoothness', 'bodyCtrl', 'bodyPassEnabled', 'hfTame', 'airContinuity', 'ambienceGlue', 'spatialSpread', 'ambiencePreserve', 'impactGain', 'stylePreset', 'lang', 'macSubBlockFrames', 'advancedOpen'], (data) => {
+chrome.storage.local.get(['enabled', 'strength', 'hfReconstruction', 'dynamics', 'transient', 'warmth', 'airBrightness', 'smoothness', 'bodyCtrl', 'bodyPassEnabled', 'hfTame', 'ambienceGlue', 'bassFlex', 'spatialSpread', 'ambiencePreserve', 'impactGain', 'stylePreset', 'lang', 'macSubBlockFrames', 'advancedOpen'], (data) => {
   enableToggle.checked = data.enabled ?? false;
-  strengthSlider.value = data.strength ?? 70;
-  hfSlider.value = data.hfReconstruction ?? 80;
-  dynSlider.value = data.dynamics ?? 60;
-  transientSlider.value = data.transient ?? 50;
-  warmthSlider.value = data.warmth ?? 15;
-  airBrightnessSlider.value = data.airBrightness ?? 50;
-  smoothnessSlider.value = data.smoothness ?? 40;
-  bodySlider.value = data.bodyCtrl ?? 40;
-  bodyPassToggle.checked = data.bodyPassEnabled ?? false;
-  hfTameSlider.value = data.hfTame ?? 0;
-  airContinuitySlider.value = data.airContinuity ?? 0;
-  ambienceGlueSlider.value = data.ambienceGlue ?? 0;
-  spatialSpreadSlider.value = data.spatialSpread ?? 30;
-  ambienceSlider.value = data.ambiencePreserve ?? 0;
-  impactGainSlider.value = data.impactGain ?? 15;
-  currentStylePreset = data.stylePreset ?? 0;
+  strengthSlider.value = data.strength ?? DEFAULT_EXTENSION_STATE.strength;
+  hfSlider.value = data.hfReconstruction ?? DEFAULT_EXTENSION_STATE.hfReconstruction;
+  dynSlider.value = data.dynamics ?? DEFAULT_EXTENSION_STATE.dynamics;
+  transientSlider.value = data.transient ?? DEFAULT_EXTENSION_STATE.transient;
+  warmthSlider.value = data.warmth ?? DEFAULT_EXTENSION_STATE.warmth;
+  airBrightnessSlider.value = data.airBrightness ?? DEFAULT_EXTENSION_STATE.airBrightness;
+  smoothnessSlider.value = data.smoothness ?? DEFAULT_EXTENSION_STATE.smoothness;
+  bodySlider.value = data.bodyCtrl ?? DEFAULT_EXTENSION_STATE.bodyCtrl;
+  bodyPassToggle.checked = data.bodyPassEnabled ?? DEFAULT_EXTENSION_STATE.bodyPassEnabled;
+  hfTameSlider.value = data.hfTame ?? DEFAULT_EXTENSION_STATE.hfTame;
+  ambienceGlueSlider.value = data.ambienceGlue ?? DEFAULT_EXTENSION_STATE.ambienceGlue;
+  bassFlexSlider.value = data.bassFlex ?? DEFAULT_EXTENSION_STATE.bassFlex;
+  spatialSpreadSlider.value = data.spatialSpread ?? DEFAULT_EXTENSION_STATE.spatialSpread;
+  ambienceSlider.value = data.ambiencePreserve ?? DEFAULT_EXTENSION_STATE.ambiencePreserve;
+  impactGainSlider.value = data.impactGain ?? DEFAULT_EXTENSION_STATE.impactGain;
+  currentStylePreset = data.stylePreset ?? DEFAULT_EXTENSION_STATE.stylePreset;
   currentLang = data.lang || detectLang();
-  currentMacSubBlock = data.macSubBlockFrames ?? 1;
-  advancedOpen = data.advancedOpen ?? false;
+  currentMacSubBlock = data.macSubBlockFrames ?? DEFAULT_EXTENSION_STATE.macSubBlockFrames;
+  advancedOpen = data.advancedOpen ?? DEFAULT_EXTENSION_STATE.advancedOpen;
   if (advancedOpen) {
     advancedPanel.style.display = 'flex';
     advancedPanel.style.flexDirection = 'column';
@@ -299,8 +315,8 @@ function updateUI() {
   document.getElementById('smoothnessValue').textContent = smoothnessSlider.value + '%';
   document.getElementById('bodyValue').textContent = bodySlider.value + '%';
   document.getElementById('hfTameValue').textContent = hfTameSlider.value + '%';
-  document.getElementById('airContinuityValue').textContent = airContinuitySlider.value + '%';
   document.getElementById('ambienceGlueValue').textContent = ambienceGlueSlider.value + '%';
+  document.getElementById('bassFlexValue').textContent = bassFlexSlider.value + '%';
   document.getElementById('spatialSpreadValue').textContent = spatialSpreadSlider.value + '%';
   document.getElementById('ambienceValue').textContent = ambienceSlider.value + '%';
   document.getElementById('impactGainValue').textContent = impactGainSlider.value + '%';
@@ -406,10 +422,10 @@ function buildState() {
     airBrightness: parseInt(airBrightnessSlider.value),
     smoothness: parseInt(smoothnessSlider.value),
     bodyCtrl: parseInt(bodySlider.value),
-    bodyPassEnabled: currentPlatformOs === 'win' ? bodyPassToggle.checked : false,
-    hfTame: currentPlatformOs === 'win' ? parseInt(hfTameSlider.value) : 0,
-    airContinuity: currentPlatformOs === 'win' ? parseInt(airContinuitySlider.value) : 0,
-    ambienceGlue: currentPlatformOs === 'win' ? parseInt(ambienceGlueSlider.value) : 0,
+    bodyPassEnabled: bodyPassToggle.checked,
+    hfTame: parseInt(hfTameSlider.value),
+    ambienceGlue: parseInt(ambienceGlueSlider.value),
+    bassFlex: parseInt(bassFlexSlider.value),
     spatialSpread: parseInt(spatialSpreadSlider.value),
     ambiencePreserve: parseInt(ambienceSlider.value),
     impactGain: parseInt(impactGainSlider.value),
@@ -448,41 +464,12 @@ airBrightnessSlider.addEventListener('input', saveAndNotify);
 smoothnessSlider.addEventListener('input', saveAndNotify);
 bodySlider.addEventListener('input', saveAndNotify);
 hfTameSlider.addEventListener('input', saveAndNotify);
-airContinuitySlider.addEventListener('input', saveAndNotify);
 ambienceGlueSlider.addEventListener('input', saveAndNotify);
+bassFlexSlider.addEventListener('input', saveAndNotify);
 spatialSpreadSlider.addEventListener('input', saveAndNotify);
 ambienceSlider.addEventListener('input', saveAndNotify);
 impactGainSlider.addEventListener('input', saveAndNotify);
 bodyPassToggle.addEventListener('change', saveAndNotify);
-
-// Parameter presets
-const PARAM_PRESETS = {
-  default: { strength: 100, hfReconstruction: 100, dynamics: 100, transient: 50, warmth: 15, airBrightness: 50, smoothness: 40, bodyCtrl: 40, hfTame: 0, airContinuity: 0, ambienceGlue: 0, spatialSpread: 30, ambiencePreserve: 0, impactGain: 15 },
-  howard:  { strength: 100, hfReconstruction: 100, dynamics: 100, transient: 100, warmth: 78, airBrightness: 46, smoothness: 87, bodyCtrl: 100, hfTame: 0, airContinuity: 0, ambienceGlue: 0, spatialSpread: 100, ambiencePreserve: 100, impactGain: 100 },
-};
-
-function applyParamPreset(name) {
-  const p = PARAM_PRESETS[name];
-  if (!p) return;
-  strengthSlider.value = p.strength;
-  hfSlider.value = p.hfReconstruction;
-  dynSlider.value = p.dynamics;
-  transientSlider.value = p.transient;
-  warmthSlider.value = p.warmth;
-  airBrightnessSlider.value = p.airBrightness;
-  smoothnessSlider.value = p.smoothness;
-  bodySlider.value = p.bodyCtrl;
-  hfTameSlider.value = p.hfTame;
-  airContinuitySlider.value = p.airContinuity;
-  ambienceGlueSlider.value = p.ambienceGlue;
-  spatialSpreadSlider.value = p.spatialSpread;
-  ambienceSlider.value = p.ambiencePreserve;
-  impactGainSlider.value = p.impactGain;
-  saveAndNotify();
-}
-
-document.getElementById('presetDefault').addEventListener('click', () => applyParamPreset('default'));
-document.getElementById('presetHoward').addEventListener('click', () => applyParamPreset('howard'));
 
 advancedToggle.addEventListener('click', () => {
   advancedOpen = !advancedOpen;
@@ -537,6 +524,14 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === 'LIVE_LEVELS' && msg.payload) {
     liveLevelState = msg.payload;
     updateLiveLevelUI();
+  }
+});
+
+analysisPlotBtn?.addEventListener('click', async () => {
+  try {
+    await chrome.runtime.sendMessage({ type: 'OPEN_ANALYSIS_SNAPSHOT' });
+  } catch {
+    // Ignore popup/background races during extension reloads.
   }
 });
 

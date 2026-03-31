@@ -13,6 +13,8 @@ let captureGeneration = 0; // Monotonic counter to discard stale captures
 let lastGestureNoticeTabId = null; // Avoid spamming the same tab-switch notice
 let platformOs = 'unknown';
 let latestLiveLevels = null;
+let latestAnalysisSnapshot = null;
+let pendingAnalysisOpen = false;
 const DEBUG_VERSION = 'mac-transient-safe-1';
 const DEFAULT_MAC_TRANSIENT_MODE = 'transient-safe';
 
@@ -40,23 +42,54 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'START_CAPTURE') {
     isEnabled = true;
     latestLiveLevels = null;
+    latestAnalysisSnapshot = null;
     startCapture();
   } else if (msg.type === 'STOP_CAPTURE') {
     isEnabled = false;
     capturedTabId = null;
     latestLiveLevels = null;
+    latestAnalysisSnapshot = null;
     chrome.runtime.sendMessage({ type: 'OFFSCREEN_STOP' }).catch(() => {});
   } else if (msg.type === 'CONFIG_UPDATE') {
     // Forward config to offscreen
     chrome.runtime.sendMessage({ ...msg, platformOs }).catch(() => {});
+  } else if (msg.type === 'OPEN_ANALYSIS_SNAPSHOT') {
+    pendingAnalysisOpen = true;
+    if (isEnabled) {
+      chrome.runtime.sendMessage({ type: 'REQUEST_ANALYSIS_SNAPSHOT' }).catch(() => {
+        pendingAnalysisOpen = false;
+        chrome.tabs.create({ url: chrome.runtime.getURL('analysis.html') }).catch(() => {});
+      });
+    } else {
+      pendingAnalysisOpen = false;
+      chrome.tabs.create({ url: chrome.runtime.getURL('analysis.html') }).catch(() => {});
+    }
+  } else if (msg.type === 'REQUEST_ANALYSIS_SNAPSHOT_NOW') {
+    if (isEnabled) {
+      chrome.runtime.sendMessage({ type: 'REQUEST_ANALYSIS_SNAPSHOT' }).catch(() => {});
+    }
   } else if (msg.type === 'LIVE_LEVELS') {
     latestLiveLevels = {
       ...msg.payload,
       updatedAt: Date.now(),
     };
+  } else if (msg.type === 'ANALYSIS_SNAPSHOT') {
+    latestAnalysisSnapshot = {
+      ...msg.payload,
+      updatedAt: Date.now(),
+    };
+    if (pendingAnalysisOpen) {
+      pendingAnalysisOpen = false;
+      chrome.tabs.create({ url: chrome.runtime.getURL('analysis.html') }).catch(() => {});
+    }
   } else if (msg.type === 'GET_LIVE_LEVELS') {
     sendResponse({
       payload: latestLiveLevels,
+      enabled: isEnabled,
+    });
+  } else if (msg.type === 'GET_ANALYSIS_SNAPSHOT') {
+    sendResponse({
+      payload: latestAnalysisSnapshot,
       enabled: isEnabled,
     });
   } else if (msg.type === 'DEBUG_EVENT') {
@@ -176,7 +209,7 @@ async function startCapture() {
 
     // Read saved config from storage (offscreen can't access chrome.storage)
     const config = await chrome.storage.local.get(
-      ['strength', 'hfReconstruction', 'dynamics', 'transient', 'warmth', 'airBrightness', 'smoothness', 'bodyCtrl', 'bodyPassEnabled', 'hfTame', 'airContinuity', 'ambienceGlue', 'spatialSpread', 'ambiencePreserve', 'impactGain', 'enabled', 'stylePreset', 'synthesisMode', 'macTransientMode', 'macSubBlockFrames']
+      ['strength', 'hfReconstruction', 'dynamics', 'transient', 'warmth', 'airBrightness', 'smoothness', 'bodyCtrl', 'bodyPassEnabled', 'hfTame', 'ambienceGlue', 'bassFlex', 'spatialSpread', 'ambiencePreserve', 'impactGain', 'enabled', 'stylePreset', 'synthesisMode', 'macTransientMode', 'macSubBlockFrames']
     );
     config.macTransientMode = normalizeMacTransientMode(config.macTransientMode);
     if (platformOs === 'mac' && (!config.macTransientMode || config.macTransientMode === 'declip-safe')) {

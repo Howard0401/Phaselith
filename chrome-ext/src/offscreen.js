@@ -45,6 +45,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       msg.macTransientMode || currentMacTransientRuntimeMode
     );
     updateConfig(msg);
+  } else if (msg.type === 'REQUEST_ANALYSIS_SNAPSHOT') {
+    requestAnalysisSnapshot();
   }
 });
 
@@ -103,6 +105,8 @@ async function startProcessing(streamId, config) {
         relayDebugEvent(d);
       } else if (d.type === 'LIVE_LEVELS') {
         chrome.runtime.sendMessage({ type: 'LIVE_LEVELS', payload: d }).catch(() => {});
+      } else if (d.type === 'ANALYSIS_SNAPSHOT') {
+        chrome.runtime.sendMessage({ type: 'ANALYSIS_SNAPSHOT', payload: d.payload }).catch(() => {});
       } else if (d.type === 'WASM_ERROR') {
         console.error('Phaselith: WASM init error:', d.error);
         relayDebugEvent(d);
@@ -162,6 +166,11 @@ function stopProcessing() {
   if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
 }
 
+function requestAnalysisSnapshot() {
+  if (!workletNode) return;
+  workletNode.port.postMessage({ type: 'REQUEST_ANALYSIS_SNAPSHOT' });
+}
+
 function updateConfig(cfg) {
   if (!workletNode) return;
   currentMacTransientRuntimeMode = normalizeMacTransientRuntimeMode(
@@ -176,33 +185,33 @@ function updateConfig(cfg) {
       currentMacTransientRuntimeMode === 'declip-safe'
       || currentMacTransientRuntimeMode === 'declip-probe'
     );
-  const transientValue = (cfg.transient ?? 50) / 100;
+  const transientValue = (cfg.transient ?? 100) / 100;
   workletNode.port.postMessage({
     type: 'config',
     platformOs: currentPlatformOs,
     debugVersion: currentDebugVersion,
-    strength: (cfg.strength ?? 70) / 100,
+    strength: (cfg.strength ?? 100) / 100,
     enabled: cfg.enabled !== undefined ? cfg.enabled : true,
-    hfReconstruction: (cfg.hfReconstruction ?? 80) / 100,
-    dynamics: (cfg.dynamics ?? 60) / 100,
+    hfReconstruction: (cfg.hfReconstruction ?? 70) / 100,
+    dynamics: (cfg.dynamics ?? 100) / 100,
     transient: useMacStableFallback ? 0 : transientValue,
     preEchoTransientScaling: useMacStableFallback || useMacDeclipOnly ? 0 : 1,
     declipTransientScaling: useMacTransientSafe ? 0 : 1,
     delayedTransientRepair: useMacTransientSafe,
     macTransientMode: currentMacTransientRuntimeMode,
     stylePreset: cfg.stylePreset ?? 0,
-    synthesisMode: cfg.synthesisMode ?? 0,
-    warmth: (cfg.warmth ?? 15) / 100,
+    synthesisMode: cfg.synthesisMode ?? 1,
+    warmth: (cfg.warmth ?? 50) / 100,
     airBrightness: (cfg.airBrightness ?? 50) / 100,
-    smoothness: (cfg.smoothness ?? 40) / 100,
-    spatialSpread: (cfg.spatialSpread ?? 30) / 100,
-    impactGain: (cfg.impactGain ?? 15) / 100,
-    body: (cfg.bodyCtrl ?? 40) / 100,
-    bodyPassEnabled: !!cfg.bodyPassEnabled,
-    hfTame: (cfg.hfTame ?? 0) / 100,
-    airContinuity: (cfg.airContinuity ?? 0) / 100,
+    smoothness: (cfg.smoothness ?? 50) / 100,
+    spatialSpread: (cfg.spatialSpread ?? 100) / 100,
+    impactGain: (cfg.impactGain ?? 100) / 100,
+    body: (cfg.bodyCtrl ?? 50) / 100,
+    bodyPassEnabled: cfg.bodyPassEnabled !== undefined ? !!cfg.bodyPassEnabled : false,
+    hfTame: (cfg.hfTame ?? 10) / 100,
     ambiencePreserve: (cfg.ambiencePreserve ?? 0) / 100,
-    ambienceGlue: (cfg.ambienceGlue ?? 0) / 100,
+    ambienceGlue: (cfg.ambienceGlue ?? 100) / 100,
+    bassFlex: (cfg.bassFlex ?? 30) / 100,
     maxSubBlock: currentPlatformOs === 'mac'
       ? (cfg.maxSubBlockFrames === 8 ? 8 : 1)
       : 1,

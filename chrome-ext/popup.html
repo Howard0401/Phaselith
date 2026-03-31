@@ -370,9 +370,9 @@
       <div class="slider-group">
         <div class="slider-header">
           <span class="slider-name" data-i18n="strengthLabel"></span>
-          <span class="slider-value" id="strengthValue">70%</span>
+          <span class="slider-value" id="strengthValue">100%</span>
         </div>
-        <input type="range" id="strength" min="0" max="100" value="70">
+        <input type="range" id="strength" min="0" max="100" value="100">
       </div>
     </div>
 
@@ -380,9 +380,9 @@
       <div class="slider-group">
         <div class="slider-header">
           <span class="slider-name" data-i18n="hfLabel"></span>
-          <span class="slider-value" id="hfValue">80%</span>
+          <span class="slider-value" id="hfValue">70%</span>
         </div>
-        <input type="range" id="hfReconstruction" min="0" max="100" value="80">
+        <input type="range" id="hfReconstruction" min="0" max="100" value="70">
       </div>
     </div>
 
@@ -390,18 +390,9 @@
       <div class="slider-group">
         <div class="slider-header">
           <span class="slider-name" data-i18n="dynamicsLabel"></span>
-          <span class="slider-value" id="dynValue">60%</span>
+          <span class="slider-value" id="dynValue">100%</span>
         </div>
-        <input type="range" id="dynamics" min="0" max="100" value="60">
-      </div>
-    </div>
-
-    <!-- Parameter Presets -->
-    <div class="section">
-      <div class="section-label" data-i18n="paramPresetLabel"></div>
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
-        <button class="style-btn" id="presetDefault" data-i18n="paramPresetDefault"></button>
-        <button class="style-btn" id="presetHoward" data-i18n="paramPresetHoward"></button>
+        <input type="range" id="dynamics" min="0" max="100" value="100">
       </div>
     </div>
 
@@ -413,9 +404,9 @@
         <div class="slider-group">
           <div class="slider-header">
             <span class="slider-name" data-i18n="transientLabel"></span>
-            <span class="slider-value" id="transientValue">50%</span>
+            <span class="slider-value" id="transientValue">100%</span>
           </div>
-          <input type="range" id="transient" min="0" max="100" value="50">
+          <input type="range" id="transient" min="0" max="100" value="100">
         </div>
       </div>
 
@@ -424,9 +415,9 @@
         <div class="slider-group">
           <div class="slider-header">
             <span class="slider-name" data-i18n="warmthLabel"></span>
-            <span class="slider-value" id="warmthValue">15%</span>
+            <span class="slider-value" id="warmthValue">50%</span>
           </div>
-          <input type="range" id="warmth" min="0" max="100" value="15">
+          <input type="range" id="warmth" min="0" max="100" value="50">
         </div>
         <div class="slider-group" style="margin-top:8px;">
           <div class="slider-header">
@@ -438,18 +429,18 @@
         <div class="slider-group" style="margin-top:8px;">
           <div class="slider-header">
             <span class="slider-name" data-i18n="smoothnessLabel"></span>
-            <span class="slider-value" id="smoothnessValue">40%</span>
+            <span class="slider-value" id="smoothnessValue">50%</span>
           </div>
-          <input type="range" id="smoothness" min="0" max="100" value="40">
+          <input type="range" id="smoothness" min="0" max="100" value="50">
         </div>
         <div class="slider-group" style="margin-top:8px;">
           <div class="slider-header">
             <span class="slider-name" data-i18n="bodyLabel"></span>
-            <span class="slider-value" id="bodyValue">40%</span>
+            <span class="slider-value" id="bodyValue">50%</span>
           </div>
-          <input type="range" id="bodyCtrl" min="0" max="100" value="40">
+          <input type="range" id="bodyCtrl" min="0" max="100" value="50">
         </div>
-        <div class="body-pass-controls windows-only" id="bodyPassSection">
+        <div class="body-pass-controls" id="bodyPassSection">
           <div class="toggle-row">
             <span class="toggle-label" data-i18n="bodyPassLabel"></span>
             <label class="switch">
@@ -461,28 +452,28 @@
         </div>
       </div>
 
-      <div class="section windows-only" id="windowsRefineSection">
+      <div class="section" id="windowsRefineSection">
         <div class="section-label" data-i18n="refineLabel"></div>
         <div class="slider-group">
           <div class="slider-header">
             <span class="slider-name" data-i18n="hfTameLabel"></span>
-            <span class="slider-value" id="hfTameValue">0%</span>
+            <span class="slider-value" id="hfTameValue">10%</span>
           </div>
-          <input type="range" id="hfTame" min="0" max="100" value="0">
-        </div>
-        <div class="slider-group" style="margin-top:8px;">
-          <div class="slider-header">
-            <span class="slider-name" data-i18n="airContinuityLabel"></span>
-            <span class="slider-value" id="airContinuityValue">0%</span>
-          </div>
-          <input type="range" id="airContinuity" min="0" max="100" value="0">
+          <input type="range" id="hfTame" min="0" max="100" value="10">
         </div>
         <div class="slider-group" style="margin-top:8px;">
           <div class="slider-header">
             <span class="slider-name" data-i18n="ambienceGlueLabel"></span>
-            <span class="slider-value" id="ambienceGlueValue">0%</span>
+            <span class="slider-value" id="ambienceGlueValue">100%</span>
           </div>
-          <input type="range" id="ambienceGlue" min="0" max="100" value="0">
+          <input type="range" id="ambienceGlue" min="0" max="100" value="100">
+        </div>
+        <div class="slider-group" style="margin-top:8px;">
+          <div class="slider-header">
+            <span class="slider-name" data-i18n="bassFlexLabel"></span>
+            <span class="slider-value" id="bassFlexValue">30%</span>
+          </div>
+          <input type="range" id="bassFlex" min="0" max="100" value="30">
         </div>
         <div class="body-pass-hint" data-i18n="refineHint"></div>
       </div>
@@ -492,9 +483,9 @@
         <div class="slider-group">
           <div class="slider-header">
             <span class="slider-name" data-i18n="spatialSpreadLabel"></span>
-            <span class="slider-value" id="spatialSpreadValue">30%</span>
+            <span class="slider-value" id="spatialSpreadValue">100%</span>
           </div>
-          <input type="range" id="spatialSpread" min="0" max="100" value="30">
+          <input type="range" id="spatialSpread" min="0" max="100" value="100">
         </div>
         <div class="slider-group" style="margin-top:8px;">
           <div class="slider-header">
@@ -510,9 +501,9 @@
         <div class="slider-group">
           <div class="slider-header">
             <span class="slider-name" data-i18n="impactGainLabel"></span>
-            <span class="slider-value" id="impactGainValue">15%</span>
+            <span class="slider-value" id="impactGainValue">100%</span>
           </div>
-          <input type="range" id="impactGain" min="0" max="100" value="15">
+          <input type="range" id="impactGain" min="0" max="100" value="100">
         </div>
       </div>
     </div>
@@ -541,6 +532,9 @@
         <span class="slider-value" id="liveLevelDelta">--</span>
       </div>
       <div class="body-pass-hint" data-i18n="levelCheckHint"></div>
+    </div>
+    <div class="section" style="padding:10px 14px;">
+      <button class="style-btn" id="analysisPlotBtn" data-i18n="analysisPlotBtn" style="width:100%; padding:9px 12px; border-color:rgba(0,212,255,0.25); color:#00d4ff;"></button>
     </div>
 
     <!-- Preview badge — all features unlocked during preview period -->

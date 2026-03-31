@@ -54,8 +54,19 @@ static STATE: WasmState = WasmState {
 
 fn make_config() -> EngineConfig {
     EngineConfig {
+        strength: 1.0,
+        hf_reconstruction: 0.7,
+        dynamics: 1.0,
+        transient: 1.0,
+        body_pass_enabled: false,
+        hf_tame: 0.1,
+        bass_flex: 0.3,
         phase_mode: PhaseMode::Minimum, // Low latency for browser
         quality_mode: QualityMode::Standard,
+        style: StyleConfig::new(0.5, 0.5, 0.5, 1.0, 1.0, 0.5),
+        synthesis_mode: SynthesisMode::FftOlaPilot,
+        ambience_preserve: 0.0,
+        ambience_glue: 1.0,
         ..EngineConfig::default()
     }
 }
@@ -256,9 +267,9 @@ pub extern "C" fn set_hf_tame(value: f32) {
 }
 
 #[no_mangle]
-pub extern "C" fn set_air_continuity(value: f32) {
+pub extern "C" fn set_bass_flex(value: f32) {
     let mut config = current_config();
-    config.air_continuity = value.clamp(0.0, 1.0);
+    config.bass_flex = value.clamp(0.0, 1.0);
     with_both_engines(|e| e.update_config(config));
 }
 
