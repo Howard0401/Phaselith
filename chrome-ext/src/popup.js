@@ -353,34 +353,21 @@ function setTier(tier, key) {
 }
 
 function enforceLimits() {
-  const isFree = licenseTier !== 'Pro';
-
-  // Strength cap
-  if (isFree && parseInt(strengthSlider.value) > 50) {
-    strengthSlider.value = 50;
-    saveAndNotify();
-  }
-  strengthSlider.max = isFree ? '50' : '100';
+  // ── Preview: all features unlocked, no tier restrictions ──
+  // TODO: Re-enable when ready to charge
+  // const isFree = licenseTier !== 'Pro';
+  // if (isFree && parseInt(strengthSlider.value) > 50) {
+  //   strengthSlider.value = 50; saveAndNotify();
+  // }
+  // strengthSlider.max = isFree ? '50' : '100';
+  // styleBtns.forEach(btn => {
+  //   const preset = parseInt(btn.dataset.preset);
+  //   if (isFree && preset !== 0) { btn.style.opacity = '0.3'; btn.style.pointerEvents = 'none'; }
+  //   else { btn.style.opacity = ''; btn.style.pointerEvents = ''; }
+  // });
+  // if (isFree && currentStylePreset !== 0) { currentStylePreset = 0; updateStyleUI(); saveAndNotify(); }
+  strengthSlider.max = '100';
   document.getElementById('strengthValue').textContent = strengthSlider.value + '%';
-
-  // Preset lock — only Reference for Free
-  styleBtns.forEach(btn => {
-    const preset = parseInt(btn.dataset.preset);
-    if (isFree && preset !== 0) {
-      btn.style.opacity = '0.3';
-      btn.style.pointerEvents = 'none';
-    } else {
-      btn.style.opacity = '';
-      btn.style.pointerEvents = '';
-    }
-  });
-
-  // Force Reference if Free and non-Reference selected
-  if (isFree && currentStylePreset !== 0) {
-    currentStylePreset = 0;
-    updateStyleUI();
-    saveAndNotify();
-  }
 }
 
 // Activate button
