@@ -8,7 +8,7 @@ use std::process::Command;
 
 // ─── License API ───
 
-const LICENSE_API: &str = "http://localhost:8787"; // dev; production: https://license.phaselith.com
+const LICENSE_API: &str = "https://license.phaselith.com";
 
 #[derive(Serialize)]
 pub struct HostPlatform {
